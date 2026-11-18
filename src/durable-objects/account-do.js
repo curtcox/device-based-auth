@@ -456,7 +456,7 @@ export class AccountDO {
    * Final online checks for one decision: revocation, proof replay, step-up and usage counters.
    * candidates: grant indexes that passed every static check, in order, with their online needs.
    */
-  async op_authorize({ cid, jti, proof_jti, proof_exp, candidates, action, resource, audience, caller }, now) {
+  async op_authorize({ cid, jti, proof_jti, proof_exp, candidates, action, resource, audience, caller, country }, now) {
     const nowSeconds = Math.floor(now / 1000);
     for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
     return this.tx(async tx => {
@@ -491,7 +491,7 @@ export class AccountDO {
           decision = { allow: false, code: 'step_up_required', reasons, step_up: { id, expires_in: STEP_UP_TTL_MS / 1000 } };
         } else decision = { allow: false, code: candidates.length ? 'forbidden' : 'forbidden', reasons: reasons.length ? reasons : ['no_grant_matched'] };
       }
-      if (cred) await tx.put(`decision:${cid}:${pad(now)}:${randomId('d', 6)}`, { at: now, audience, action, resource: resource ?? null, allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, caller, jti });
+      if (cred) await tx.put(`decision:${cid}:${pad(now)}:${randomId('d', 6)}`, { at: now, audience, action, resource: resource ?? null, country: country ?? null, allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, caller, jti });
       const alarm = await tx.getAlarm();
       if (!alarm) await tx.setAlarm(now + 86400000);
       return decision;

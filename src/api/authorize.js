@@ -15,6 +15,21 @@ async function audience(env, name) {
 }
 
 /**
+ * The only location kept in the decision log: an ISO country code, from the network the caller
+ * observed or else the one the device reported (master plan §10). Coordinates, regions and IPs
+ * are evaluated and then forgotten.
+ * @param {{ network?: object, device?: object }} location
+ * @returns {string|null}
+ */
+export function coarseCountry(location) {
+  for (const source of [location.network, location.device]) {
+    const country = source?.country;
+    if (typeof country === 'string' && /^[A-Za-z]{2}$/.test(country)) return country.toUpperCase();
+  }
+  return null;
+}
+
+/**
  * Online authorization (metered, billed to the audience's owner). Adds what offline verification
  * cannot do: instant revocation, usage counters, step-up approval and a decision log.
  * Every decision is billed, including denials.
@@ -44,7 +59,7 @@ export async function authorize(request, env, auth) {
   const location = { network: body.context?.network, device: proof?.loc };
   const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true, attestation: payload.device?.attestation });
   const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok, uses: r.online.uses, step_up: r.online.step_up })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
-  const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account });
+  const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account, country: coarseCountry(location) });
   const grant = decision.allow ? payload.grants[decision.grant_index] : null;
   return {
     allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, reasons: decision.allow ? [] : (decision.reasons.length ? decision.reasons : evaluation.reasons.flat()),

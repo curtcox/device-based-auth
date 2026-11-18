@@ -171,7 +171,7 @@ describe('online authorization', () => {
   it('enforces usage limits and bills the audience for every decision', async () => {
     const { ask, credential, device } = await setup([{ actions: ['hashbin:content:write'], limits: { uses: { count: 2, per: 'day' } } }]);
     expect((await ask()).body).toMatchObject({ allow: true, grant_index: 0, cost_microdollars: 10 });
-    expect((await ask()).body.allow).toBe(true);
+    expect((await ask('hashbin:content:write', { context: { network: { country: 'us', region: 'TX', lat: 30.27, lon: -97.74, ip: '203.0.113.9' } } })).body.allow).toBe(true);
     expect((await ask()).body).toMatchObject({ allow: false, reasons: ['usage_limit_reached'] });
     expect((await call(env, 'GET', '/api/v1/account', { auth: 'operator' })).body.today.aggregates.decision).toEqual({ count: 3, amount: 30 });
     // The audience console shows the owner its decisions and spend; nobody else may read them.
@@ -183,6 +183,9 @@ describe('online authorization', () => {
     const { cid } = inspectCredential(credential).payload;
     const decisions = await call(env, 'GET', `/api/v1/credentials/${cid}/decisions`, { auth: 'alice' });
     expect(decisions.body.items.map(d => d.allow)).toEqual([false, true, true]);
+    // Only the coarse country of a decision is kept (master plan §10), never coordinates or IPs.
+    expect(decisions.body.items.map(d => d.country)).toEqual([null, 'US', null]);
+    expect(JSON.stringify(decisions.body)).not.toMatch(/30\.27|203\.0\.113|TX/);
   });
 
   it('rejects replayed proofs and revoked credentials immediately', async () => {

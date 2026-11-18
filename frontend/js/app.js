@@ -285,7 +285,7 @@ async function credential(cid) {
     table(['When', 'Event', 'Detail'], (cred.events || []).slice().reverse().map(e => [date(e.at), EVENT_LABELS[e.type] || e.type, e.reason || e.source || e.jti || ''])),
     h('h2', {}, 'Online decisions'),
     decisions.items.length
-      ? table(['When', 'Audience', 'Action', 'Resource', 'Result'], decisions.items.map(d => [date(d.at), d.audience, h('span', { class: 'mono' }, d.action), d.resource ?? '—', [badge(d.allow ? 'allow' : 'deny'), h('span', { class: 'muted small' }, ` ${d.code}`)]]))
+      ? table(['When', 'Audience', 'Action', 'Resource', 'Country', 'Result'], decisions.items.map(d => [date(d.at), d.audience, h('span', { class: 'mono' }, d.action), d.resource ?? '—', d.country ?? '—', [badge(d.allow ? 'allow' : 'deny'), h('span', { class: 'muted small' }, ` ${d.code}`)]]))
       : h('p', { class: 'muted' }, 'No online decisions in the last 90 days. Offline verification is never reported back here.')
   ];
 }
