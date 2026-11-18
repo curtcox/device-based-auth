@@ -145,6 +145,14 @@ A verifier MUST, in order:
 
 If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
 
+**Withdrawn issuer keys.** When an issuer key is compromised the service removes it from the JWKS,
+so every credential it signed fails step 1 (`unknown_kid`) once verifier caches refresh; verifiers
+that see an unknown `kid` SHOULD refetch the JWKS before denying, and need nothing else. Devices
+replace such a credential with `POST /api/v1/credentials/{cid}/renew`, which accepts it only if the
+account's registry holds that exact credential (byte for byte) and it is unrevoked and unexpired;
+the renewal is signed by the current key, keeps `cid` and the status index, and is free. Any other
+DBA API answers such a credential with 401 `reissue_required`.
+
 ## 6. Access tokens
 
 `POST /api/v1/token` exchanges a credential + proof for a bearer token with `typ: dba-access+jwt`,

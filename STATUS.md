@@ -10,7 +10,7 @@ with it, this file wins and the other document is stale.
   proposed values pending D6. Open decisions D2, D6–D8 are implemented with the recommended defaults; D9 (security email) blocks the rest of S8.
   Backlog B1–B4 (revocation webhooks, enrollment tokens, X.509 client certificates, shared replay
   cache) are done, B5 Android key attestation is done pending a real-phone check, and S4 has an
-  Android sample; the issue price now sits 1 µ$ above its floor (74 µ$), so anything more it must
+  Android sample; S9 lets devices recover from a withdrawn issuer key without re-enrolling (SDK v1.1.0); the issue price now sits 1 µ$ above its floor (74 µ$), so anything more it must
   prepay needs a price change (D6).
   Design in [`todo/master_plan.md`](todo/master_plan.md); prices in [`docs/business/pricing.md`](docs/business/pricing.md).
 
@@ -78,6 +78,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | S5 | Python and Go verifier packages | code | ✅ | `packages/verify-python` (104 tests) and `packages/verify-go` (stdlib only; vectors, JS cross-check, race-clean) pass every vector, in CI. Publishing to PyPI / tagging the Go module is an owner step. Fixed in all three from the ports' findings: malformed DPoP keys are invalid_proof (was 500), malformed status lists status_unavailable, non-string window times invalid_grant. Status-list `idx` is bounded to 0…2³¹−1 (credentials outside it are `invalid_claims`; bits computed without 32-bit wrap; two signature vectors) |
 | S7 | CLI auto-renewal at 2/3 of lifetime (the SDK has it) | code | ✅ | `headers`, `sign`, `curl`, `token`, `status --online` renew first when due (lock against parallel runs; warn and continue on failure); `dba renew --if-due` for cron; `--no-renew` / `DBA_AUTO_RENEW=0` |
 | S6 | Issuer signing keys in an external KMS/HSM | ops | ⬜ | |
+| S9 | Issuer-key compromise recovery, "mass force-renew" (master plan §10) | code | ✅ | An `ISSUER_KEYS` entry marked `"withdrawn": true` leaves the JWKS and CA bundle and never signs; the renew endpoint still accepts a credential it signed when the registry holds that exact JWS (forgeries with the leaked key, even reusing a real cid/jti, get `unknown_credential`), free and outside renewal caps (`credential.recovered`); other APIs answer 401 `reissue_required`. SDK `autoRenew()`/`keyWithdrawn()` and the CLI (JWKS checked at most hourly) renew by themselves. Runbook [docs/ops/issuer-key-compromise.md](docs/ops/issuer-key-compromise.md) rewritten. Also fixed: SDK `autoRenew()` passed delays over 2³¹−1 ms to `setTimeout`, which fires at once, so credentials living > ~37 days renewed in a loop; released as SDK v1.1.0 (v1.0.0 must not be used; it was never served) |
 | S8 | Recent re-authentication (Clerk reverification or passkey) before approving `dba:*` grants or raising limits; email on every issuance (master plan §10) | code/ops | 🚧 | Re-authentication done: creating API keys, approving/issuing `dba:*` credentials or enrollment tokens, and raising budget limits need a Clerk sign-in within 10 minutes (`fva` claim; 403 `reverification_required` with Clerk's hint; the dashboard offers "Sign in again"); dashboard devices are refused, API keys pass. Live check after L9 in docs/ops/deployment.md §3. Email on every issuance waits on D9 (provider and pricing) |
 
 ## Backlog

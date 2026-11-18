@@ -2361,7 +2361,7 @@
     "/api/v1/credentials/{cid}/renew": {
       "post": {
         "operationId": "post_api_v1_credentials_cid_renew",
-        "summary": "Renew the presented credential (same key), or rotate to a new key with new_key_proof. Device credential + DPoP.",
+        "summary": "Renew the presented credential (same key), or rotate to a new key with new_key_proof. Device credential + DPoP. Also accepts a credential signed by a withdrawn issuer key if it is exactly the one stored; that renewal is free and answers recovered: true.",
         "x-access": "device",
         "security": [
           {

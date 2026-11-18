@@ -55,7 +55,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - `GET /api/v1/whoami` — who is calling.
 - `GET /api/v1/credentials`, `GET /api/v1/credentials/{cid}` (grants in plain English), `DELETE /api/v1/credentials/{cid}` (revoke), `GET /api/v1/credentials/{cid}/decisions`.
 - `GET /api/v1/devices`, `POST /api/v1/devices/{id}/revoke`, `POST /api/v1/revoke-all {"confirm":"revoke-all"}`.
-- `POST /api/v1/credentials/{cid}/renew` (device credential + DPoP; `new_key_proof` to rotate keys), `POST /api/v1/token {audience}` (≤10-minute bearer token), `POST /api/v1/self/revoke`.
+- `POST /api/v1/credentials/{cid}/renew` (device credential + DPoP; `new_key_proof` to rotate keys; also free recovery of a credential whose issuer key was withdrawn, after which other APIs answer 401 `reissue_required`), `POST /api/v1/token {audience}` (≤10-minute bearer token), `POST /api/v1/self/revoke`.
 - `POST /api/v1/authorize {credential, proof, request:{method,url}, audience, action, resource, context:{network}}` — online decision for an audience you own.
 - `POST /api/v1/inspect {credential, check?}` — decode, verify, check revocation, evaluate. Free.
 - `GET|POST /api/v1/audiences` — relying parties and their action catalogs (`GET /api/v1/audiences/{name}/usage`: your audience's online decisions, sign-ins and spend per month); register your domain (prove it with `https://<domain>/.well-known/devicebasedauth.json` = `{"account":"<your account>"}`).

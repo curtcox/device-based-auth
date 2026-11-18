@@ -203,7 +203,7 @@ const worker = {
       if (!route && env.ASSETS && request.method === 'GET' && !path.startsWith('/api/')) return env.ASSETS.fetch(request);
       assert(route, 'not_found', 'Not found', 404);
       if (route.free) assert(!(await brakeActive(env)), 'cost_brake', 'This free endpoint is paused by the cost-safety brake; paid endpoints keep working', 503);
-      const auth = route.access === PUBLIC ? null : await authenticate(request, env, { anyAudience: route.access === DEVICE || route.access === AUTHENTICATED });
+      const auth = route.access === PUBLIC ? null : await authenticate(request, env, { anyAudience: route.access === DEVICE || route.access === AUTHENTICATED, recovery: route.handler === 'renew' });
       assert(canAccess(auth, route.access), 'insufficient_scope', 'Credential does not allow this operation', 403);
       let cost = 0;
       if (auth) await rpc(env.ACCOUNTS, auth.account, 'rate-limit', { id: auth.key_id || auth.device?.payload.cid || 'session', limit: auth.session ? 300 : 120 });

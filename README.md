@@ -21,7 +21,7 @@ Stripe, a prepaid balance and no subscription.
 | Credential format and evaluation rules, with conformance vectors | [spec/](spec/) |
 | The service (Cloudflare Worker + Durable Objects) | [src/](src/) |
 | `@devicebasedauth/verify` — zero-dependency verifier and site helpers | [packages/verify/](packages/verify/) |
-| Browser SDK (`/sdk/v1.0.0/dba.js`, SRI-pinnable) | [packages/browser-sdk/](packages/browser-sdk/) |
+| Browser SDK (`/sdk/v1.1.0/dba.js`, SRI-pinnable) | [packages/browser-sdk/](packages/browser-sdk/) |
 | `dba` command-line tool | [packages/cli/](packages/cli/) |
 | Website: dashboard, approval page, developer tools, docs, pricing | [frontend/](frontend/) |
 | Samples run in CI (shell, Node, Worker, Python, Go) | [docs/samples/](docs/samples/) |

@@ -5,8 +5,11 @@ let cache = { source: null, keys: null, signer: null };
 
 /**
  * Issuer signing keys come from the ISSUER_KEYS secret: a JSON list of
- * { kid, jwk (private P-256), retired?: true }. The first non-retired key signs; every
- * listed key is published in the JWKS so credentials signed before a rotation keep verifying.
+ * { kid, jwk (private P-256), retired?: true, withdrawn?: true }. The first key that is neither
+ * retired nor withdrawn signs. Retired keys stay in the JWKS so credentials signed before a routine
+ * rotation keep verifying. Withdrawn keys (compromised: docs/ops/issuer-key-compromise.md) are
+ * trusted nowhere, except that a device may renew a credential they signed when the account's
+ * registry holds that exact credential (recovery renewal, master plan §10 "mass force-renew").
  */
 export function issuerKeys(env) {
   if (cache.source !== env.ISSUER_KEYS) {
@@ -22,15 +25,21 @@ export function issuerKeys(env) {
 export async function activeSigner(env) {
   const keys = issuerKeys(env);
   if (!cache.signer) {
-    const active = keys.find(k => !k.retired);
+    const active = keys.find(k => !k.retired && !k.withdrawn);
     if (!active) throw new Error('No active issuer key');
     cache.signer = await issuerSigner(active);
   }
   return cache.signer;
 }
 
-/** Public JWKS for every configured key. */
-export function jwks(env) { return jwksFor(issuerKeys(env)); }
+/** Keys verifiers may trust: every configured key except withdrawn ones. */
+export function trustedIssuerKeys(env) { return issuerKeys(env).filter(k => !k.withdrawn); }
+
+/** Public JWKS for every trusted key. */
+export function jwks(env) { return jwksFor(trustedIssuerKeys(env)); }
+
+/** JWKS of withdrawn keys: only for recognizing credentials that need a recovery renewal. */
+export function withdrawnJwks(env) { return jwksFor(issuerKeys(env).filter(k => k.withdrawn)); }
 
 /** The `iss` claim: https://devicebasedauth.org in production, the local origin in development. */
 export function issuerName(env) { return env.ISSUER || DEFAULT_ISSUER; }

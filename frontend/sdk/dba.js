@@ -1,4 +1,4 @@
-// devicebasedauth.org browser SDK v1.0.0. Built by scripts/build-sdk.mjs from packages/browser-sdk and packages/verify. MIT.
+// devicebasedauth.org browser SDK v1.1.0. Built by scripts/build-sdk.mjs from packages/browser-sdk and packages/verify. MIT.
 
 // packages/verify/src/jose.js
 var encoder = new TextEncoder();
@@ -361,7 +361,7 @@ async function createProof({ privateKey, publicJwk: jwk, method, url, credential
 }
 
 // packages/browser-sdk/dba.js
-var VERSION = "1.0.0";
+var VERSION = "1.1.0";
 var DB = "devicebasedauth";
 var STORE = "devices";
 function openDb() {
@@ -393,6 +393,7 @@ var DBAError = class extends Error {
     Object.assign(this, details);
   }
 };
+var MAX_TIMER_MS = 2 ** 31 - 1;
 var DBA = class {
   /**
    * @param {object} [options]
@@ -540,14 +541,43 @@ var DBA = class {
     await this.save();
     return result;
   }
-  /** Renew automatically at two thirds of the credential's lifetime while the page is open. */
+  /**
+   * Renew automatically at two thirds of the credential's lifetime while the page is open, and at
+   * once (free) if the issuer has withdrawn the key that signed it.
+   */
   autoRenew({ onError } = {}) {
     clearTimeout(this.renewTimer);
     const p = this.payload;
     if (!p) return;
+    const run = () => this.renew().then(() => this.autoRenew({ onError }), onError || (() => {
+    }));
     const at = (p.iat + (p.exp - p.iat) * 2 / 3) * 1e3 - Date.now();
-    this.renewTimer = setTimeout(() => this.renew().then(() => this.autoRenew({ onError }), onError || (() => {
-    })), Math.max(0, at));
+    this.renewTimer = at > MAX_TIMER_MS ? setTimeout(() => this.autoRenew({ onError }), MAX_TIMER_MS) : setTimeout(run, Math.max(0, at));
+    const { kid } = inspectCredential(this.credential).header;
+    this.checkedKids ||= /* @__PURE__ */ new Set();
+    if (at > 0 && !this.checkedKids.has(kid)) {
+      this.checkedKids.add(kid);
+      const credential = this.credential;
+      this.keyWithdrawn().then((withdrawn) => {
+        if (withdrawn && this.credential === credential) {
+          clearTimeout(this.renewTimer);
+          run();
+        }
+      }, () => {
+      });
+    }
+  }
+  /**
+   * True when the issuer's JWKS no longer lists the key that signed this credential (the key was
+   * withdrawn after a compromise). Relying parties then refuse the credential; renew() replaces it
+   * at no charge. False when there is no credential or the JWKS cannot be fetched.
+   */
+  async keyWithdrawn() {
+    if (!this.credential) return false;
+    const { header } = inspectCredential(this.credential);
+    const response = await fetch(`${this.origin}/.well-known/jwks.json`, { cache: "no-cache" }).catch(() => null);
+    const keys = response?.ok ? (await response.json().catch(() => ({}))).keys : null;
+    return Array.isArray(keys) && keys.length > 0 && !keys.some((k) => k.kid === header.kid);
   }
   /** A short-lived bearer token for one audience (for code that cannot sign each request). */
   async token(audience) {

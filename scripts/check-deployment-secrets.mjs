@@ -4,7 +4,7 @@ const missing = required.filter(name => !process.env[name]);
 const problems = missing.map(name => `${name} is not set`);
 try {
   const keys = JSON.parse(process.env.ISSUER_KEYS || '[]');
-  if (!Array.isArray(keys) || !keys.some(k => !k.retired && k.jwk?.crv === 'P-256' && k.jwk?.d)) problems.push('ISSUER_KEYS needs an active P-256 private JWK');
+  if (!Array.isArray(keys) || !keys.some(k => !k.retired && !k.withdrawn && k.jwk?.crv === 'P-256' && k.jwk?.d)) problems.push('ISSUER_KEYS needs an active P-256 private JWK');
   if (keys.some(k => k.kid?.startsWith('local-'))) problems.push('ISSUER_KEYS contains the local development key');
 } catch { problems.push('ISSUER_KEYS is not JSON'); }
 if ((process.env.TOKEN_SIGNING_KEY || '').length < 32) problems.push('TOKEN_SIGNING_KEY must be at least 32 characters');

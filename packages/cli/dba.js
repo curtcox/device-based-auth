@@ -11,7 +11,7 @@ import { homedir, hostname } from 'node:os';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue
+  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn
 } from './lib.js';
 import { inspectCredential, createProof } from '@devicebasedauth/verify';
 
@@ -158,16 +158,25 @@ async function lockProfile(profile) {
  * The device, renewed first when it is due and auto-renewal is on. Never fails because of the
  * renewal: the current credential is still valid, so the command goes ahead with a warning.
  */
+/** Has the issuer withdrawn the key that signed this credential? (cached JWKS, see lib.js) */
+function keyWithdrawn(profile, credential) {
+  const path = `${profile.paths.dir}/jwks-cache.json`;
+  return issuerKeyWithdrawn({ client: profile.client, credential, cache: { read: () => readJsonFile(path), write: entry => writePrivate(path, JSON.stringify(entry)) } });
+}
+
 async function usableDevice(profile, { force = false } = {}) {
   const device = await requireDevice(profile);
   if (!force && !profile.autoRenew) return device;
-  if (!shouldRenew(inspectCredential(device.credential).payload)) return device;
+  const due = shouldRenew(inspectCredential(device.credential).payload);
+  const withdrawn = !due && await keyWithdrawn(profile, device.credential);
+  if (!due && !withdrawn) return device;
   const release = await lockProfile(profile);
   if (!release) return device;
   try {
     // Another process may have renewed while this one waited for the lock.
     const current = await requireDevice(profile);
-    const outcome = await renewIfDue({ client: profile.client, device: current, save: result => writePrivate(profile.paths.credential, `${result.credential}\n`) });
+    const outcome = await renewIfDue({ client: profile.client, device: current, withdrawn: withdrawn && current.credential === device.credential, save: result => writePrivate(profile.paths.credential, `${result.credential}\n`) });
+    if (outcome.renewed && outcome.result.recovered) { note(`Renewed ${outcome.result.cid} because the issuer withdrew the key that signed it (free); expires ${relativeTime(outcome.result.exp)}.`); return { ...current, credential: outcome.result.credential }; }
     if (outcome.renewed) { note(`Renewed ${outcome.result.cid} (now ${outcome.result.jti}); expires ${relativeTime(outcome.result.exp)}.`); return { ...current, credential: outcome.result.credential }; }
     if (outcome.reason === 'superseded') return requireDevice(profile);
     if (outcome.reason === 'failed') note(`dba: could not renew the credential (${outcome.error.code || outcome.error.message}); using the current one, which expires ${relativeTime(inspectCredential(current.credential).payload.exp)}.`);
@@ -325,7 +334,7 @@ async function renew(profile, { options }) {
     const before = await requireDevice(profile);
     const { payload } = inspectCredential(before.credential);
     if (payload.exp * 1000 <= Date.now()) throw new ApiError('The credential has expired; enroll again with `dba enroll --force`.', 'expired');
-    if (!shouldRenew(payload)) { out(`Not due: ${payload.cid} expires ${relativeTime(payload.exp)}; renewal is due ${relativeTime(Math.ceil(payload.iat + ((payload.exp - payload.iat) * 2) / 3))}.`); return; }
+    if (!shouldRenew(payload) && !await keyWithdrawn(profile, before.credential)) { out(`Not due: ${payload.cid} expires ${relativeTime(payload.exp)}; renewal is due ${relativeTime(Math.ceil(payload.iat + ((payload.exp - payload.iat) * 2) / 3))}.`); return; }
     const after = await usableDevice(profile, { force: true });
     if (after.credential === before.credential) throw new ApiError('The credential was not renewed (see the message above, or another dba process is renewing it now).', 'renew_failed');
     return;
@@ -338,7 +347,7 @@ async function renew(profile, { options }) {
   // Save only after the server agreed: until then the old key and credential are the good pair.
   if (next) await writePrivate(profile.paths.key, `${JSON.stringify(keyFile(next), null, 2)}\n`);
   await writePrivate(profile.paths.credential, `${result.credential}\n`);
-  out(`${result.rotated ? 'Rotated to a new key and renewed' : 'Renewed'} ${result.cid} (now ${result.jti}); expires ${new Date(result.exp * 1000).toISOString()} (${relativeTime(result.exp)}).`);
+  out(`${result.rotated ? 'Rotated to a new key and renewed' : 'Renewed'} ${result.cid}${result.recovered ? ' (the issuer withdrew the key that signed it; no charge)' : ''} (now ${result.jti}); expires ${new Date(result.exp * 1000).toISOString()} (${relativeTime(result.exp)}).`);
 }
 
 async function revoke(profile) {

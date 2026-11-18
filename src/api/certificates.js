@@ -3,15 +3,15 @@ import { rpc } from '../utils/rpc.js';
 import { price } from '../utils/pricing.js';
 import { decodeJws, publicJwk } from '../../packages/verify/src/jose.js';
 import { issuerSigner } from '../../packages/verify/src/issuer.js';
-import { issuerKeys } from '../services/issuer.js';
+import { trustedIssuerKeys } from '../services/issuer.js';
 import { caCertificate, deviceCertificate, deviceUris, pem } from '../services/x509.js';
 
 export const CERT_SECONDS = Object.freeze({ min: 300, max: 86400, default: 3600 });
 const caCache = new Map();
 
-/** The CA certificate for each configured issuer key (active key first), cached per isolate. */
+/** The CA certificate for each trusted issuer key (active key first), cached per isolate. */
 async function caCertificates(env) {
-  const keys = issuerKeys(env);
+  const keys = trustedIssuerKeys(env);
   const ordered = [...keys.filter(k => !k.retired), ...keys.filter(k => k.retired)];
   return Promise.all(ordered.map(async ({ kid, jwk, retired }) => {
     const id = `${kid}:${jwk.x}`;

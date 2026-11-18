@@ -306,6 +306,26 @@ export function shouldRenew(payload, now = Math.floor(Date.now() / 1000)) {
   return Number.isSafeInteger(payload.iat) && Number.isSafeInteger(payload.exp) && now >= payload.iat + ((payload.exp - payload.iat) * 2) / 3;
 }
 
+export const JWKS_CACHE_SECONDS = 3600;
+
+/**
+ * True when the issuer no longer publishes the key that signed this credential: after an issuer key
+ * is withdrawn (compromised), relying parties refuse the credential, and the device must renew it
+ * (free) to get one signed by the current key. The JWKS is fetched at most once an hour through
+ * `cache` ({ read(): {fetched_at, kids} | null, write(entry) }), and again early when the cached copy
+ * lacks the kid. Any failure to fetch answers false: never renew on a guess.
+ */
+export async function issuerKeyWithdrawn({ client, credential, cache, now = Math.floor(Date.now() / 1000) }) {
+  const { header } = inspectCredential(credential);
+  const cached = await cache.read().catch(() => null);
+  if (cached && Array.isArray(cached.kids) && now - cached.fetched_at < JWKS_CACHE_SECONDS && cached.kids.includes(header.kid)) return false;
+  let kids;
+  try { kids = (await client.request('GET', '/.well-known/jwks.json')).keys.map(k => k.kid); } catch { return false; }
+  if (!kids.length) return false;
+  await cache.write({ fetched_at: now, kids }).catch(() => {});
+  return !kids.includes(header.kid);
+}
+
 /**
  * Whether commands that present the credential renew it first when it is due. On by default (the
  * browser SDK does the same); `--no-renew` or DBA_AUTO_RENEW=0 turns it off, for example on a
@@ -323,10 +343,10 @@ export function autoRenewEnabled({ flag, env = {} } = {}) {
  * back as { renewed: false, reason: 'failed', error } for the caller to warn about. `superseded`
  * means another process renewed first; the caller should re-read its credential file.
  */
-export async function renewIfDue({ client, device, save, now = Math.floor(Date.now() / 1000) }) {
+export async function renewIfDue({ client, device, save, withdrawn = false, now = Math.floor(Date.now() / 1000) }) {
   const { payload } = inspectCredential(device.credential);
   if (!Number.isSafeInteger(payload.exp) || payload.exp <= now) return { renewed: false, reason: 'expired' };
-  if (!shouldRenew(payload, now)) return { renewed: false, reason: 'not_due' };
+  if (!withdrawn && !shouldRenew(payload, now)) return { renewed: false, reason: 'not_due' };
   let result;
   try {
     result = await client.request('POST', `/api/v1/credentials/${encodeURIComponent(payload.cid)}/renew`, { device, body: {} });

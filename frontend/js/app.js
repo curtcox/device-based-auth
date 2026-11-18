@@ -217,7 +217,7 @@ async function credentials() {
   return [h('h1', {}, 'Credentials'), h('p', { class: 'muted' }, 'Every credential this account issued. Select one to read it, see its history, or revoke it.'), filter, data.items.length ? exportButtons(query) : null, body];
 }
 
-const EVENT_LABELS = { issued: 'Issued', renewed: 'Renewed', rotated: 'Rotated to a new key', revoked: 'Revoked' };
+const EVENT_LABELS = { issued: 'Issued', renewed: 'Renewed', rotated: 'Rotated to a new key', recovered: 'Renewed after an issuer key was withdrawn (free)', revoked: 'Revoked' };
 
 async function credential(cid) {
   const [cred, decisions] = await Promise.all([

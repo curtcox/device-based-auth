@@ -15,7 +15,7 @@ const SUMMARIES = {
   transactions: 'Ledger, newest first.', audit: 'Audit trail, newest first.', 'credentials-list': 'List credentials (filters: status, audience, device).',
   'credentials-create': 'Issue a credential for a public key you hold (API keys, sessions, or devices delegating narrower grants). Charges the issue price.',
   'credentials-get': 'One credential: payload fields, grants in plain English, current JWS and history.', 'revoke-credential': 'Revoke a credential (free, immediate online; status lists within a minute).',
-  'credentials-decisions': 'Online authorization decisions for a credential (kept 90 days).', renew: 'Renew the presented credential (same key), or rotate to a new key with new_key_proof. Device credential + DPoP.',
+  'credentials-decisions': 'Online authorization decisions for a credential (kept 90 days).', renew: 'Renew the presented credential (same key), or rotate to a new key with new_key_proof. Device credential + DPoP. Also accepts a credential signed by a withdrawn issuer key if it is exactly the one stored; that renewal is free and answers recovered: true.',
   'devices-list': 'Devices with their credentials.', 'devices-get': 'One device.', 'revoke-device': 'Revoke every credential of a device.', 'revoke-all': 'Revoke everything (optionally one audience). Body {"confirm":"revoke-all"}.',
   'revoke-self': 'A device revokes the credential it presents.', token: 'Exchange the presented device credential for a ≤10-minute bearer access token for one audience. Charges the token price.',
   authorize: 'Online authorization decision for an audience you own: revocation, usage limits, step-up, decision log. Charges the decision price.',

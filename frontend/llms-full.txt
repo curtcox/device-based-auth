@@ -55,7 +55,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - `GET /api/v1/whoami` — who is calling.
 - `GET /api/v1/credentials`, `GET /api/v1/credentials/{cid}` (grants in plain English), `DELETE /api/v1/credentials/{cid}` (revoke), `GET /api/v1/credentials/{cid}/decisions`.
 - `GET /api/v1/devices`, `POST /api/v1/devices/{id}/revoke`, `POST /api/v1/revoke-all {"confirm":"revoke-all"}`.
-- `POST /api/v1/credentials/{cid}/renew` (device credential + DPoP; `new_key_proof` to rotate keys), `POST /api/v1/token {audience}` (≤10-minute bearer token), `POST /api/v1/self/revoke`.
+- `POST /api/v1/credentials/{cid}/renew` (device credential + DPoP; `new_key_proof` to rotate keys; also free recovery of a credential whose issuer key was withdrawn, after which other APIs answer 401 `reissue_required`), `POST /api/v1/token {audience}` (≤10-minute bearer token), `POST /api/v1/self/revoke`.
 - `POST /api/v1/authorize {credential, proof, request:{method,url}, audience, action, resource, context:{network}}` — online decision for an audience you own.
 - `POST /api/v1/inspect {credential, check?}` — decode, verify, check revocation, evaluate. Free.
 - `GET|POST /api/v1/audiences` — relying parties and their action catalogs (`GET /api/v1/audiences/{name}/usage`: your audience's online decisions, sign-ins and spend per month); register your domain (prove it with `https://<domain>/.well-known/devicebasedauth.json` = `{"account":"<your account>"}`).
@@ -105,7 +105,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `GET /api/v1/credentials/{cid}` (credentials:read): One credential: payload fields, grants in plain English, current JWS and history.
 - `DELETE /api/v1/credentials/{cid}` (credentials:revoke): Revoke a credential (free, immediate online; status lists within a minute).
 - `GET /api/v1/credentials/{cid}/decisions` (credentials:read): Online authorization decisions for a credential (kept 90 days).
-- `POST /api/v1/credentials/{cid}/renew` (device): Renew the presented credential (same key), or rotate to a new key with new_key_proof. Device credential + DPoP.
+- `POST /api/v1/credentials/{cid}/renew` (device): Renew the presented credential (same key), or rotate to a new key with new_key_proof. Device credential + DPoP. Also accepts a credential signed by a withdrawn issuer key if it is exactly the one stored; that renewal is free and answers recovered: true.
 - `GET /api/v1/devices` (credentials:read): Devices with their credentials.
 - `GET /api/v1/devices/{id}` (credentials:read): One device.
 - `POST /api/v1/devices/{id}/revoke` (credentials:revoke): Revoke every credential of a device.
@@ -284,6 +284,14 @@ A verifier MUST, in order:
 5. Evaluate the grants for the requested action ([evaluation.md](https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md)).
 
 If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
+
+**Withdrawn issuer keys.** When an issuer key is compromised the service removes it from the JWKS,
+so every credential it signed fails step 1 (`unknown_kid`) once verifier caches refresh; verifiers
+that see an unknown `kid` SHOULD refetch the JWKS before denying, and need nothing else. Devices
+replace such a credential with `POST /api/v1/credentials/{cid}/renew`, which accepts it only if the
+account's registry holds that exact credential (byte for byte) and it is unrevoked and unexpired;
+the renewal is signed by the current key, keeps `cid` and the status index, and is free. Any other
+DBA API answers such a credential with 401 `reissue_required`.
 
 ## 6. Access tokens
 

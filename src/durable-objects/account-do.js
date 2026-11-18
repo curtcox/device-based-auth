@@ -255,10 +255,10 @@ export class AccountDO {
   }
 
   /** Online status for one credential (used by the API's own DBA-credential auth and renewals). */
-  async op_credential_status({ cid }, now) {
+  async op_credential_status({ cid, with_jws = false }, now) {
     const cred = await this.storage.get(`cred:${cid}`);
     if (!cred) return { exists: false, revoked: true };
-    return { exists: true, revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device };
+    return { exists: true, ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device };
   }
 
   async revokeOne(tx, cred, now, reason) {
@@ -388,7 +388,7 @@ export class AccountDO {
    * Store a renewed (or rotated) version. Rotation keeps the credential id but moves it to a new
    * key and status index, and revokes the old index so old copies stop working everywhere.
    */
-  async op_renew({ cid, from_jti, update, price, charge_id, rotation }, now) {
+  async op_renew({ cid, from_jti, update, price, charge_id, rotation, recovery = false }, now) {
     const result = await this.tx(async tx => {
       const cred = await tx.get(`cred:${cid}`);
       assert(cred, 'not_found', 'Credential not found', 404);
@@ -396,17 +396,22 @@ export class AccountDO {
       assert(cred.jti === from_jti, 'superseded', 'Only the current version of a credential can be renewed', 409);
       const cap = (await this.settings(tx)).max_renewals_per_credential_per_month;
       const used = cred.renewals?.period === monthOf(now) ? cred.renewals.count : 0;
-      assert(cap === null || used < cap, 'renewal_limit', `This credential has been renewed ${used} times this month, the account's limit; the owner can raise it in the dashboard`, 429, { limit: cap });
-      await charge(tx, { id: charge_id, kind: rotation ? 'rotate' : 'renew', amount: price, detail: { cid } }, now);
+      // A recovery renewal (issuer key withdrawn) is DBA's doing, not the device's: it neither
+      // counts against the renewal cap nor costs anything unless it also rotates. It can happen
+      // once per credential per withdrawn key, since the result is signed by the active key.
+      const free = recovery && !rotation;
+      assert(free || cap === null || used < cap, 'renewal_limit', `This credential has been renewed ${used} times this month, the account's limit; the owner can raise it in the dashboard`, 429, { limit: cap });
+      if (!free) await charge(tx, { id: charge_id, kind: rotation ? 'rotate' : 'renew', amount: price, detail: { cid } }, now);
       if (rotation) await tx.put(`outbox:${cid}:${cred.status.idx}`, { shard: cred.status.shard, idx: cred.status.idx, at: now });
-      const next = { ...cred, ...update, renewed_at: now, renewals: { period: monthOf(now), count: used + 1 }, events: [...cred.events, { at: now, type: rotation ? 'rotated' : 'renewed', jti: update.jti }].slice(-EVENTS_KEPT) };
+      const type = rotation ? 'rotated' : recovery ? 'recovered' : 'renewed';
+      const next = { ...cred, ...update, renewed_at: now, renewals: { period: monthOf(now), count: used + (free ? 0 : 1) }, events: [...cred.events, { at: now, type, jti: update.jti }].slice(-EVENTS_KEPT) };
       await tx.put(`cred:${cid}`, next);
       if (rotation) {
         const device = await tx.get(`device:${cred.device_id}`);
         await tx.put(`device:${rotation.device.id}`, { ...rotation.device, created_at: now, last_issued_at: now, rotated_from: device?.id });
       }
-      await this.audit(tx, now, rotation ? 'credential.rotated' : 'credential.renewed', { cid, jti: update.jti });
-      return { cid, jti: update.jti, charged: price };
+      await this.audit(tx, now, `credential.${type}`, { cid, jti: update.jti });
+      return { cid, jti: update.jti, charged: free ? 0 : price };
     });
     if (rotation) await this.deliverOutbox(now);
     return result;

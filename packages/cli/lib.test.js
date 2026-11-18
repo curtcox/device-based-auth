@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue
+  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn
 } from './lib.js';
-import { verifyJws, verifyProof, inspectCredential, jwkThumbprint, sha256b64u } from '../verify/src/index.js';
+import { verifyJws, verifyProof, inspectCredential, jwkThumbprint, sha256b64u, generateKeyPair } from '../verify/src/index.js';
 import { testEnv, call, worker, ORIGIN } from '../../test-utils/env.js';
 
 describe('argument parsing', () => {
@@ -291,5 +291,31 @@ describe('automatic renewal', () => {
     const broke = { request: async () => { throw new ApiError('Balance too low', 'insufficient_balance', 402); } };
     const outcome = await renewIfDue({ client: broke, device, save: async () => { throw new Error('must not save'); }, now: iat + 2500 });
     expect(outcome).toMatchObject({ renewed: false, reason: 'failed', error: { code: 'insufficient_balance' } });
+  });
+
+  it('renews early, for free, when the issuer withdraws the key that signed the credential', async () => {
+    const device = await enrolledDevice();
+    const { iat } = inspectCredential(device.credential).payload;
+    let stored = null; let fetches = 0;
+    const counting = { request: (method, path, options) => { if (path.includes('jwks')) fetches++; return client.request(method, path, options); } };
+    const cache = { read: async () => stored, write: async entry => { stored = entry; } };
+    expect(await issuerKeyWithdrawn({ client: counting, credential: device.credential, cache, now: iat })).toBe(false);
+    expect(await issuerKeyWithdrawn({ client: counting, credential: device.credential, cache, now: iat + 60 })).toBe(false);
+    expect(fetches).toBe(1);
+
+    const [old] = JSON.parse(env.ISSUER_KEYS);
+    const pair = await generateKeyPair(true);
+    env.ISSUER_KEYS = JSON.stringify([{ kid: 'test-2', jwk: await crypto.subtle.exportKey('jwk', pair.privateKey) }, { ...old, withdrawn: true }]);
+    // The cached JWKS still lists the old key for up to an hour; after that the CLI notices.
+    expect(await issuerKeyWithdrawn({ client: counting, credential: device.credential, cache, now: iat + 120 })).toBe(false);
+    expect(await issuerKeyWithdrawn({ client: counting, credential: device.credential, cache, now: iat + 3700 })).toBe(true);
+    // A failed fetch never triggers a renewal.
+    const offline = { request: async () => { throw new ApiError('offline', 'network_error'); } };
+    expect(await issuerKeyWithdrawn({ client: offline, credential: device.credential, cache: { read: async () => null, write: async () => {} } })).toBe(false);
+
+    expect(await renewIfDue({ client, device, save: async () => {}, now: iat + 10 })).toEqual({ renewed: false, reason: 'not_due' });
+    const outcome = await renewIfDue({ client, device, save: async () => {}, withdrawn: true, now: iat + 10 });
+    expect(outcome).toMatchObject({ renewed: true, result: { recovered: true, cost_microdollars: 0 } });
+    expect(inspectCredential(outcome.result.credential).header.kid).toBe('test-2');
   });
 });

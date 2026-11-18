@@ -1,7 +1,7 @@
 /**
  * devicebasedauth.org browser SDK.
  *
- *   import { DBA } from 'https://devicebasedauth.org/sdk/v1.0.0/dba.js';
+ *   import { DBA } from 'https://devicebasedauth.org/sdk/v1.1.0/dba.js';
  *   const dba = new DBA();
  *   if (!await dba.ready()) await dba.enroll({ aud: ['example.com'], grants: [{ actions: ['example:read'] }] });
  *   const response = await dba.fetch('https://example.com/api/things');
@@ -13,7 +13,7 @@ import { generateKeyPair, exportPublicJwk, signJws } from '../verify/src/jose.js
 import { createProof, inspectCredential } from '../verify/src/credential.js';
 import { describeGrant, evaluateGrants } from '../verify/src/grants.js';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 const DB = 'devicebasedauth';
 const STORE = 'devices';
 
@@ -39,6 +39,9 @@ async function idb(mode, fn) {
 export class DBAError extends Error {
   constructor(message, code, details = {}) { super(message); this.code = code; Object.assign(this, details); }
 }
+
+/** The longest delay setTimeout honours. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 export class DBA {
   /**
@@ -171,12 +174,43 @@ export class DBA {
     return result;
   }
 
-  /** Renew automatically at two thirds of the credential's lifetime while the page is open. */
+  /**
+   * Renew automatically at two thirds of the credential's lifetime while the page is open, and at
+   * once (free) if the issuer has withdrawn the key that signed it.
+   */
   autoRenew({ onError } = {}) {
     clearTimeout(this.renewTimer);
     const p = this.payload; if (!p) return;
+    const run = () => this.renew().then(() => this.autoRenew({ onError }), onError || (() => {}));
     const at = (p.iat + (p.exp - p.iat) * 2 / 3) * 1000 - Date.now();
-    this.renewTimer = setTimeout(() => this.renew().then(() => this.autoRenew({ onError }), onError || (() => {})), Math.max(0, at));
+    // Browsers fire a setTimeout longer than 2^31-1 ms (24.8 days) at once, which would renew in a
+    // loop; wait in steps instead.
+    this.renewTimer = at > MAX_TIMER_MS ? setTimeout(() => this.autoRenew({ onError }), MAX_TIMER_MS) : setTimeout(run, Math.max(0, at));
+    // Each signing key is checked once per instance, so a JWKS that somehow lacks the current key
+    // cannot cause a renewal loop.
+    const { kid } = inspectCredential(this.credential).header;
+    this.checkedKids ||= new Set();
+    if (at > 0 && !this.checkedKids.has(kid)) {
+      this.checkedKids.add(kid);
+      const credential = this.credential;
+      this.keyWithdrawn().then(withdrawn => {
+        if (withdrawn && this.credential === credential) { clearTimeout(this.renewTimer); run(); }
+      }, () => {});
+    }
+  }
+
+  /**
+   * True when the issuer's JWKS no longer lists the key that signed this credential (the key was
+   * withdrawn after a compromise). Relying parties then refuse the credential; renew() replaces it
+   * at no charge. False when there is no credential or the JWKS cannot be fetched.
+   */
+  async keyWithdrawn() {
+    if (!this.credential) return false;
+    const { header } = inspectCredential(this.credential);
+    // no-cache: a copy cached from before a rotation would not list the newest key.
+    const response = await fetch(`${this.origin}/.well-known/jwks.json`, { cache: 'no-cache' }).catch(() => null);
+    const keys = response?.ok ? (await response.json().catch(() => ({}))).keys : null;
+    return Array.isArray(keys) && keys.length > 0 && !keys.some(k => k.kid === header.kid);
   }
 
   /** A short-lived bearer token for one audience (for code that cannot sign each request). */

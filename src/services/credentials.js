@@ -112,9 +112,13 @@ export async function issueCredential(env, account, request, { source, chargeId,
 export async function renewCredential(env, device, body, now = Date.now()) {
   const { payload } = device;
   const account = payload.acct;
-  const record = await rpc(env.ACCOUNTS, account, 'credential-status', { cid: payload.cid });
+  const record = await rpc(env.ACCOUNTS, account, 'credential-status', { cid: payload.cid, with_jws: !!device.recovery });
   assert(record.exists && !record.revoked, 'revoked', 'Credential has been revoked', 403);
   assert(record.jti === payload.jti, 'superseded', 'Present the current version of the credential to renew it', 409);
+  // Recovery renewal (credential signed by a withdrawn issuer key): whoever leaked the key can sign
+  // anything, so only the exact credential DBA issued and stored is renewed. Byte equality, not
+  // claims: a forgery reusing a real cid and jti with wider grants is refused.
+  if (device.recovery) assert(record.jws === device.credential, 'unknown_credential', 'This credential is not the one devicebasedauth.org issued; enroll the device again', 403);
   let rotation = null; let jkt = record.jkt; let status = record.status; let deviceId = record.device_id;
   if (body.new_key_proof) {
     let decoded;
@@ -131,7 +135,8 @@ export async function renewCredential(env, device, body, now = Date.now()) {
     rotation = { device: { ...withoutAttestation(record.device), id: deviceId, jkt, public_jwk: newJwk } };
   }
   const amount = price(rotation ? 'issue' : 'renew');
-  await requireFunds(env, account, amount);
+  // A recovery renewal without rotation is free (AccountDO.op_renew); do not refuse it for funds.
+  if (!device.recovery || rotation) await requireFunds(env, account, amount);
   const iat = Math.floor(now / 1000);
   const version = Number(payload.jti.split('.').at(-1)) + 1;
   // Delegated credentials never outlive the credential that issued them.
@@ -140,8 +145,8 @@ export async function renewCredential(env, device, body, now = Date.now()) {
   const next = { ...payload, ...(rotation && payload.device ? { device: withoutAttestation(payload.device) } : {}), sub: deviceId, jti: `${payload.cid}.${version}`, iat, nbf: iat, exp, cnf: { jkt }, status: { status_list: { idx: status.idx, uri: status.uri } } };
   const credential = await signCredential(next, await activeSigner(env));
   const update = { jti: next.jti, version, iat, exp: next.exp, jws: credential, ...(rotation ? { jkt, device_id: deviceId, status } : {}) };
-  const result = await rpc(env.ACCOUNTS, account, 'renew', { cid: payload.cid, from_jti: payload.jti, update, price: amount, charge_id: `renew-${next.jti}`, rotation, now });
-  return { credential, cid: payload.cid, jti: next.jti, exp: next.exp, rotated: !!rotation, charged: result.charged };
+  const result = await rpc(env.ACCOUNTS, account, 'renew', { cid: payload.cid, from_jti: payload.jti, update, price: amount, charge_id: `renew-${next.jti}`, rotation, ...(device.recovery ? { recovery: true } : {}), now });
+  return { credential, cid: payload.cid, jti: next.jti, exp: next.exp, rotated: !!rotation, ...(device.recovery ? { recovered: true } : {}), charged: result.charged };
 }
 
 /**
