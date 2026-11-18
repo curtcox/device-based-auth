@@ -21,6 +21,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+      - run: go vet ./... && test -z "$(gofmt -l .)" && go test -count=1 ./...
+        working-directory: packages/verify-go
       - run: npm run test:samples
         env:
           DBA_SAMPLES_STRICT: '1'
