@@ -1,0 +1,1416 @@
+{
+  "description": "Grant evaluation conformance vectors. context.now is in seconds; reasons are listed per grant.",
+  "cases": [
+    {
+      "name": "empty grant list denies",
+      "grants": [],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": []
+      }
+    },
+    {
+      "name": "exact action allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "other action denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:uploads:read"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "action_not_granted"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "namespace wildcard allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:*"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "sub-namespace wildcard allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:*"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "wildcard does not cross namespaces",
+      "grants": [
+        {
+          "actions": [
+            "hash:*"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "action_not_granted"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "wildcard needs a segment boundary",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:cont:*"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "action_not_granted"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "resource exact match",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "resources": [
+            "doc-1"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "resource prefix match",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "resources": [
+            "doc-*"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "resource mismatch denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "resources": [
+            "doc-2"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "resource_not_granted"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "missing resource only matches *",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "resources": [
+            "doc-*"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "resource_not_granted"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "second grant allows",
+      "grants": [
+        {
+          "actions": [
+            "x:y"
+          ]
+        },
+        {
+          "actions": [
+            "hashbin:content:write"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 1,
+        "reasons": [
+          [
+            "action_not_granted"
+          ],
+          []
+        ]
+      }
+    },
+    {
+      "name": "inside weekday window (local time)",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "America/Chicago",
+            "windows": [
+              {
+                "days": [
+                  "mon",
+                  "tue",
+                  "wed",
+                  "thu",
+                  "fri"
+                ],
+                "from": "08:00",
+                "to": "18:00"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "window end is exclusive",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "America/Chicago",
+            "windows": [
+              {
+                "from": "08:00",
+                "to": "09:00"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_time_window"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "window start is inclusive",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "America/Chicago",
+            "windows": [
+              {
+                "from": "09:00",
+                "to": "10:00"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "wrong day denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "America/Chicago",
+            "windows": [
+              {
+                "days": [
+                  "sat",
+                  "sun"
+                ],
+                "from": "00:00",
+                "to": "24:00"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_time_window"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "window evaluated in its own zone",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "UTC",
+            "windows": [
+              {
+                "from": "08:00",
+                "to": "09:00"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_time_window"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "overnight window after midnight belongs to start day",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "UTC",
+            "windows": [
+              {
+                "days": [
+                  "tue"
+                ],
+                "from": "22:00",
+                "to": "06:00"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1794981540,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "overnight window does not cover the next morning of a non-listed day",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "UTC",
+            "windows": [
+              {
+                "days": [
+                  "wed"
+                ],
+                "from": "22:00",
+                "to": "06:00"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1794981540,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_time_window"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "summer time shifts local hour (CDT)",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "America/Chicago",
+            "windows": [
+              {
+                "from": "10:00",
+                "to": "11:00"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1784129400,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "not_before in the future denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "not_before": 1795014001
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "before_not_before"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "not_after is exclusive",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "not_after": 1795014000
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "after_not_after"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "network country allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "countries": [
+              "US"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "country": "US"
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "network country denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "countries": [
+              "US"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "country": "CA"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_location:network"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "places are a union",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "countries": [
+              "CA"
+            ],
+            "regions": [
+              "US-MO"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "country": "US",
+            "region": "US-MO"
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "missing network location denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "countries": [
+              "US"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "location_unavailable:network"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "network coordinates inside area",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "areas": [
+              {
+                "lat": 38.627,
+                "lon": -90.199,
+                "radius_m": 50000
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "lat": 38.7,
+            "lon": -90.3
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "network coordinates outside area",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "areas": [
+              {
+                "lat": 38.627,
+                "lon": -90.199,
+                "radius_m": 50000
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "lat": 41.88,
+            "lon": -87.63
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_location:network"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "networks CIDR allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "networks": [
+              "203.0.113.0/24"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.9"
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "networks CIDR denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "networks": [
+              "203.0.113.0/24"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "198.51.100.9"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "network_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "IPv6 network allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "networks": [
+              "2001:db8::/32"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "2001:db8:1::5"
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "country and network must both pass",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "countries": [
+              "US"
+            ],
+            "networks": [
+              "10.0.0.0/8"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "country": "US",
+            "ip": "11.1.1.1"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "network_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "device area allows (distance + accuracy within radius)",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "device",
+            "areas": [
+              {
+                "lat": 38.627,
+                "lon": -90.199,
+                "radius_m": 50000
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "device": {
+            "lat": 38.63,
+            "lon": -90.2,
+            "acc_m": 100,
+            "t": 1795013990
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "device accuracy counts against the radius",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "device",
+            "areas": [
+              {
+                "lat": 38.627,
+                "lon": -90.199,
+                "radius_m": 100
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "device": {
+            "lat": 38.627,
+            "lon": -90.199,
+            "acc_m": 150,
+            "t": 1795014000
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_location:device"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "device location without accuracy never matches",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "device",
+            "areas": [
+              {
+                "lat": 38.627,
+                "lon": -90.199,
+                "radius_m": 50000
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "device": {
+            "lat": 38.627,
+            "lon": -90.199,
+            "t": 1795014000
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_location:device"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "stale device location denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "device",
+            "areas": [
+              {
+                "lat": 38.627,
+                "lon": -90.199,
+                "radius_m": 50000
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "device": {
+            "lat": 38.627,
+            "lon": -90.199,
+            "acc_m": 5,
+            "t": 1795013699
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "location_stale:device"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "both sources required",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "both",
+            "areas": [
+              {
+                "lat": 38.627,
+                "lon": -90.199,
+                "radius_m": 50000
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "lat": 38.6,
+            "lon": -90.2
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "location_unavailable:device"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "usage limit requires online offline",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "limits": {
+            "uses": {
+              "count": 3,
+              "per": "day"
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "online_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "usage limit allowed online (counter enforced by the service)",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "limits": {
+            "uses": {
+              "count": 3,
+              "per": "day"
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "step-up requires online",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "step_up": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "online_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "require.online false does not require online",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "online": false
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "spend cap is a caveat, not a check",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "limits": {
+            "spend_usd_per_month": 0
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "unknown grant key denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "after_dark": true
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "unknown_constraint:after_dark"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "unknown nested key denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "when": {
+            "tz": "UTC",
+            "moon": "full"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "unknown_constraint:when.moon"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "invalid grant denies",
+      "grants": [
+        {
+          "actions": [
+            "not an action"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "all failing reasons are reported",
+      "grants": [
+        {
+          "actions": [
+            "x:y"
+          ],
+          "resources": [
+            "other"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "action_not_granted",
+            "resource_not_granted"
+          ]
+        ]
+      }
+    }
+  ]
+}
