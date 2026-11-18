@@ -2,7 +2,7 @@ import { verifyToken as verifyClerkToken } from '@clerk/backend';
 import { assert } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { digest, verifyToken } from './tokens.js';
-import { verifyCredential, verifyProof, VerificationError, ACCESS_TYP } from '../../packages/verify/src/credential.js';
+import { verifyCredential, verifyProof, VerificationError, ACCESS_TYP, PROOF_MAX_AGE, CLOCK_SKEW } from '../../packages/verify/src/credential.js';
 import { networkLocation } from '../../packages/verify/src/verifier.js';
 import { jwks, withdrawnJwks, issuerName, appAudience } from '../services/issuer.js';
 import { factorAgeMinutes } from './reverify.js';
@@ -82,7 +82,9 @@ async function authenticateDevice(request, env, credential, { anyAudience, recov
     const proof = request.headers.get('DPoP');
     assert(proof, 'proof_required', 'A DPoP proof is required with a DBA credential', 401);
     const verifiedProof = await verifyProof(proof, { method: request.method, url: request.url, credential, jkt: payload.cnf.jkt });
-    const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid });
+    const now = Math.floor(Date.now() / 1000);
+    const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid, proof_key: `${verifiedProof.jkt}:${verifiedProof.jti}`, proof_exp: now + PROOF_MAX_AGE + 2 * CLOCK_SKEW });
+    assert(!status.replayed, 'replayed_proof', 'DPoP proof was already used; make a new proof for each request', 401);
     // The account's own record is authoritative and instant; a rotated credential has a new entry.
     assert(status.exists && !status.revoked && sameStatusEntry(status.status, payload.status.status_list), 'revoked', 'Credential has been revoked', 401);
     const dba = payload.aud.includes(appAudience(env));

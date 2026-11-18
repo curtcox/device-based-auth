@@ -56,3 +56,17 @@ describe('a rotated-away credential version', () => {
     expect(await ask(next, rotated)).toMatchObject({ allow: true });
   });
 });
+
+describe('DPoP proofs on devicebasedauth.org\'s own API', () => {
+  it('accepts each proof once, so captured headers cannot be replayed with another body (STATUS L12)', async () => {
+    const device = await newDevice();
+    const credential = (await enroll(env, 'alice', device, { aud: ['hashbin.org', 'cronly.org'], grants: [{ actions: ['hashbin:content:write', 'cronly:run'] }] })).approve.body.credential;
+    const headers = await device.headers('POST', '/api/v1/token', credential);
+    expect((await call(env, 'POST', '/api/v1/token', { headers, body: { audience: 'hashbin.org' } })).status).toBe(200);
+    const replayed = await call(env, 'POST', '/api/v1/token', { headers, body: { audience: 'cronly.org' } });
+    expect(replayed.status).toBe(401);
+    expect(replayed.body.code).toBe('replayed_proof');
+    const fresh = await call(env, 'POST', '/api/v1/token', { headers: await device.headers('POST', '/api/v1/token', credential), body: { audience: 'cronly.org' } });
+    expect(fresh.status).toBe(200);
+  });
+});

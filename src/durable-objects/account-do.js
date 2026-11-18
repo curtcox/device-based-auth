@@ -306,9 +306,20 @@ export class AccountDO {
   }
 
   /** Online status for one credential (used by the API's own DBA-credential auth and renewals). */
-  async op_credential_status({ cid, with_jws = false }, now) {
+  /**
+   * proof_key/proof_exp: a DPoP proof presented to devicebasedauth.org's own API. DPoP does not
+   * sign the body, so a proof seen once (a logging proxy, a leaked header) must not be accepted
+   * again with another body. The account's single DO instance makes this a global check.
+   */
+  async op_credential_status({ cid, with_jws = false, proof_key, proof_exp }, now) {
     const cred = await this.storage.get(`cred:${cid}`);
     if (!cred) return { exists: false, revoked: true };
+    if (proof_key) {
+      const nowSeconds = Math.floor(now / 1000);
+      for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
+      if (this.proofs.has(proof_key)) return { exists: true, replayed: true };
+      this.proofs.set(proof_key, proof_exp);
+    }
     return { exists: true, ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device };
   }
 
