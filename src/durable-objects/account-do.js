@@ -208,7 +208,7 @@ export class AccountDO {
       }
       const today = (await readBalance(tx, now)).day;
       assert((today.counts?.issue || 0) < settings.max_issues_per_day, 'issuance_limit', `This account may issue ${settings.max_issues_per_day} credentials a day (UTC); the owner can raise the limit in the dashboard`, 429, { limit: settings.max_issues_per_day });
-      await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid } }, now);
+      const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid } }, now);
       const existing = await tx.get(`device:${device.id}`);
       const stored = existing ? { ...existing, name: device.name || existing.name, ...(device.attestation ? { attestation: device.attestation, key_protection: device.key_protection } : {}), last_issued_at: now } : { ...device, created_at: now, last_issued_at: now };
       if (stored.revoked_at) { delete stored.revoked_at; stored.reinstated_at = now; }
@@ -216,7 +216,7 @@ export class AccountDO {
       const cred = { ...record, created_at: now, events: [{ at: now, type: 'issued', jti: record.jti, source }] };
       await tx.put(`cred:${record.cid}`, cred);
       await this.audit(tx, now, 'credential.issued', { cid: record.cid, device_id: device.id, aud: record.aud, source, ...(record.enrollment_token ? { token_id: record.enrollment_token } : {}) });
-      return { cid: record.cid, charged: price };
+      return { cid: record.cid, charged: price, balance_microdollars: paid.balance_microdollars };
     });
   }
 
@@ -401,7 +401,7 @@ export class AccountDO {
       // once per credential per withdrawn key, since the result is signed by the active key.
       const free = recovery && !rotation;
       assert(free || cap === null || used < cap, 'renewal_limit', `This credential has been renewed ${used} times this month, the account's limit; the owner can raise it in the dashboard`, 429, { limit: cap });
-      if (!free) await charge(tx, { id: charge_id, kind: rotation ? 'rotate' : 'renew', amount: price, detail: { cid } }, now);
+      const paid = free ? null : await charge(tx, { id: charge_id, kind: rotation ? 'rotate' : 'renew', amount: price, detail: { cid } }, now);
       if (rotation) await tx.put(`outbox:${cid}:${cred.status.idx}`, { shard: cred.status.shard, idx: cred.status.idx, at: now });
       const type = rotation ? 'rotated' : recovery ? 'recovered' : 'renewed';
       const next = { ...cred, ...update, renewed_at: now, renewals: { period: monthOf(now), count: used + (free ? 0 : 1) }, events: [...cred.events, { at: now, type, jti: update.jti }].slice(-EVENTS_KEPT) };
@@ -411,7 +411,7 @@ export class AccountDO {
         await tx.put(`device:${rotation.device.id}`, { ...rotation.device, created_at: now, last_issued_at: now, rotated_from: device?.id });
       }
       await this.audit(tx, now, `credential.${type}`, { cid, jti: update.jti });
-      return { cid, jti: update.jti, charged: free ? 0 : price };
+      return { cid, jti: update.jti, charged: free ? 0 : price, ...(paid ? { balance_microdollars: paid.balance_microdollars } : {}) };
     });
     if (rotation) await this.deliverOutbox(now);
     return result;

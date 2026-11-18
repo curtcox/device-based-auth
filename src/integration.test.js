@@ -139,7 +139,11 @@ describe('renewal, rotation and access tokens', () => {
     const device = await newDevice();
     const credential = (await enroll(env, 'alice', device, { aud: ['hashbin.org', 'cronly.org'], grants: [{ actions: ['hashbin:content:write', 'cronly:run'] }] })).approve.body.credential;
     const result = await call(env, 'POST', '/api/v1/token', { headers: await device.headers('POST', '/api/v1/token', credential), body: { audience: 'cronly.org' } });
-    expect(result.body).toMatchObject({ token_type: 'Bearer', expires_in: 600, audience: 'cronly.org', cost_microdollars: 0 });
+    expect(result.body).toMatchObject({ token_type: 'Bearer', expires_in: 600, audience: 'cronly.org', cost_microdollars: 5 });
+    expect(result.headers.get('X-DBA-Cost-Microdollars')).toBe('5');
+    // This device's grants cover two sites, not the account: it does not see the owner's balance.
+    expect(result.body.balance_microdollars).toBeUndefined();
+    expect(result.headers.get('X-DBA-Balance-Microdollars')).toBeNull();
     const token = inspectCredential(result.body.access_token);
     expect(token.header.typ).toBe('dba-access+jwt');
     expect(token.payload.grants).toEqual([{ actions: ['cronly:run'] }]);

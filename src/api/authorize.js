@@ -28,7 +28,7 @@ export async function authorize(request, env, auth) {
   assert(registered.owner === auth.account, 'forbidden', 'You can only ask for decisions for audiences you own', 403);
   assert(actionNamespace(body.action) === registered.namespace, 'invalid_request', `Actions for ${body.audience} start with "${registered.namespace}:"`);
   const charged = await rpc(env.ACCOUNTS, auth.account, 'charge', { kind: 'decision', amount: price('decision'), aggregate: true, detail: { audience: body.audience } });
-  const deny = (code, message) => ({ allow: false, code, message, reasons: [], cost_microdollars: charged.charged });
+  const deny = (code, message) => ({ allow: false, code, message, reasons: [], cost_microdollars: charged.charged, balance_microdollars: charged.balance_microdollars });
   const now = Math.floor(Date.now() / 1000);
   let payload; let proof = null;
   try {
@@ -53,6 +53,6 @@ export async function authorize(request, env, auth) {
     device_id: payload.sub, account: payload.acct, cid: payload.cid,
     // Callers may cache an allow briefly unless counters or step-up were involved.
     expires_in: decision.allow && !grant?.limits?.uses && !grant?.require?.step_up ? 30 : 0,
-    cost_microdollars: charged.charged
+    cost_microdollars: charged.charged, balance_microdollars: charged.balance_microdollars
   };
 }

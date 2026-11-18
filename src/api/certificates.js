@@ -45,12 +45,12 @@ export async function deviceCertificateFor(request, env, auth) {
   const now = Date.now();
   const notAfter = Math.min(now + lifetime * 1000, payload.exp * 1000);
   assert(notAfter > now + 60000, 'credential_expiring', 'The credential expires too soon; renew it first', 409);
-  await rpc(env.ACCOUNTS, payload.acct, 'charge', { kind: 'token', amount: price('token'), aggregate: true, now });
+  const paid = await rpc(env.ACCOUNTS, payload.acct, 'charge', { kind: 'token', amount: price('token'), aggregate: true, now });
   const [active] = await caCertificates(env);
   const issued = await deviceCertificate({ devicePublicJwk, payload, notBefore: now - 60000, notAfter, issuer: { kid: active.kid, publicJwk: active.signer.publicJwk, privateKey: active.signer.key } });
   return {
     certificate: pem(issued.der), ca: pem(active.der), serial: issued.serial,
     not_before: new Date(now - 60000).toISOString(), not_after: new Date(notAfter).toISOString(),
-    subject: payload.sub, uris: deviceUris(payload), cost_microdollars: price('token')
+    subject: payload.sub, uris: deviceUris(payload), cost_microdollars: paid.charged, balance_microdollars: paid.balance_microdollars
   };
 }

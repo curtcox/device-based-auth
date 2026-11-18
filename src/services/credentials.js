@@ -101,7 +101,7 @@ export async function issueCredential(env, account, request, { source, chargeId,
   const credential = await signCredential(payload, await activeSigner(env));
   const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}) };
   const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
-  return { credential, cid, device_id: deviceId, payload, charged: stored.charged };
+  return { credential, cid, device_id: deviceId, payload, charged: stored.charged, balance_microdollars: stored.balance_microdollars };
 }
 
 /**
@@ -146,7 +146,7 @@ export async function renewCredential(env, device, body, now = Date.now()) {
   const credential = await signCredential(next, await activeSigner(env));
   const update = { jti: next.jti, version, iat, exp: next.exp, jws: credential, ...(rotation ? { jkt, device_id: deviceId, status } : {}) };
   const result = await rpc(env.ACCOUNTS, account, 'renew', { cid: payload.cid, from_jti: payload.jti, update, price: amount, charge_id: `renew-${next.jti}`, rotation, ...(device.recovery ? { recovery: true } : {}), now });
-  return { credential, cid: payload.cid, jti: next.jti, exp: next.exp, rotated: !!rotation, ...(device.recovery ? { recovered: true } : {}), charged: result.charged };
+  return { credential, cid: payload.cid, jti: next.jti, exp: next.exp, rotated: !!rotation, ...(device.recovery ? { recovered: true } : {}), charged: result.charged, balance_microdollars: result.balance_microdollars };
 }
 
 /**
@@ -160,11 +160,11 @@ export async function exchangeToken(env, device, { audience }, now = Date.now())
   assert(registered.accept_access_tokens !== false, 'access_tokens_refused', `${audience} does not accept access tokens`, 403);
   const grants = payload.grants.map(g => ({ ...g, actions: g.actions.filter(a => actionNamespace(a) === registered.namespace) })).filter(g => g.actions.length);
   assert(grants.length, 'no_grants', `The credential has no grants for ${audience}`);
-  await rpc(env.ACCOUNTS, payload.acct, 'charge', { kind: 'token', amount: price('token'), aggregate: true, now });
+  const paid = await rpc(env.ACCOUNTS, payload.acct, 'charge', { kind: 'token', amount: price('token'), aggregate: true, now });
   const iat = Math.floor(now / 1000);
   const exp = Math.min(iat + ACCESS_TOKEN_SECONDS, payload.exp);
   const token = { iss: payload.iss, sub: payload.sub, acct: payload.acct, aud: [audience], cid: payload.cid, jti: randomId('tok'), iat, nbf: iat, exp, device: payload.device, grants, status: payload.status, ver: payload.ver };
-  return { access_token: await signAccessToken(token, await activeSigner(env)), token_type: 'Bearer', expires_in: exp - iat, audience };
+  return { access_token: await signAccessToken(token, await activeSigner(env)), token_type: 'Bearer', expires_in: exp - iat, audience, cost_microdollars: paid.charged, balance_microdollars: paid.balance_microdollars };
 }
 
 export { CREDENTIAL_TYP };

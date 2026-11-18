@@ -98,7 +98,7 @@ export async function approveEnrollment(request, env, auth) {
     aud: body.aud ?? data.aud, grants: body.grants ?? data.grants, lifetime_seconds: body.lifetime_seconds ?? data.lifetime
   }, { source: 'enrollment', chargeId: `enroll-${data.id}`, attestation: data.attestation });
   await rpc(env.ENROLLMENTS, data.id, 'put', { result: { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, account: auth.account } });
-  return { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, return_origin: data.return_origin, enrollment_id: data.id, cost_microdollars: issued.charged };
+  return { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, return_origin: data.return_origin, enrollment_id: data.id, cost_microdollars: issued.charged, balance_microdollars: issued.balance_microdollars };
 }
 
 export async function denyEnrollment(request, env) {

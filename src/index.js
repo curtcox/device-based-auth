@@ -28,7 +28,8 @@ export { SafetyDO } from './durable-objects/safety-do.js';
 
 const V1 = '/api/v1';
 // The route table is the only dispatch source: an undeclared endpoint cannot execute.
-// `free: true` marks public routes stopped by the cost-safety brake.
+// `free: true` marks public routes stopped by the cost-safety brake. `billable` names the price a
+// route charges; `?dry_run=1` on it quotes that price and does nothing else (master plan §7.1).
 export const API_ROUTES = [
   { method: 'GET', path: '/health', access: PUBLIC, handler: 'health' },
   { method: 'GET', path: '/.well-known/jwks.json', access: PUBLIC, handler: 'jwks' },
@@ -42,9 +43,9 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/enrollments/describe`, access: PUBLIC, handler: 'enroll-describe', free: true },
   { method: 'POST', path: `${V1}/enrollments/attestation-challenge`, access: PUBLIC, handler: 'attestation-challenge', free: true },
   { method: 'GET', path: `${V1}/enrollments/:id`, access: PUBLIC, handler: 'enroll-poll' },
-  { method: 'POST', path: `${V1}/enrollments/approve`, access: SESSION, handler: 'enroll-approve' },
+  { method: 'POST', path: `${V1}/enrollments/approve`, access: SESSION, handler: 'enroll-approve', billable: 'issue' },
   { method: 'POST', path: `${V1}/enrollments/deny`, access: SESSION, handler: 'enroll-deny' },
-  { method: 'POST', path: `${V1}/enrollments/redeem`, access: PUBLIC, handler: 'enroll-redeem' },
+  { method: 'POST', path: `${V1}/enrollments/redeem`, access: PUBLIC, handler: 'enroll-redeem', billable: 'issue' },
   { method: 'GET', path: `${V1}/enrollment-tokens`, access: 'credentials:issue', handler: 'enrollment-tokens' },
   { method: 'POST', path: `${V1}/enrollment-tokens`, access: 'credentials:issue', handler: 'enrollment-tokens' },
   { method: 'DELETE', path: `${V1}/enrollment-tokens/:id`, access: 'credentials:issue', handler: 'enrollment-tokens' },
@@ -55,27 +56,27 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/transactions`, access: 'transactions:read', handler: 'transactions' },
   { method: 'GET', path: `${V1}/audit`, access: 'transactions:read', handler: 'audit' },
   { method: 'GET', path: `${V1}/credentials`, access: 'credentials:read', handler: 'credentials-list' },
-  { method: 'POST', path: `${V1}/credentials`, access: 'credentials:issue', handler: 'credentials-create' },
+  { method: 'POST', path: `${V1}/credentials`, access: 'credentials:issue', handler: 'credentials-create', billable: 'issue' },
   { method: 'GET', path: `${V1}/credentials/:cid`, access: 'credentials:read', handler: 'credentials-get' },
   { method: 'DELETE', path: `${V1}/credentials/:cid`, access: 'credentials:revoke', handler: 'revoke-credential' },
   { method: 'GET', path: `${V1}/credentials/:cid/decisions`, access: 'credentials:read', handler: 'credentials-decisions' },
-  { method: 'POST', path: `${V1}/credentials/:cid/renew`, access: DEVICE, handler: 'renew' },
+  { method: 'POST', path: `${V1}/credentials/:cid/renew`, access: DEVICE, handler: 'renew', billable: 'renew' },
   { method: 'GET', path: `${V1}/devices`, access: 'credentials:read', handler: 'devices-list' },
   { method: 'GET', path: `${V1}/devices/:id`, access: 'credentials:read', handler: 'devices-get' },
   { method: 'POST', path: `${V1}/devices/:id/revoke`, access: 'credentials:revoke', handler: 'revoke-device' },
   { method: 'POST', path: `${V1}/revoke-all`, access: 'credentials:revoke', handler: 'revoke-all' },
   { method: 'POST', path: `${V1}/self/revoke`, access: DEVICE, handler: 'revoke-self' },
-  { method: 'POST', path: `${V1}/token`, access: DEVICE, handler: 'token' },
-  { method: 'POST', path: `${V1}/certificate`, access: DEVICE, handler: 'certificate' },
-  { method: 'POST', path: `${V1}/authorize`, access: 'authorize', handler: 'authorize' },
+  { method: 'POST', path: `${V1}/token`, access: DEVICE, handler: 'token', billable: 'token' },
+  { method: 'POST', path: `${V1}/certificate`, access: DEVICE, handler: 'certificate', billable: 'token' },
+  { method: 'POST', path: `${V1}/authorize`, access: 'authorize', handler: 'authorize', billable: 'decision' },
   { method: 'GET', path: `${V1}/step-ups`, access: SESSION, handler: 'step-ups' },
   { method: 'POST', path: `${V1}/step-ups/:id/approve`, access: SESSION, handler: 'step-up-decide' },
   { method: 'POST', path: `${V1}/step-ups/:id/deny`, access: SESSION, handler: 'step-up-decide' },
   { method: 'GET', path: `${V1}/audiences`, access: PUBLIC, handler: 'audiences' },
   { method: 'GET', path: `${V1}/audiences/:name`, access: PUBLIC, handler: 'audiences' },
   { method: 'GET', path: `${V1}/audiences/:name/usage`, access: 'audiences:read', handler: 'audience-usage' },
-  { method: 'POST', path: `${V1}/audiences`, access: 'audiences:write', handler: 'audiences' },
-  { method: 'PATCH', path: `${V1}/audiences/:name`, access: 'audiences:write', handler: 'audiences' },
+  { method: 'POST', path: `${V1}/audiences`, access: 'audiences:write', handler: 'audiences', billable: 'audience' },
+  { method: 'PATCH', path: `${V1}/audiences/:name`, access: 'audiences:write', handler: 'audiences', billable: 'audience' },
   { method: 'POST', path: `${V1}/audiences/:name/webhook-test`, access: 'audiences:write', handler: 'audience-webhook-test' },
   { method: 'GET', path: `${V1}/keys`, access: SESSION, handler: 'keys' },
   { method: 'POST', path: `${V1}/keys`, access: SESSION, handler: 'keys' },
@@ -106,7 +107,24 @@ export function matchRoute(method, path) {
 }
 
 const WORKER_PATHS = ['/api/', '/status/', '/.well-known/', '/oauth/', '/webhooks/'];
-const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, DPoP, Content-Type, Idempotency-Key', 'Access-Control-Expose-Headers': 'X-DBA-Cost-Microdollars, DPoP-Nonce', 'Access-Control-Max-Age': '86400' };
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, DPoP, Content-Type, Idempotency-Key', 'Access-Control-Expose-Headers': 'X-DBA-Cost-Microdollars, X-DBA-Balance-Microdollars, DPoP-Nonce', 'Access-Control-Max-Age': '86400' };
+
+/**
+ * The price a dry run quotes. A renewal with new_key_proof rotates (the issue price); a recovery
+ * renewal (withdrawn issuer key, no rotation) is free.
+ */
+async function dryRunPrice(route, request, auth) {
+  if (route.handler !== 'renew') return { op: route.billable, price: price(route.billable) };
+  const body = await request.clone().json().catch(() => ({}));
+  if (body?.new_key_proof) return { op: 'issue', price: price('issue') };
+  return { op: 'renew', price: auth?.device?.recovery ? 0 : price('renew') };
+}
+
+/**
+ * Callers see the paying account's balance only if they may read the account: a device whose
+ * grants cover one site does not learn its owner's balance. Every payer here is auth.account.
+ */
+const seesBalance = auth => !!auth && canAccess(auth, 'account:read');
 
 async function handle(route, request, env, auth) {
   const url = new URL(request.url);
@@ -179,10 +197,9 @@ function forwardHeaders(request) {
   return headers;
 }
 
-/** True when the caller should pay for a read: API keys and non-dashboard devices. */
-function meteredRead(request, auth) {
-  return request.method === 'GET' && auth && (auth.kind === 'key' || (auth.kind === 'device' && !canAccess({ ...auth, session: false }, SESSION)));
-}
+/** True when the caller pays for reads: API keys and non-dashboard devices. */
+const paysForReads = auth => !!auth && (auth.kind === 'key' || (auth.kind === 'device' && !canAccess({ ...auth, session: false }, SESSION)));
+const meteredRead = (request, auth) => request.method === 'GET' && paysForReads(auth);
 
 const worker = {
   async scheduled(event, env, ctx) {
@@ -205,13 +222,28 @@ const worker = {
       if (route.free) assert(!(await brakeActive(env)), 'cost_brake', 'This free endpoint is paused by the cost-safety brake; paid endpoints keep working', 503);
       const auth = route.access === PUBLIC ? null : await authenticate(request, env, { anyAudience: route.access === DEVICE || route.access === AUTHENTICATED, recovery: route.handler === 'renew' });
       assert(canAccess(auth, route.access), 'insufficient_scope', 'Credential does not allow this operation', 403);
-      let cost = 0;
+      let cost = 0; let balance;
       if (auth) await rpc(env.ACCOUNTS, auth.account, 'rate-limit', { id: auth.key_id || auth.device?.payload.cid || 'session', limit: auth.session ? 300 : 120 });
-      if (meteredRead(request, auth)) cost = (await rpc(env.ACCOUNTS, auth.account, 'charge', { kind: 'read', amount: price('read'), aggregate: true })).charged;
+      if (route.billable && url.searchParams.get('dry_run') === '1') {
+        // Quote only: nothing is validated, reserved or charged. Reading the balance is a read, and
+        // costs what a read costs this caller (free from the dashboard).
+        const quote = await dryRunPrice(route, request, auth);
+        const data = { dry_run: true, op: quote.op, price_microdollars: quote.price };
+        if (seesBalance(auth)) {
+          if (paysForReads(auth)) ({ charged: cost, balance_microdollars: balance } = await rpc(env.ACCOUNTS, auth.account, 'charge', { kind: 'read', amount: price('read'), aggregate: true }));
+          else balance = (await rpc(env.ACCOUNTS, auth.account, 'account')).balance_microdollars;
+          Object.assign(data, { balance_microdollars: balance, sufficient: balance >= quote.price });
+        }
+        return Response.json({ ...data, cost_microdollars: cost }, { headers: { ...CORS, 'X-DBA-Cost-Microdollars': String(cost), ...(balance === undefined ? {} : { 'X-DBA-Balance-Microdollars': String(balance) }) } });
+      }
+      if (meteredRead(request, auth)) ({ charged: cost, balance_microdollars: balance } = await rpc(env.ACCOUNTS, auth.account, 'charge', { kind: 'read', amount: price('read'), aggregate: true }));
       const data = await handle(route, request, env, auth);
       if (data instanceof Response) return data;
       const total = cost + (data?.cost_microdollars ?? 0);
-      return Response.json({ ...data, cost_microdollars: total }, { headers: { ...CORS, 'X-DBA-Cost-Microdollars': String(total) } });
+      const { balance_microdollars: reported, ...rest } = data ?? {};
+      balance = reported ?? balance;
+      const shown = balance !== undefined && seesBalance(auth);
+      return Response.json({ ...rest, ...(shown ? { balance_microdollars: balance } : {}), cost_microdollars: total }, { headers: { ...CORS, 'X-DBA-Cost-Microdollars': String(total), ...(shown ? { 'X-DBA-Balance-Microdollars': String(balance) } : {}) } });
     } catch (error) {
       const response = errorResponse(error);
       for (const [k, v] of Object.entries(CORS)) response.headers.set(k, v);

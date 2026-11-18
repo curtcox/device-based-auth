@@ -891,6 +891,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op issue) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -908,6 +918,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -978,7 +1005,8 @@
               }
             }
           }
-        }
+        },
+        "x-billable": "issue"
       }
     },
     "/api/v1/enrollments/deny": {
@@ -1088,6 +1116,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op issue) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -1105,6 +1143,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -1163,7 +1218,8 @@
               }
             }
           }
-        }
+        },
+        "x-billable": "issue"
       }
     },
     "/api/v1/enrollment-tokens": {
@@ -2008,6 +2064,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op issue) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -2025,6 +2091,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -2112,7 +2195,8 @@
               }
             }
           }
-        }
+        },
+        "x-billable": "issue"
       }
     },
     "/api/v1/credentials/{cid}": {
@@ -2384,6 +2468,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op renew) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -2401,6 +2495,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -2451,7 +2562,8 @@
               }
             }
           }
-        }
+        },
+        "x-billable": "renew"
       }
     },
     "/api/v1/devices": {
@@ -2883,6 +2995,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op token) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -2900,6 +3022,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -2952,7 +3091,8 @@
               }
             }
           }
-        }
+        },
+        "x-billable": "token"
       }
     },
     "/api/v1/certificate": {
@@ -2973,6 +3113,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op token) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -2990,6 +3140,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -3041,7 +3208,8 @@
               }
             }
           }
-        }
+        },
+        "x-billable": "token"
       }
     },
     "/api/v1/authorize": {
@@ -3068,6 +3236,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op decision) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -3085,6 +3263,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -3190,7 +3385,8 @@
               }
             }
           }
-        }
+        },
+        "x-billable": "decision"
       }
     },
     "/api/v1/step-ups": {
@@ -3506,6 +3702,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op audience) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -3523,6 +3729,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -3558,7 +3781,8 @@
             "description": "Cost-safety brake or dependency unavailable"
           }
         },
-        "description": "Requires scope `audiences:write` (API key), a signed-in session, or a device credential with `dba:audiences:write`."
+        "description": "Requires scope `audiences:write` (API key), a signed-in session, or a device credential with `dba:audiences:write`.",
+        "x-billable": "audience"
       }
     },
     "/api/v1/audiences/{name}": {
@@ -3659,6 +3883,16 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op audience) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
           }
         ],
         "responses": {
@@ -3676,6 +3910,23 @@
                     }
                   }
                 }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
               }
             }
           },
@@ -3711,7 +3962,8 @@
             "description": "Cost-safety brake or dependency unavailable"
           }
         },
-        "description": "Requires scope `audiences:write` (API key), a signed-in session, or a device credential with `dba:audiences:write`."
+        "description": "Requires scope `audiences:write` (API key), a signed-in session, or a device credential with `dba:audiences:write`.",
+        "x-billable": "audience"
       }
     },
     "/api/v1/audiences/{name}/usage": {

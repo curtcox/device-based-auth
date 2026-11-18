@@ -19,7 +19,7 @@ export async function createCredential(request, env, auth) {
     // A device may only delegate grants narrower than its own, and never past its own expiry.
     parentGrants: parent?.grants, maxExp: parent?.exp, parentCid: parent?.cid
   });
-  return { credential: issued.credential, cid: issued.cid, device_id: issued.device_id, payload: issued.payload, cost_microdollars: issued.charged };
+  return { credential: issued.credential, cid: issued.cid, device_id: issued.device_id, payload: issued.payload, cost_microdollars: issued.charged, balance_microdollars: issued.balance_microdollars };
 }
 
 export async function listCredentials(request, env, auth) {

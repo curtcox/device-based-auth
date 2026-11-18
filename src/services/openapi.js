@@ -73,6 +73,11 @@ export function openapi(routes) {
     if (route.access !== PUBLIC && !SECURITY[route.access]) operation.description = `Requires scope \`${route.access}\` (API key), a signed-in session, or a device credential with \`dba:${route.access}\`.`;
     if (['POST', 'PATCH', 'DELETE'].includes(route.method) && route.path.startsWith('/api/')) operation.parameters.push({ name: 'Idempotency-Key', in: 'header', schema: { type: 'string', maxLength: 128 } });
     if (BODIES[route.handler] && route.method !== 'GET' && route.method !== 'DELETE') operation.requestBody = { required: true, content: { 'application/json': { schema: BODIES[route.handler] } } };
+    if (route.billable) {
+      operation.parameters.push({ name: 'dry_run', in: 'query', schema: { enum: ['1'] }, description: `1: only quote the price (op ${route.billable}) and, for callers with account:read, the balance and whether it suffices. Nothing else happens.` });
+      operation['x-billable'] = route.billable;
+      operation.responses[200].headers = { 'X-DBA-Cost-Microdollars': { schema: money }, 'X-DBA-Balance-Microdollars': { schema: money, description: 'Remaining balance; only for callers with account:read.' } };
+    }
     if (route.handler === 'quote') operation.parameters.push({ name: 'op', in: 'query', required: true, schema: { type: 'string' } });
     if (route.handler === 'credentials-list') for (const name of ['status', 'audience', 'device', 'cursor']) operation.parameters.push({ name, in: 'query', schema: { type: 'string' } });
     if (route.handler === 'enroll-poll') operation.parameters.push({ name: 'poll_token', in: 'query', required: true, schema: { type: 'string' } });
