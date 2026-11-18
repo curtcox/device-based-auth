@@ -1,0 +1,122 @@
+import { describe, it, expect } from 'vitest';
+import { generateKeyPair, exportPublicJwk, jwkThumbprint, b64u, unb64u, decodeJws } from './jose.js';
+import { verifyCredential, createProof, verifyProof, ReplayCache, inspectCredential } from './credential.js';
+import { issuerSigner, jwksFor, signCredential, signStatusList, signAccessToken } from './issuer.js';
+import { getBit, setBit, encodeStatusList, decodeStatusList } from './status-list.js';
+import { createVerifier } from './verifier.js';
+
+const ISSUER = 'https://devicebasedauth.org';
+const NOW = 1795017600;
+async function issuerKey(kid = 'test-1') {
+  const pair = await generateKeyPair(true);
+  return { kid, jwk: await crypto.subtle.exportKey('jwk', pair.privateKey) };
+}
+async function device() {
+  const pair = await generateKeyPair(false);
+  const jwk = await exportPublicJwk(pair.publicKey);
+  return { privateKey: pair.privateKey, publicJwk: jwk, jkt: await jwkThumbprint(jwk) };
+}
+function payload(dev, extra = {}) {
+  return { iss: ISSUER, sub: 'dev_ABCDEFGH12', acct: 'acct_1', aud: ['hashbin.org'], cid: 'crd_ABCDEFGH12', jti: 'crd_ABCDEFGH12.1', iat: NOW, nbf: NOW, exp: NOW + 86400, cnf: { jkt: dev.jkt }, grants: [{ actions: ['hashbin:content:write'] }], status: { status_list: { idx: 5, uri: `${ISSUER}/status/v1/lists/0` } }, ver: 1, ...extra };
+}
+
+describe('jose', () => {
+  it('round-trips base64url', () => { const bytes = crypto.getRandomValues(new Uint8Array(60000)); expect(unb64u(b64u(bytes))).toEqual(bytes); });
+  it('computes the RFC 7638 example thumbprint', async () => {
+    // RFC 7638 §3.1 uses RSA; this is the RFC 9449 §6.1 P-256 example thumbprint input recomputed.
+    const jwk = { kty: 'EC', crv: 'P-256', x: 'l8tFrhx-34tV3hRICRDY9zCkDlpBhF42UQUfWVAWBFs', y: '9VE4jf_Ok_o64zbTTlcuNJajHmt6v9TDVrU0CdvGRDA' };
+    expect(await jwkThumbprint(jwk)).toBe('0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I');
+  });
+});
+
+describe('credentials', () => {
+  it('signs, verifies and rejects tampering, expiry and wrong audience', async () => {
+    const key = await issuerKey(); const signer = await issuerSigner(key); const jwks = jwksFor([key]); const dev = await device();
+    const jws = await signCredential(payload(dev), signer);
+    expect((await verifyCredential(jws, { jwks, audience: 'hashbin.org', now: NOW + 10 })).payload.sub).toBe('dev_ABCDEFGH12');
+    expect(inspectCredential(jws).header).toMatchObject({ typ: 'dba-device+jwt', alg: 'ES256', kid: 'test-1' });
+    const [h, , s] = jws.split('.');
+    const forged = `${h}.${b64u(JSON.stringify({ ...payload(dev), grants: [{ actions: ['hashbin:*'] }] }))}.${s}`;
+    await expect(verifyCredential(forged, { jwks, now: NOW })).rejects.toMatchObject({ code: 'invalid_signature' });
+    await expect(verifyCredential(jws, { jwks, now: NOW + 86400 + 61 })).rejects.toMatchObject({ code: 'expired' });
+    await expect(verifyCredential(jws, { jwks, audience: 'cronly.org', now: NOW })).rejects.toMatchObject({ code: 'wrong_audience' });
+    await expect(verifyCredential(jws, { jwks: jwksFor([await issuerKey('other')]), now: NOW })).rejects.toMatchObject({ code: 'unknown_kid' });
+    await expect(verifyCredential(jws, { jwks, now: NOW, typ: 'access' })).rejects.toMatchObject({ code: 'wrong_type' });
+  });
+  it('refuses to sign invalid payloads', async () => {
+    const signer = await issuerSigner(await issuerKey()); const dev = await device();
+    await expect(signCredential(payload(dev, { grants: [{ actions: ['bad'] }] }), signer)).rejects.toThrow(/namespace/);
+  });
+});
+
+describe('proofs', () => {
+  it('binds a request to the device key and the credential', async () => {
+    const dev = await device(); const other = await device(); const credential = 'a.b.c';
+    const proof = await createProof({ ...dev, method: 'post', url: 'https://hashbin.org/api/upload?x=1', credential, now: NOW, location: { lat: 1, lon: 2, acc_m: 10, t: NOW } });
+    const replay = new ReplayCache();
+    const verified = await verifyProof(proof, { method: 'POST', url: 'https://hashbin.org/api/upload', credential, jkt: dev.jkt, now: NOW + 5, replay });
+    expect(verified.loc).toEqual({ lat: 1, lon: 2, acc_m: 10, t: NOW });
+    await expect(verifyProof(proof, { method: 'POST', url: 'https://hashbin.org/api/upload', credential, jkt: dev.jkt, now: NOW + 5, replay })).rejects.toMatchObject({ code: 'replayed_proof' });
+    await expect(verifyProof(proof, { method: 'POST', url: 'https://hashbin.org/api/upload', credential, jkt: other.jkt, now: NOW })).rejects.toMatchObject({ code: 'key_mismatch' });
+    await expect(verifyProof(proof, { method: 'GET', url: 'https://hashbin.org/api/upload', credential, jkt: dev.jkt, now: NOW })).rejects.toMatchObject({ code: 'invalid_proof' });
+    await expect(verifyProof(proof, { method: 'POST', url: 'https://hashbin.org/api/upload', credential: 'x.y.z', jkt: dev.jkt, now: NOW })).rejects.toMatchObject({ code: 'invalid_proof' });
+    await expect(verifyProof(proof, { method: 'POST', url: 'https://hashbin.org/api/upload', credential, jkt: dev.jkt, now: NOW + 200 })).rejects.toMatchObject({ code: 'stale_proof' });
+  });
+  it('keeps the replay cache bounded', () => {
+    const cache = new ReplayCache(10, 3);
+    for (const id of ['a', 'b', 'c', 'd']) expect(cache.check(id, 0)).toBe(true);
+    expect(cache.seen.size).toBe(3);
+    expect(cache.check('d', 1)).toBe(false);
+    expect(cache.check('d', 20)).toBe(true);
+  });
+});
+
+describe('status lists', () => {
+  it('uses LSB-first bit order and zlib', async () => {
+    let bytes = new Uint8Array(1); bytes = setBit(bytes, 0); bytes = setBit(bytes, 9); bytes = setBit(bytes, 100000);
+    expect(bytes[0]).toBe(1); expect(bytes[1]).toBe(2);
+    const decoded = await decodeStatusList(await encodeStatusList(bytes));
+    expect([0, 1, 9, 100000, 5e6].map(i => getBit(decoded, i))).toEqual([1, 0, 1, 1, 0]);
+  });
+  it('decodes the IETF draft example', async () => {
+    // draft-ietf-oauth-status-list §4.1 example: status[0]=1, [1]=0, [2]=0, [3]=1, [4]=1, [5]=1, [6]=0, [7]=1, [8]=1, [9]=1, ...
+    const bytes = await decodeStatusList({ bits: 1, lst: 'eNrbuRgAAhcBXQ' });
+    expect([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => getBit(bytes, i))).toEqual([1, 0, 0, 1, 1, 1, 0, 1, 1, 1]);
+  });
+});
+
+describe('verifier', () => {
+  async function setup({ revoked = false } = {}) {
+    const key = await issuerKey(); const signer = await issuerSigner(key); const dev = await device();
+    const credential = await signCredential(payload(dev), signer);
+    const uri = `${ISSUER}/status/v1/lists/0`;
+    const list = await signStatusList({ uri, bytes: revoked ? setBit(new Uint8Array(1), 5) : new Uint8Array(1), issuer: ISSUER, now: NOW }, signer);
+    let fetches = 0;
+    const fetch = async url => { fetches++; if (url.endsWith('/.well-known/jwks.json')) return Response.json(jwksFor([key])); if (url === uri) return new Response(list); return new Response('nope', { status: 404 }); };
+    const verifier = createVerifier({ audience: 'hashbin.org', fetch, now: () => NOW + 1 });
+    const request = async (method = 'POST', url = 'https://hashbin.org/api/content') => new Request(url, { method, headers: { Authorization: `DBA ${credential}`, DPoP: await createProof({ ...dev, method, url, credential, now: NOW }) } });
+    return { verifier, request, credential, signer, fetches: () => fetches, dev };
+  }
+  it('allows a granted action and caches the JWKS and status list', async () => {
+    const { verifier, request, fetches } = await setup();
+    const result = await verifier.verifyRequest(await request(), { action: 'hashbin:content:write' });
+    expect(result).toMatchObject({ allow: true, status: 200, device: 'dev_ABCDEFGH12', account: 'acct_1' });
+    await verifier.verifyRequest(await request(), { action: 'hashbin:content:write' });
+    expect(fetches()).toBe(2);
+  });
+  it('denies ungranted actions, revoked credentials and missing proofs', async () => {
+    const ok = await setup();
+    expect(await ok.verifier.verifyRequest(await ok.request(), { action: 'hashbin:content:delete' })).toMatchObject({ allow: false, status: 403, code: 'forbidden' });
+    const missing = new Request('https://hashbin.org/api/content', { method: 'POST', headers: { Authorization: `DBA ${ok.credential}` } });
+    expect(await ok.verifier.verifyRequest(missing, { action: 'hashbin:content:write' })).toMatchObject({ allow: false, code: 'proof_required' });
+    const revoked = await setup({ revoked: true });
+    expect(await revoked.verifier.verifyRequest(await revoked.request(), { action: 'hashbin:content:write' })).toMatchObject({ allow: false, status: 401, code: 'revoked' });
+  });
+  it('accepts access tokens as bearer credentials', async () => {
+    const { verifier, signer } = await setup();
+    const token = await signAccessToken({ ...payload({ jkt: 'x' }), jti: 'tok_1', exp: NOW + 600, cnf: undefined }, signer);
+    expect(decodeJws(token).header.typ).toBe('dba-access+jwt');
+    const result = await verifier.verifyRequest(new Request('https://hashbin.org/x', { headers: { Authorization: `Bearer ${token}` } }), { action: 'hashbin:content:write' });
+    expect(result.allow).toBe(true);
+  });
+});

@@ -1,0 +1,9 @@
+{
+  "name": "@devicebasedauth/cli",
+  "version": "0.1.0",
+  "description": "dba: enroll devices, inspect, revoke and use devicebasedauth.org credentials from the command line",
+  "type": "module",
+  "bin": { "dba": "dba.js" },
+  "dependencies": { "@devicebasedauth/verify": "0.1.0" },
+  "license": "MIT"
+}

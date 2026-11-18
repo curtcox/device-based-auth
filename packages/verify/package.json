@@ -1,0 +1,10 @@
+{
+  "name": "@devicebasedauth/verify",
+  "version": "0.1.0",
+  "description": "Read and verify devicebasedauth.org device credentials and DPoP proofs. Zero dependencies; runs in Workers, Node 22+, Deno, Bun and browsers.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": { ".": "./src/index.js" },
+  "files": ["src/*.js", "!src/*.test.js"],
+  "license": "MIT"
+}
