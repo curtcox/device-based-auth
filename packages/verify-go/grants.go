@@ -41,7 +41,7 @@ var (
 
 	maxAppIDs = 16
 
-	attestationLevels = map[string][]string{"hardware": {"tee", "strongbox", "secure_enclave"}, "strongbox": {"strongbox"}}
+	attestationLevels = map[string][]string{"hardware": {"tee", "strongbox", "secure_enclave", "tpm"}, "strongbox": {"strongbox"}}
 	// An Apple app id: the 10-character team id, a dot, the bundle id.
 	appIDPattern = regexp.MustCompile(`^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$`)
 

@@ -15,7 +15,7 @@ const AREA_KEYS = new Set(['lat', 'lon', 'radius_m']);
 const LIMIT_KEYS = new Set(['uses', 'spend_usd_per_month']);
 const USES_KEYS = new Set(['count', 'per']);
 const REQUIRE_KEYS = new Set(['online', 'step_up', 'attestation', 'verified_boot', 'app_ids']);
-const ATTESTATION_LEVELS = { hardware: ['tee', 'strongbox', 'secure_enclave'], strongbox: ['strongbox'] };
+const ATTESTATION_LEVELS = { hardware: ['tee', 'strongbox', 'secure_enclave', 'tpm'], strongbox: ['strongbox'] };
 // An Apple app id: the 10-character team id, a dot, the bundle id.
 const APP_ID = /^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
 const MAX_APP_IDS = 16;

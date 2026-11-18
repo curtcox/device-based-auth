@@ -73,6 +73,9 @@ export const cases = [
   ['app_ids alone pins the attested app', [{ actions: W, require: { app_ids: [APP] } }], ctx({ attestation: { ...APPLE, environment: 'development' } }), true, 0, [[]]],
   ['app_ids needs an attestation naming an app', [{ actions: W, require: { app_ids: [APP] } }], ctx({ attestation: { format: 'android-key', security_level: 'strongbox' } }), false, null, [['attested_app_required']]],
   ['App Attest reports no verified boot', [{ actions: W, require: { verified_boot: true, app_ids: [APP] } }], ctx({ attestation: APPLE }), false, null, [['verified_boot_required']]],
+  ['hardware attestation satisfied by a TPM key', [{ actions: W, require: { attestation: 'hardware' } }], ctx({ attestation: { format: 'tpm', security_level: 'tpm' } }), true, 0, [[]]],
+  ['a TPM is not a StrongBox', [{ actions: W, require: { attestation: 'strongbox' } }], ctx({ attestation: { format: 'tpm', security_level: 'tpm' } }), false, null, [['attestation_required']]],
+  ['a TPM attestation reports no verified boot', [{ actions: W, require: { attestation: 'hardware', verified_boot: true } }], ctx({ attestation: { format: 'tpm', security_level: 'tpm' } }), false, null, [['verified_boot_required']]],
   ['app ids must be TEAMID.bundle.id', [{ actions: W, require: { app_ids: ['com.example.app'] } }], ctx({ attestation: APPLE }), false, null, [['invalid_grant']]],
   ['app_ids may not be empty', [{ actions: W, require: { app_ids: [] } }], ctx({ attestation: APPLE }), false, null, [['invalid_grant']]],
   ['all failing reasons are reported', [{ actions: ['x:y'], resources: ['other'] }], ctx(), false, null, [['action_not_granted', 'resource_not_granted']]]

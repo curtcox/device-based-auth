@@ -1960,6 +1960,98 @@
       }
     },
     {
+      "name": "hardware attestation satisfied by a TPM key",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "tpm",
+          "security_level": "tpm"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "a TPM is not a StrongBox",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "strongbox"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "tpm",
+          "security_level": "tpm"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attestation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a TPM attestation reports no verified boot",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware",
+            "verified_boot": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "tpm",
+          "security_level": "tpm"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "verified_boot_required"
+          ]
+        ]
+      }
+    },
+    {
       "name": "app ids must be TEAMID.bundle.id",
       "grants": [
         {

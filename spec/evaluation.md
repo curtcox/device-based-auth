@@ -86,8 +86,8 @@ honest as the device. See the master plan §3.5.
 - `online: true` — the grant may only be used through online authorization.
 - `step_up: true` — online, and the account owner must approve each use.
 - `attestation: "hardware" | "strongbox"` — the credential's `device.attestation` (credential.md
-  §3a) must show the key in a TEE, StrongBox or Secure Enclave (`hardware`), or in StrongBox only
-  (`strongbox`); otherwise `attestation_required`. The evaluator reads it from
+  §3a) must show the key in a TEE, StrongBox, Secure Enclave or TPM (`hardware`), or in StrongBox
+  only (`strongbox`); otherwise `attestation_required`. The evaluator reads it from
   `context.attestation`, which verifiers set to the presented credential's `device.attestation`
   (never from the request). An `apple-appattest` attestation is Apple vouching for the **app**
   that reported the key, not for the key, and any developer can ship an app that reports a key it
