@@ -93,26 +93,41 @@ export function createVerifier(options = {}) {
   }
 
   /**
+   * Verify an incoming request's credential (and proof) without deciding an action yet.
+   * Returns { ok: true, kind, payload, proof } or { ok: false, status, code, message }.
+   */
+  async function authenticateRequest(request) {
+    const found = credentialFromRequest(request);
+    if (!found) return { ok: false, status: 401, code: 'credential_required' };
+    try {
+      if (found.kind === 'access' && options.acceptAccessTokens === false) return { ok: false, status: 401, code: 'access_tokens_not_accepted' };
+      const { payload } = await verify(found.credential, { typ: found.kind });
+      let proof = null;
+      if (found.kind === 'device') {
+        if (!found.proof) return { ok: false, status: 401, code: 'proof_required' };
+        proof = await verifyProof(found.proof, { method: request.method, url: request.url, credential: found.credential, jkt: payload.cnf.jkt, now: clock(), replay });
+      }
+      return { ok: true, kind: found.kind, payload, proof, credential: found.credential };
+    } catch (error) {
+      if (error instanceof VerificationError) return { ok: false, status: ['jwks_unavailable', 'status_unavailable'].includes(error.code) ? 503 : 401, code: error.code, message: error.message };
+      throw error;
+    }
+  }
+
+  /**
    * Verify an incoming request end to end and decide one action.
    * check: { action, resource, location: { network, device } }
    * Returns { allow, status, code, reasons, credential, device, account, grant, caveats, online_required }.
    */
   async function verifyRequest(request, check) {
-    const found = credentialFromRequest(request);
-    if (!found) return { allow: false, status: 401, code: 'credential_required', reasons: [] };
-    try {
-      if (found.kind === 'access' && options.acceptAccessTokens === false) return { allow: false, status: 401, code: 'access_tokens_not_accepted', reasons: [] };
-      const { payload } = await verify(found.credential, { typ: found.kind });
-      let proof = null;
-      if (found.kind === 'device') {
-        if (!found.proof) return { allow: false, status: 401, code: 'proof_required', reasons: [] };
-        proof = await verifyProof(found.proof, { method: request.method, url: request.url, credential: found.credential, jkt: payload.cnf.jkt, now: clock(), replay });
-      }
-      return decide(payload, check, { request, proof });
-    } catch (error) {
-      if (error instanceof VerificationError) return { allow: false, status: ['jwks_unavailable', 'status_unavailable'].includes(error.code) ? 503 : 401, code: error.code, message: error.message, reasons: [] };
-      throw error;
-    }
+    const auth = await authenticateRequest(request);
+    if (!auth.ok) return { allow: false, status: auth.status, code: auth.code, message: auth.message, reasons: [] };
+    return decide(auth.payload, check, { request, proof: auth.proof });
+  }
+
+  /** Which of these actions does a verified credential allow right now (offline checks only)? */
+  function allowedActions(payload, actions, { request, proof, location } = {}) {
+    return actions.filter(action => decide(payload, { action, location }, { request, proof }).allow);
   }
 
   /** Evaluate grants for an already-verified payload. */
@@ -143,5 +158,5 @@ export function createVerifier(options = {}) {
     return { ...body, status: body.allow ? 200 : 403 };
   }
 
-  return { jwks, verify, isRevoked, verifyRequest, verifyOnline, decide, issuer, audience };
+  return { jwks, verify, isRevoked, authenticateRequest, verifyRequest, allowedActions, verifyOnline, decide, issuer, audience };
 }
