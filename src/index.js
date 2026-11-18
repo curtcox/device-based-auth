@@ -10,7 +10,7 @@ import { createCredential, listCredentials, getCredential, credentialDecisions, 
 import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
-import { statusList, republishStatusLists } from './api/status.js';
+import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
 import { inspect } from './api/inspect.js';
 import { oidcConfiguration, oidcAuthorize, oidcToken, oidcUserinfo } from './api/oidc.js';
 import { mcp } from './api/mcp.js';
@@ -216,8 +216,9 @@ const meteredRead = (request, auth) => request.method === 'GET' && paysForReads(
 
 const worker = {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(republishStatusLists(env));
-    if (new Date(event.scheduledTime ?? Date.now()).getUTCHours() === 2) ctx.waitUntil(runCostMonitor(env));
+    const daily = new Date(event.scheduledTime ?? Date.now()).getUTCHours() === 2;
+    ctx.waitUntil(republishStatusLists(env).then(capacity => daily ? alertStatusCapacity(env, capacity) : false));
+    if (daily) ctx.waitUntil(runCostMonitor(env));
   },
   async fetch(request, env) {
     const url = new URL(request.url); const path = url.pathname;

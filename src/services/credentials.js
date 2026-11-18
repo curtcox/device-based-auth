@@ -69,12 +69,18 @@ export async function validateIssue(env, { aud, grants, lifetime_seconds }) {
   return { aud: [...new Set(aud)], grants, lifetime, audiences };
 }
 
+// Shards this isolate has seen full. A shard never empties (indexes are not reused), so once full
+// it is skipped for good instead of costing every later issuance an extra DO request.
+const fullShards = new Set();
+
 async function allocate(env) {
   const shards = SHARDS(env); const first = Math.floor(Math.random() * shards);
   for (let i = 0; i < shards; i++) {
     const shard = (first + i) % shards;
+    const name = `${env.STATUS_ORIGIN ?? ''}#${shard}`;
+    if (fullShards.has(name)) continue;
     try { return { ...(await rpc(env.STATUS, `shard-${shard}`, 'allocate', { shard })), uri: statusUri(env, shard) }; }
-    catch (error) { if (error.code !== 'shard_full') throw error; }
+    catch (error) { if (error.code !== 'shard_full') throw error; fullShards.add(name); }
   }
   assert(false, 'capacity', 'All status list shards are full; raise STATUS_SHARDS', 503);
 }

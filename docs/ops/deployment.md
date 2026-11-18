@@ -66,3 +66,9 @@ Until then they can vendor `packages/verify/src` (zero dependencies).
 
 - Watch the cost report (SafetyDO) and alerts (`ALERT_WEBHOOK_URL`).
 - Recalibrate prices from a month of measured costs (STATUS S3).
+- **Status-list capacity.** Every issuance and rotation takes a status index for good (indexes are
+  never reused), and there are `STATUS_SHARDS` × 262,144 of them (16 shards: about 4.2 million).
+  A daily alert fires at 80% allocated; when every shard is full, issuance answers 503 `capacity`.
+  Raise `STATUS_SHARDS` in `wrangler.toml` and deploy: new shards are used at once, full ones are
+  skipped, and existing credentials keep their lists. Never lower it (lists of live credentials
+  would stop being served).
