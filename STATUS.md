@@ -59,7 +59,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | L10 | Cost-safety brake and monitoring | code/ops | 🟨 | Code ✅; needs analytics token and DO namespace ids (L9) |
 | L11 | Terms, Privacy, acceptable use (no covert tracking) | legal | 🟨 | DRAFT pages with entity/address/jurisdiction placeholders; owner and legal review needed (shared operator profile, cronly D7) |
 | L12 | Security review of issuance, revocation and verification | code/owner | 🟨 | Self-review done (delegation fixes in 8c68a50); independent review still needed |
-| L13 | Website: dashboard, approval and consent pages, developer tools, pricing, docs; Playwright tests | code | ✅ | 20 Playwright tests in CI; light/dark; 390 px phone width checked |
+| L13 | Website: dashboard, approval and consent pages, developer tools (incl. API explorer), pricing, docs; Playwright tests | code | ✅ | 21 Playwright tests in CI; light/dark; 390 px phone width checked |
 | L14 | Publish `@devicebasedauth/verify` (and the CLI) to npm | ops | ⬜ | Code ready: the CLI imports `@devicebasedauth/verify` by name and packs only `dba.js` and `lib.js`. Owner: `npm publish -w packages/verify` then `-w packages/cli` |
 
 ## Soon after launch

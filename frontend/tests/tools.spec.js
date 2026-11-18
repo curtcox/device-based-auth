@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { separateVisitors, fund, uniqueName, enrollViaApi } from './helpers.js';
+import { separateVisitors, fund, uniqueName, enrollViaApi, signIn, asLocal } from './helpers.js';
 
 separateVisitors();
 
@@ -86,4 +86,45 @@ test('the request signer shows the DPoP headers for a request', async ({ page })
   await expect(page.locator('#proof-payload')).toContainText('"htm": "DELETE"');
   await expect(page.locator('#proof-payload')).toContainText('"htu": "https://example.com/api/things"');
   await expect(page.locator('#curl')).toContainText("curl -X DELETE -H 'DPoP: ");
+});
+
+test('the API explorer calls endpoints as the dashboard user, anonymously, and with an API key', async ({ page, request }) => {
+  const owner = uniqueName('explore');
+  await fund(request, owner);
+  await signIn(page, owner);
+  await page.goto('/tools/explorer.html');
+  await expect(page.locator('#signed-in-as')).toContainText(owner);
+  await expect(page.locator('#operation-line')).toHaveText('GET /api/v1/whoami');
+  await expect(page.locator('#operation-access')).toContainText('Any sign-in');
+  await page.getByRole('button', { name: 'Send request' }).click();
+  await expect(page.locator('#response-status')).toHaveText(/^200/);
+  await expect(page.locator('#response-body')).toContainText(`"account": "${owner}"`);
+
+  // Billable operations start as a dry run: the price, and nothing charged.
+  await page.getByLabel('Endpoint').selectOption({ label: 'POST /api/v1/credentials' });
+  await expect(page.getByLabel(/Dry run/)).toBeChecked();
+  await expect(page.getByLabel('JSON body')).toHaveValue(/"public_jwk"/);
+  await page.getByLabel('JSON body').fill('{ not json');
+  await page.getByRole('button', { name: 'Send request' }).click();
+  await expect(page.locator('#explorer-result')).toContainText('not valid JSON');
+
+  // Anonymous: a public endpoint answers, a private one is refused.
+  await page.getByLabel('Nobody').check();
+  await page.goto('/tools/explorer.html#GET/api/v1/quote');
+  await page.getByLabel('Nobody').check();
+  await page.getByLabel(/^op \(query/).fill('renew');
+  await page.getByRole('button', { name: 'Send request' }).click();
+  await expect(page.locator('#response-body')).toContainText('"quote_microdollars": 25');
+  await expect(page).toHaveURL(/#GET\/api\/v1\/quote$/);
+
+  // An API key, kept in the page and sent as ApiKey.
+  const created = await request.post('/api/v1/keys', { headers: asLocal(owner), data: { name: 'explorer', scopes: ['account:read'] } });
+  const { secret } = await created.json();
+  await page.getByLabel('Endpoint').selectOption({ label: 'GET /api/v1/account' });
+  await page.getByLabel('An API key').check();
+  await page.getByLabel('API key', { exact: true }).fill(secret);
+  await page.getByRole('button', { name: 'Send request' }).click();
+  await expect(page.locator('#response-status')).toHaveText(/^200/);
+  await expect(page.locator('#response-body')).toContainText('"balance_microdollars"');
+  await expect(page.locator('#response-cost')).toContainText('µ$');
 });

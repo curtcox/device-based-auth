@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API explorer — devicebasedauth.org</title>
+<meta name="description" content="Try every devicebasedauth.org API endpoint against your own account, with a dry run for anything that costs money.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/tools/explorer.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/">Docs</a><a href="/tools/" aria-current="page">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<p><a href="/tools/">← Developer tools</a></p>
+<h1>API explorer</h1>
+<p class="lead">Every endpoint in <a href="/openapi.json">/openapi.json</a>, callable from this page against your own account. Operations that cost money start as a dry run: the server answers with the price and charges nothing.</p>
+<form id="explorer-form" class="stack">
+<div class="panel">
+<h2>1. Who is calling</h2>
+<fieldset id="auth-mode">
+<legend>Authentication</legend>
+<label class="check"><input type="radio" name="auth" value="session" checked>Your dashboard sign-in</label>
+<label class="check"><input type="radio" name="auth" value="apikey">An API key</label>
+<label class="check"><input type="radio" name="auth" value="none">Nobody</label>
+</fieldset>
+<div id="auth-detail"></div>
+</div>
+<div class="panel">
+<h2>2. Operation</h2>
+<label>Endpoint<select name="operation" id="operation"></select></label>
+<div id="operation-detail"></div>
+<div id="parameters" class="stack"></div>
+<div class="actions"><button type="submit" id="send">Send request</button></div>
+</div>
+</form>
+<div id="explorer-result" aria-live="polite"></div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>
