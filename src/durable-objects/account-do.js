@@ -445,6 +445,13 @@ export class AccountDO {
       assert(cred, 'not_found', 'Credential not found', 404);
       assert(!cred.revoked_at, 'revoked', 'Credential has been revoked', 403);
       assert(cred.jti === from_jti, 'superseded', 'Only the current version of a credential can be renewed', 409);
+      if (rotation) {
+        // The new key's device record is written below; never over another device's, and above all
+        // not over a revoked one, which would bring that key back (master plan §10).
+        const taken = await tx.get(`device:${rotation.device.id}`);
+        assert(!taken?.revoked_at, 'device_revoked', 'The new key belongs to a device that was revoked; rotate to a fresh key', 403, { device_id: rotation.device.id });
+        assert(!taken, 'key_in_use', 'The new key already belongs to a device on this account; rotate to a fresh key', 409, { device_id: rotation.device.id });
+      }
       const cap = (await this.settings(tx)).max_renewals_per_credential_per_month;
       const used = cred.renewals?.period === monthOf(now) ? cred.renewals.count : 0;
       // A recovery renewal (issuer key withdrawn) is DBA's doing, not the device's: it neither

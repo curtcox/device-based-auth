@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { testEnv, call, newDevice, enroll } from '../test-utils/env.js';
-import { inspectCredential } from '../packages/verify/src/index.js';
+import { inspectCredential, signJws } from '../packages/verify/src/index.js';
 
 // Master plan §10: removing a revocation needs a recent sign-in. Issuing to a revoked device's key
 // reinstates the device, so only a person who signed in recently may do it; a fleet enrollment
@@ -81,5 +81,32 @@ describe('a revoked device stays revoked', () => {
   it('needs no recent sign-in for devices that were never revoked', async () => {
     const start = await call(env, 'POST', '/api/v1/enrollments', { body: { request: await (await newDevice()).enrollRequest({ aud: ['hashbin.org'], grants: GRANTS }) } });
     expect((await call(env, 'POST', '/api/v1/enrollments/approve', { auth: stale('alice'), body: { request: start.body.request } })).status).toBe(200);
+  });
+});
+
+describe('rotation never lands on another device\'s key', () => {
+  const rotate = async (holder, credential, newDevice) => {
+    const { cid } = inspectCredential(credential).payload;
+    const proof = await signJws({ typ: 'dba-rotate+jwt', jwk: newDevice.publicJwk }, { cid, iat: Math.floor(Date.now() / 1000) }, newDevice.privateKey);
+    const path = `/api/v1/credentials/${cid}/renew`;
+    return call(env, 'POST', path, { headers: await holder.headers('POST', path, credential), body: { new_key_proof: proof } });
+  };
+
+  it('refuses a revoked device\'s key and a live device\'s key, and allows a fresh one', async () => {
+    const { device: revoked, deviceId: revokedId } = await revokedDevice();
+    const other = await newDevice();
+    await enroll(env, 'alice', other);
+    const holder = await newDevice();
+    const credential = (await enroll(env, 'alice', holder)).approve.body.credential;
+
+    const onto = await rotate(holder, credential, revoked);
+    expect(onto.status).toBe(403);
+    expect(onto.body).toMatchObject({ code: 'device_revoked', device_id: revokedId });
+    expect((await deviceState(revokedId)).revoked_at).toBeTruthy();
+    expect((await rotate(holder, credential, other)).body.code).toBe('key_in_use');
+
+    const fresh = await rotate(holder, credential, await newDevice());
+    expect(fresh.status).toBe(200);
+    expect(fresh.body.rotated).toBe(true);
   });
 });
