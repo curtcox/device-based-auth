@@ -787,8 +787,15 @@ export class AccountDO {
     for (const [key, value] of await this.storage.list({ prefix: 'decision:', limit: 500 })) {
       if (value.at < now - DECISION_RETENTION_MS) await this.storage.delete(key);
     }
-    for (const [key, value] of await this.storage.list({ prefix: 'stepup:' })) if (value.expires_at < now - 86400000) await this.storage.delete(key);
-    for (const [key, value] of await this.storage.list({ prefix: 'code:' })) if (value.expires_at < now - 600000) await this.storage.delete(key);
+    // Step-up requests and authorization codes are useless once they expire; the next wake-up is
+    // set for the first one still waiting, so none outlives its expiry for long on an account that
+    // has nothing else to do.
+    let shortLived = null;
+    for (const prefix of ['stepup:', 'code:']) for (const [key, value] of await this.storage.list({ prefix })) {
+      const until = Math.max(value.expires_at, value.approved_until || 0);
+      if (until <= now) await this.storage.delete(key);
+      else shortLived = Math.min(shortLived ?? Infinity, until);
+    }
     const usage = await this.storage.list({ prefix: 'usage:', limit: 1000 });
     for (const key of usage.keys()) {
       const [, cid, , start] = key.split(':');
@@ -798,7 +805,7 @@ export class AccountDO {
     more = usage.size === 1000;
     const hasWork = (await this.storage.list({ prefix: 'decision:', limit: 1 })).size || (await this.storage.list({ prefix: 'outbox:', limit: 1 })).size;
     // The outbox's retry time wins over the daily pruning pass.
-    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt].filter(t => t !== null);
+    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt, shortLived === null ? null : Math.max(shortLived, now + 60000)].filter(t => t !== null);
     if (next.length) await this.storage.setAlarm(Math.min(...next));
   }
 }
