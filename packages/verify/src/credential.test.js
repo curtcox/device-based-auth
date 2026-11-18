@@ -78,6 +78,12 @@ describe('status lists', () => {
     const decoded = await decodeStatusList(await encodeStatusList(bytes));
     expect([0, 1, 9, 100000, 5e6].map(i => getBit(decoded, i))).toEqual([1, 0, 1, 1, 0]);
   });
+  it('stops inflating a list that is too large', async () => {
+    const { deflate, inflate } = await import('./status-list.js');
+    const bomb = await deflate(new Uint8Array(1 << 20));
+    await expect(inflate(bomb, 1024)).rejects.toThrow(/too large/);
+    expect((await inflate(bomb)).length).toBe(1 << 20);
+  });
   it('decodes the IETF draft example', async () => {
     // draft-ietf-oauth-status-list §4.1 example: status[0]=1, [1]=0, [2]=0, [3]=1, [4]=1, [5]=1, [6]=0, [7]=1, [8]=1, [9]=1, ...
     const bytes = await decodeStatusList({ bits: 1, lst: 'eNrbuRgAAhcBXQ' });

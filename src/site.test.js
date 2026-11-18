@@ -8,7 +8,7 @@ beforeEach(async () => { env = await testEnv(); await call(env, 'POST', '/api/v1
 
 it('turns a DBA device credential into a site user with that site\'s scopes', async () => {
   const device = await newDevice();
-  const credential = (await enroll(env, 'alice', device, { grants: [{ actions: ['hashbin:content:write', 'hashbin:uploads:read'], limits: { spend_usd_per_month: 2 } }, { actions: ['hashbin:session'] }] })).approve.body.credential;
+  const credential = (await enroll(env, 'alice', device, { aud: ['hashbin.org', 'cronly.org'], grants: [{ actions: ['hashbin:content:write', 'hashbin:uploads:read'], limits: { spend_usd_per_month: 2 } }, { actions: ['hashbin:session'] }, { actions: ['cronly:run'], limits: { spend_usd_per_month: 0.5 } }] })).approve.body.credential;
   const links = new Map([['alice', 'hashbin-user-7']]);
   const site = createSiteAuth({ issuer: ORIGIN, audience: 'hashbin.org', namespace: 'hashbin', scopes: ['content:write', 'content:delete', 'uploads:read'], linkedUser: async acct => links.get(acct) || null, fetch: fetcher() });
   const url = 'https://hashbin.org/api/upload';
@@ -31,4 +31,10 @@ it('links an account with the OIDC client', async () => {
   const claims = await oidc.finish(new URL(consent.body.redirect).searchParams, state);
   expect(claims).toMatchObject({ sub: 'alice', acct: 'alice', aud: 'hashbin.org' });
   await expect(oidc.finish(new URL(consent.body.redirect).searchParams, { ...state, state: 'other' })).rejects.toMatchObject({ code: 'invalid_state' });
+  // A failed discovery fetch is not cached.
+  let fail = true;
+  const flaky = createOidcClient({ issuer: ORIGIN, clientId: 'hashbin.org', redirectUri: 'https://hashbin.org/auth/dba/callback', fetch: (url, init) => fail ? Promise.resolve(new Response('down', { status: 503 })) : worker.fetch(new Request(url, init), env) });
+  await expect(flaky.begin()).rejects.toMatchObject({ code: 'issuer_unavailable' });
+  fail = false;
+  expect((await flaky.begin()).url).toMatch(/\/oauth\/authorize\?/);
 });
