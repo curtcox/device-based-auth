@@ -33,7 +33,9 @@ export async function enrollmentTokens(route, request, env, auth) {
   const name = String(body.name ?? 'Enrollment token').replace(/[\p{Cc}\p{Cf}]/gu, '').trim().slice(0, 64) || 'Enrollment token';
   const id = randomId('etk', 12);
   const expiresAt = Date.now() + Math.round(days * 86400000);
-  const secret = await signToken(ENROLLMENT_TOKEN_PREFIX, { account: auth.account, id, exp: Math.floor(expiresAt / 1000) }, env.TOKEN_SIGNING_KEY);
+  // Rounded up so the signed token never lapses before the stored token: the account's
+  // "expired" state, not a generic invalid-token error, is what the device sees.
+  const secret = await signToken(ENROLLMENT_TOKEN_PREFIX, { account: auth.account, id, exp: Math.ceil(expiresAt / 1000) }, env.TOKEN_SIGNING_KEY);
   const token = await rpc(env.ACCOUNTS, auth.account, 'create-enrollment-token', { id, name, hash: await digest(secret), template: { aud, grants, lifetime }, max_uses: maxUses, expires_at: expiresAt });
   return { ...token, token: secret };
 }
@@ -50,12 +52,12 @@ export async function redeemEnrollmentToken(request, env) {
   assert(data?.account && data.id, 'invalid_enrollment_token', 'Enrollment token is invalid or expired', 401);
   const hash = await digest(body.enrollment_token);
   const { template } = await rpc(env.ACCOUNTS, data.account, 'check-enrollment-token', { id: data.id, hash });
-  const { jwk, payload, lifetime, lifetimeRequested } = await readEnrollRequest(body.request, { defaults: template });
+  const { jwk, payload, lifetime, lifetimeRequested, attestation } = await readEnrollRequest(body.request, { defaults: template, env });
   assert(payload.aud.every(a => template.aud.includes(a)), 'not_narrower', `aud must be within the token's audiences (${template.aud.join(', ')})`, 403);
   assert(grantsNarrow(payload.grants, template.grants), 'not_narrower', "grants must be the token's grants or narrower", 403);
   const issued = await issueCredential(env, data.account, {
     public_jwk: jwk, device: cleanDevice(payload.device), aud: payload.aud, grants: payload.grants,
     lifetime_seconds: lifetimeRequested ? Math.min(lifetime, template.lifetime) : template.lifetime
-  }, { source: 'enrollment-token', enrollmentToken: { id: data.id, hash } });
+  }, { source: 'enrollment-token', enrollmentToken: { id: data.id, hash }, attestation });
   return { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, cost_microdollars: issued.charged };
 }
