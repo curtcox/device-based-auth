@@ -28,13 +28,21 @@ export async function certificate({ serial, issuer, subject, spki, signer, notBe
 }
 
 /** The KeyDescription extension value. Every field can be overridden for negative tests. */
-export function keyDescription({ challenge, securityLevel = 2, keymasterLevel = securityLevel, origin = 0, algorithm = 3, curve = 1, purposes = [2], bootState = 0, locked = true, omitRootOfTrust = false, version = 200 }) {
+/**
+ * An attestationApplicationId (tag 709) value: packages as [name, version] pairs and signing
+ * certificate digests (32 bytes each), DER-encoded the way Android's keystore does.
+ */
+export function applicationId({ packages = [['io.example.app', 7]], digests = [new Uint8Array(32).fill(0xab)] } = {}) {
+  return seq(set(...packages.map(([name, version]) => seq(octets(new TextEncoder().encode(name)), smallInt(version)))), set(...digests.map(d => octets(d))));
+}
+
+export function keyDescription({ challenge, securityLevel = 2, keymasterLevel = securityLevel, origin = 0, algorithm = 3, curve = 1, purposes = [2], bootState = 0, locked = true, omitRootOfTrust = false, version = 200, application = Uint8Array.of(1, 2, 3) }) {
   const hw = [
     contextTag(1, set(...purposes.map(p => smallInt(p)))), contextTag(2, smallInt(algorithm)), contextTag(3, smallInt(256)), contextTag(10, smallInt(curve)),
     contextTag(702, smallInt(origin)),
     ...(omitRootOfTrust ? [] : [contextTag(704, seq(octets(new Uint8Array(32).fill(7)), bool(locked), smallInt(bootState, ENUM), octets(new Uint8Array(32).fill(9))))])
   ];
-  return seq(smallInt(version), smallInt(securityLevel, ENUM), smallInt(300), smallInt(keymasterLevel, ENUM), octets(challenge), octets(new Uint8Array(0)), seq(contextTag(709, octets(Uint8Array.of(1, 2, 3)))), seq(...hw));
+  return seq(smallInt(version), smallInt(securityLevel, ENUM), smallInt(300), smallInt(keymasterLevel, ENUM), octets(challenge), octets(new Uint8Array(0)), seq(contextTag(709, octets(application))), seq(...hw));
 }
 
 /** A test root and intermediate, made once per test file. */

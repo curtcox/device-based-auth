@@ -93,10 +93,16 @@ honest as the device. See the master plan §3.5.
   that reported the key, not for the key, and any developer can ship an app that reports a key it
   can export; so it satisfies `attestation` only when its `environment` is `production` and
   `app_ids` (below) lists its `app_id`.
-- `app_ids: ["TEAMID.bundle.id", …]` — 1–16 Apple app ids (10-character team id, a dot, a bundle
-  id of dot-separated letters, digits and hyphens; at most 200 characters). `context.attestation`
-  must be an object whose `app_id` is in the list; otherwise `attested_app_required`. Android
-  attestations carry no `app_id`, so they never satisfy it.
+- `app_ids: ["TEAMID.bundle.id", "android:<package>:<sha256>", …]` — 1–16 app ids, at most 200
+  characters each: Apple app ids (10-character team id, a dot, a bundle id of dot-separated
+  letters, digits and hyphens) or Android apps (`android:`, a package name of two or more
+  dot-separated parts each starting with a letter and then letters, digits or `_`, `:`, and the
+  SHA-256 of the app's signing certificate as 64 lowercase hex digits). `context.attestation` must
+  be an object whose `app_id` is in the list; otherwise `attested_app_required`. An `android:` id
+  matches only an `android-key` attestation, and only one that also reports
+  `verified_boot: "verified"` and `device_locked: true` (Android's OS names the app, so a device
+  whose OS is not verified could name any app); any other id matches only a non-Android
+  attestation.
 - `verified_boot: true` — `context.attestation` must report `verified_boot: "verified"` and
   `device_locked: true`; otherwise `verified_boot_required`. `false` requires nothing.
 

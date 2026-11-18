@@ -44,6 +44,8 @@ var (
 	attestationLevels = map[string][]string{"hardware": {"tee", "strongbox", "secure_enclave", "tpm"}, "strongbox": {"strongbox"}}
 	// An Apple app id: the 10-character team id, a dot, the bundle id.
 	appIDPattern = regexp.MustCompile(`^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$`)
+	// An Android app: "android:", the package name, ":", the SHA-256 of its signing certificate in hex.
+	androidAppIDPattern = regexp.MustCompile(`^android:[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+:[0-9a-f]{64}$`)
 
 	actionPattern  = regexp.MustCompile(`^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$`)
 	timePattern    = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$`)
@@ -392,7 +394,9 @@ func ValidateGrant(grant any, path string) []string {
 			}
 		}
 		if apps, ok := get(require, "app_ids"); ok {
-			checkStringList(apps, path+".require.app_ids", &errs, maxAppIDs, func(a string) bool { return len(a) <= 200 && appIDPattern.MatchString(a) }, "must be an Apple app id (TEAMID.bundle.id)")
+			checkStringList(apps, path+".require.app_ids", &errs, maxAppIDs, func(a string) bool {
+				return len(a) <= 200 && (appIDPattern.MatchString(a) || androidAppIDPattern.MatchString(a))
+			}, "must be an app id (Apple TEAMID.bundle.id, or android:<package>:<signing certificate SHA-256, lowercase hex>)")
 		}
 	}
 	return errs
@@ -858,9 +862,20 @@ func EvaluateGrant(grant any, ctx Context) GrantResult {
 	_, attested := asObject(ctx.Attestation)
 	apps, hasApps := get(require, "app_ids")
 	appListed := false
-	if appID, _ := get(ctx.Attestation, "app_id"); attested {
+	// Android's app identity comes from the OS, not the secure hardware, so it counts only when the
+	// same attestation shows verified boot and a locked bootloader (spec/evaluation.md §3.6). Each
+	// kind of app id matches only its own attestation format.
+	attFormat, _ := get(ctx.Attestation, "format")
+	android := attested && strictEqual(attFormat, "android-key")
+	appTrusted := true
+	if android {
+		boot, _ := get(ctx.Attestation, "verified_boot")
+		locked, _ := get(ctx.Attestation, "device_locked")
+		appTrusted = strictEqual(boot, "verified") && strictEqual(locked, true)
+	}
+	if appID, _ := get(ctx.Attestation, "app_id"); attested && appTrusted {
 		if list, isList := apps.([]any); isList {
-			if _, isString := appID.(string); isString {
+			if id, isString := appID.(string); isString && strings.HasPrefix(id, "android:") == android {
 				for _, a := range list {
 					appListed = appListed || strictEqual(a, appID)
 				}

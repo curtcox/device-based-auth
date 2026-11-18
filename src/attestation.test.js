@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { verifyAndroidAttestation, parseCertificate, createChallenge, checkChallenge, androidRevokedSerials, resetRevocationCache, ANDROID_ROOT_SPKI_SHA256 } from './services/attestation.js';
 import { exportPublicJwk } from '../packages/verify/src/jose.js';
-import { attestationAuthority, attestationChain, forgedChain } from '../test-utils/android-attestation.js';
+import { attestationAuthority, attestationChain, forgedChain, applicationId } from '../test-utils/android-attestation.js';
 
 const NOW = Date.UTC(2026, 10, 18);
 const challenge = new TextEncoder().encode('test-challenge');
@@ -33,6 +33,28 @@ describe('Android key attestation', () => {
   it('reports TEE keys and unlocked bootloaders as they are', async () => {
     const claim = await verify(await attestationChain(authority, device.publicKey, { challenge, description: { securityLevel: 1, locked: false, bootState: 2 } }));
     expect(claim).toMatchObject({ security_level: 'tee', device_locked: false, verified_boot: 'unverified' });
+  });
+
+  it('names the app that made the key: package and signing certificate digest', async () => {
+    const claim = await verify(await attestationChain(authority, device.publicKey, { challenge, description: { application: applicationId() } }));
+    expect(claim.app_id).toBe(`android:io.example.app:${'ab'.repeat(32)}`);
+  });
+
+  it('names no app when the app identity is ambiguous or unreadable', async () => {
+    const two = new Uint8Array(32).fill(0xcd);
+    for (const [label, application] of Object.entries({
+      'shared UID (two packages)': applicationId({ packages: [['io.example.app', 1], ['io.example.helper', 1]] }),
+      'rotated signing key (two digests)': applicationId({ digests: [new Uint8Array(32).fill(0xab), two] }),
+      'no signer': applicationId({ digests: [] }),
+      'short digest': applicationId({ digests: [new Uint8Array(20)] }),
+      'not a package name': applicationId({ packages: [['io.example.app:evil', 1]] }),
+      'one-part package': applicationId({ packages: [['app', 1]] }),
+      'garbage': Uint8Array.of(1, 2, 3)
+    })) {
+      const claim = await verify(await attestationChain(authority, device.publicKey, { challenge, description: { application } }));
+      expect(claim.app_id, label).toBeUndefined();
+      expect(claim.security_level, label).toBe('strongbox');
+    }
   });
 
   it('rejects what it must', async () => {

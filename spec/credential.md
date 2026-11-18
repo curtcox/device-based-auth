@@ -82,7 +82,7 @@ credential rotates to a new key.
 | `format` | `android-key` (Android Key Attestation), `apple-appattest` (Apple App Attest) or `tpm` (TPM 2.0). |
 | `security_level` | `tee`, `strongbox`, `secure_enclave` or `tpm`: where the key lives. Software keys are never attested. |
 | `tpm_manufacturer` | `tpm` only: the TPM vendor id from the attestation key's certificate (e.g. `NTC`, `IFX`, `INTC`, `AMD`). |
-| `app_id` | `apple-appattest` only: the app (`TEAMID.bundle.id`) that Apple attested and that reported the key. |
+| `app_id` | `apple-appattest`: the app (`TEAMID.bundle.id`) that Apple attested and that reported the key. `android-key`: `android:<package>:<SHA-256 of the app's signing certificate, lowercase hex>`, from the key description's `attestationApplicationId`, present only when it names exactly one package and one signing certificate. Android's OS (not the secure hardware) fills this in, so evaluators trust it only alongside `verified_boot: "verified"` and `device_locked: true` (evaluation.md §3.6). |
 | `environment` | `apple-appattest` only: `production` (App Store, TestFlight, enterprise) or `development`. |
 | `verified_boot` | `verified`, `self_signed`, `unverified`, `failed` or `unknown` (Android root of trust), when reported. |
 | `device_locked` | Whether the bootloader was locked, when reported. |
@@ -109,6 +109,10 @@ key's certificate chain (base64 DER, leaf first). The issuer accepts it only whe
    level for both attestation and KeyMint;
 5. the challenge in the extension equals the request's `challenge`, which the issuer made and has
    not expired.
+
+The issuer also reads `attestationApplicationId` (tag 709) into `app_id` as above; an unreadable or
+ambiguous value (a shared UID's several packages, a rotated signing key's several digests) leaves
+`app_id` out rather than failing the enrollment.
 
 **Apple.** App Attest cannot attest an arbitrary key: Apple attests a key of its own and says
 which app, on a genuine Apple device, holds it. So the app generates its P-256 signing key in the

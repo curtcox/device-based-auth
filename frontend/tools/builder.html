@@ -66,7 +66,7 @@
 <label class="check"><input type="checkbox" name="step_up"> The owner approves each use (step-up)</label>
 <label>Key attestation<select name="attestation"><option value="">not required</option><option value="hardware">key attested in secure hardware (TEE, StrongBox, Secure Enclave or TPM)</option><option value="strongbox">key attested in StrongBox</option></select></label>
 <label class="check"><input type="checkbox" name="verified_boot"> Only from an attested device with verified boot and a locked bootloader</label>
-<label>Attested iOS apps<input name="app_ids" placeholder="TEAMID.com.example.app, …" autocomplete="off" spellcheck="false"></label>
+<label>Attested apps<input name="app_ids" placeholder="TEAMID.com.example.app, android:com.example.app:<sha256>, …" autocomplete="off" spellcheck="false"></label>
 <p class="hint">Usage limits, online checks and step-up need online authorization; offline verifiers deny these grants with <code>online_required</code>. Attestation is checked offline from the credential (Android devices that sent a Keystore attestation chain, iOS apps that sent an App Attest attestation). Apple attests the app, not the key, so an iOS attestation counts only for the apps you list here.</p>
 </fieldset>
 <fieldset><legend>Device</legend>

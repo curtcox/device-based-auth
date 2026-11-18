@@ -2052,7 +2052,7 @@
       }
     },
     {
-      "name": "app ids must be TEAMID.bundle.id",
+      "name": "app ids must be TEAMID.bundle.id or android:package:signer",
       "grants": [
         {
           "actions": [
@@ -2107,6 +2107,293 @@
           "security_level": "secure_enclave",
           "app_id": "V8H6LQ9448.io.example.app",
           "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an Android app on a verified, locked device counts for a pinned app",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware",
+            "app_ids": [
+              "V8H6LQ9448.io.example.app",
+              "android:io.example.app:abababababababababababababababababababababababababababababababab"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox",
+          "verified_boot": "verified",
+          "device_locked": true,
+          "app_id": "android:io.example.app:abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "an Android app id from an unlocked bootloader does not count",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "android:io.example.app:abababababababababababababababababababababababababababababababab"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox",
+          "verified_boot": "verified",
+          "device_locked": false,
+          "app_id": "android:io.example.app:abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attested_app_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an Android app id without verified boot does not count",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "android:io.example.app:abababababababababababababababababababababababababababababababab"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox",
+          "verified_boot": "self_signed",
+          "device_locked": true,
+          "app_id": "android:io.example.app:abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attested_app_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an Android app signed by another key is refused",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "android:io.example.app:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox",
+          "verified_boot": "verified",
+          "device_locked": true,
+          "app_id": "android:io.example.app:abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attested_app_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an Android app id never matches an Apple attestation",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "android:io.example.app:abababababababababababababababababababababababababababababababab"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "android:io.example.app:abababababababababababababababababababababababababababababababab",
+          "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attested_app_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an Apple app id never matches an Android attestation",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "V8H6LQ9448.io.example.app"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox",
+          "verified_boot": "verified",
+          "device_locked": true,
+          "app_id": "V8H6LQ9448.io.example.app"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attested_app_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "Android app ids need a lowercase hex signer digest",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "android:io.example.app:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox",
+          "verified_boot": "verified",
+          "device_locked": true,
+          "app_id": "android:io.example.app:abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "Android app ids need a package of two or more parts",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "android:app:abababababababababababababababababababababababababababababababab"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox",
+          "verified_boot": "verified",
+          "device_locked": true,
+          "app_id": "android:io.example.app:abababababababababababababababababababababababababababababababab"
         }
       },
       "expected": {

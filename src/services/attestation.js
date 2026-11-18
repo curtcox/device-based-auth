@@ -45,7 +45,31 @@ const CURVES = { '1.2.840.10045.3.1.7': ['P-256', 32], '1.3.132.0.34': ['P-384',
 const SECURITY_LEVELS = { 1: 'tee', 2: 'strongbox' };
 const BOOT_STATES = { 0: 'verified', 1: 'self_signed', 2: 'unverified', 3: 'failed' };
 // AuthorizationList tags (Android KeyMint): purpose, algorithm, ecCurve, origin, rootOfTrust.
-const TAG = { purpose: 1, algorithm: 2, ecCurve: 10, origin: 702, rootOfTrust: 704 };
+const TAG = { purpose: 1, algorithm: 2, ecCurve: 10, origin: 702, rootOfTrust: 704, attestationApplicationId: 709 };
+const ANDROID_PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const hex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+
+/**
+ * The app that asked the Keystore for the key, from attestationApplicationId (KeyMint tag 709):
+ * "android:<package>:<SHA-256 of its signing certificate, hex>". The Android OS fills this in,
+ * not the secure hardware, so evaluators trust it only with verified boot and a locked bootloader
+ * (spec/evaluation.md §3.6). Null unless there is exactly one package and one signer (a shared
+ * UID or a rotated signing key is ambiguous), or when the value cannot be read.
+ * @param {{ content: Uint8Array } | undefined} element the tag's OCTET STRING
+ * @returns {string|null}
+ */
+export function androidAppId(element) {
+  try {
+    if (!element) return null;
+    const [packages, digests] = children(expectTag(parseOne(expectTag(element, 4, 'attestationApplicationId').content), 16, 'AttestationApplicationId'));
+    const infos = children(expectTag(packages, 17, 'package_infos'));
+    const signers = children(expectTag(digests, 17, 'signature_digests')).map(d => expectTag(d, 4, 'digest').content);
+    if (infos.length !== 1 || signers.length !== 1 || signers[0].length !== 32) return null;
+    const name = new TextDecoder('utf-8', { fatal: true }).decode(expectTag(children(expectTag(infos[0], 16, 'AttestationPackageInfo'))[0], 4, 'package_name').content);
+    const id = `android:${name}:${hex(signers[0])}`;
+    return ANDROID_PACKAGE.test(name) && id.length <= 200 ? id : null;
+  } catch { return null; }
+}
 
 const invalid = message => new ApiError(400, 'invalid_attestation', `Key attestation rejected: ${message}`);
 
@@ -217,6 +241,8 @@ export async function verifyAndroidAttestation({ x5c, jwk, challenge, now = Date
     claim.device_locked = expectTag(locked, 1, 'deviceLocked').content[0] !== 0;
     claim.verified_boot = BOOT_STATES[decodeSmallInt(state)] ?? 'unknown';
   }
+  const appId = androidAppId(description.softwareEnforced.get(TAG.attestationApplicationId) ?? hw.get(TAG.attestationApplicationId));
+  if (appId) claim.app_id = appId;
   return claim;
 }
 

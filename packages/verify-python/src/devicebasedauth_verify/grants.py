@@ -42,6 +42,8 @@ COUNTRY = re.compile(r"[A-Z]{2}", re.ASCII)
 REGION = re.compile(r"[A-Z]{2}-[A-Z0-9]{1,3}", re.ASCII)
 # An Apple app id: the 10-character team id, a dot, the bundle id.
 APP_ID = re.compile(r"[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*", re.ASCII)
+# An Android app: "android:", the package name, ":", the SHA-256 of its signing certificate in hex.
+ANDROID_APP_ID = re.compile(r"android:[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+:[0-9a-f]{64}", re.ASCII)
 # ECMA-402 accepts UTC offsets as time zones ("+05:30", "-08", "+0530"; U+2212 too).
 OFFSET_ZONE = re.compile("([+\\-−])([01][0-9]|2[0-3])(?::?([0-5][0-9]))?", re.ASCII)
 
@@ -332,9 +334,9 @@ def validate_grant(grant, path: str = "grant") -> list:
         apps = get(grant["require"], "app_ids")
         if apps is not MISSING and not (
             isinstance(apps, list) and 1 <= len(apps) <= MAX_APP_IDS
-            and all(isinstance(a, str) and len(a) <= 200 and APP_ID.fullmatch(a) for a in apps)
+            and all(isinstance(a, str) and len(a) <= 200 and (APP_ID.fullmatch(a) or ANDROID_APP_ID.fullmatch(a)) for a in apps)
         ):
-            errors.append(f"{path}.require.app_ids must list 1–{MAX_APP_IDS} Apple app ids (TEAMID.bundle.id)")
+            errors.append(f"{path}.require.app_ids must list 1–{MAX_APP_IDS} app ids (Apple TEAMID.bundle.id, or android:<package>:<signing certificate SHA-256, lowercase hex>)")
     return errors
 
 
@@ -456,7 +458,17 @@ def evaluate_grant(grant, context: dict) -> dict:
     attestation = attestation if is_object(attestation) else None
     apps = get(require, "app_ids")
     app_id = get(attestation, "app_id") if attestation is not None else MISSING
-    app_listed = attestation is not None and isinstance(apps, list) and isinstance(app_id, str) and includes(apps, app_id)
+    # Android's app identity comes from the OS, not the secure hardware, so it counts only when the
+    # same attestation shows verified boot and a locked bootloader (spec/evaluation.md §3.6). Each
+    # kind of app id matches only its own attestation format.
+    android = attestation is not None and _js.strict_eq(get(attestation, "format"), "android-key")
+    app_trusted = (not android) or (
+        _js.strict_eq(get(attestation, "verified_boot"), "verified") and _js.strict_eq(get(attestation, "device_locked"), True)
+    )
+    app_listed = (
+        attestation is not None and isinstance(apps, list) and isinstance(app_id, str) and includes(apps, app_id)
+        and app_id.startswith("android:") == android and app_trusted
+    )
     level = get(require, "attestation")
     if level is not MISSING:
         # Apple App Attest vouches for the app that reported the key, not for the key itself, so it

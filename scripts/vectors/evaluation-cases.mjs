@@ -8,6 +8,8 @@ const stl = { lat: 38.627, lon: -90.199 };
 const area = { lat: stl.lat, lon: stl.lon, radius_m: 50000 };
 const APP = 'V8H6LQ9448.io.example.app';
 const APPLE = { format: 'apple-appattest', security_level: 'secure_enclave', app_id: APP, environment: 'production' };
+const DROID_APP = `android:io.example.app:${'ab'.repeat(32)}`;
+const DROID = { format: 'android-key', security_level: 'strongbox', verified_boot: 'verified', device_locked: true, app_id: DROID_APP };
 
 export const cases = [
   ['empty grant list denies', [], ctx(), false, null, []],
@@ -76,7 +78,15 @@ export const cases = [
   ['hardware attestation satisfied by a TPM key', [{ actions: W, require: { attestation: 'hardware' } }], ctx({ attestation: { format: 'tpm', security_level: 'tpm' } }), true, 0, [[]]],
   ['a TPM is not a StrongBox', [{ actions: W, require: { attestation: 'strongbox' } }], ctx({ attestation: { format: 'tpm', security_level: 'tpm' } }), false, null, [['attestation_required']]],
   ['a TPM attestation reports no verified boot', [{ actions: W, require: { attestation: 'hardware', verified_boot: true } }], ctx({ attestation: { format: 'tpm', security_level: 'tpm' } }), false, null, [['verified_boot_required']]],
-  ['app ids must be TEAMID.bundle.id', [{ actions: W, require: { app_ids: ['com.example.app'] } }], ctx({ attestation: APPLE }), false, null, [['invalid_grant']]],
+  ['app ids must be TEAMID.bundle.id or android:package:signer', [{ actions: W, require: { app_ids: ['com.example.app'] } }], ctx({ attestation: APPLE }), false, null, [['invalid_grant']]],
   ['app_ids may not be empty', [{ actions: W, require: { app_ids: [] } }], ctx({ attestation: APPLE }), false, null, [['invalid_grant']]],
+  ['an Android app on a verified, locked device counts for a pinned app', [{ actions: W, require: { attestation: 'hardware', app_ids: [APP, DROID_APP] } }], ctx({ attestation: DROID }), true, 0, [[]]],
+  ['an Android app id from an unlocked bootloader does not count', [{ actions: W, require: { app_ids: [DROID_APP] } }], ctx({ attestation: { ...DROID, device_locked: false } }), false, null, [['attested_app_required']]],
+  ['an Android app id without verified boot does not count', [{ actions: W, require: { app_ids: [DROID_APP] } }], ctx({ attestation: { ...DROID, verified_boot: 'self_signed' } }), false, null, [['attested_app_required']]],
+  ['an Android app signed by another key is refused', [{ actions: W, require: { app_ids: [`android:io.example.app:${'cd'.repeat(32)}`] } }], ctx({ attestation: DROID }), false, null, [['attested_app_required']]],
+  ['an Android app id never matches an Apple attestation', [{ actions: W, require: { app_ids: [DROID_APP] } }], ctx({ attestation: { ...APPLE, app_id: DROID_APP } }), false, null, [['attested_app_required']]],
+  ['an Apple app id never matches an Android attestation', [{ actions: W, require: { app_ids: [APP] } }], ctx({ attestation: { ...DROID, app_id: APP } }), false, null, [['attested_app_required']]],
+  ['Android app ids need a lowercase hex signer digest', [{ actions: W, require: { app_ids: [`android:io.example.app:${'AB'.repeat(32)}`] } }], ctx({ attestation: DROID }), false, null, [['invalid_grant']]],
+  ['Android app ids need a package of two or more parts', [{ actions: W, require: { app_ids: [`android:app:${'ab'.repeat(32)}`] } }], ctx({ attestation: DROID }), false, null, [['invalid_grant']]],
   ['all failing reasons are reported', [{ actions: ['x:y'], resources: ['other'] }], ctx(), false, null, [['action_not_granted', 'resource_not_granted']]]
 ].map(([name, grants, context, allow, grant_index, reasons]) => ({ name, grants, context, expected: { allow, grant_index, reasons } }));

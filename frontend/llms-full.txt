@@ -231,7 +231,7 @@ credential rotates to a new key.
 | `format` | `android-key` (Android Key Attestation), `apple-appattest` (Apple App Attest) or `tpm` (TPM 2.0). |
 | `security_level` | `tee`, `strongbox`, `secure_enclave` or `tpm`: where the key lives. Software keys are never attested. |
 | `tpm_manufacturer` | `tpm` only: the TPM vendor id from the attestation key's certificate (e.g. `NTC`, `IFX`, `INTC`, `AMD`). |
-| `app_id` | `apple-appattest` only: the app (`TEAMID.bundle.id`) that Apple attested and that reported the key. |
+| `app_id` | `apple-appattest`: the app (`TEAMID.bundle.id`) that Apple attested and that reported the key. `android-key`: `android:<package>:<SHA-256 of the app's signing certificate, lowercase hex>`, from the key description's `attestationApplicationId`, present only when it names exactly one package and one signing certificate. Android's OS (not the secure hardware) fills this in, so evaluators trust it only alongside `verified_boot: "verified"` and `device_locked: true` (evaluation.md §3.6). |
 | `environment` | `apple-appattest` only: `production` (App Store, TestFlight, enterprise) or `development`. |
 | `verified_boot` | `verified`, `self_signed`, `unverified`, `failed` or `unknown` (Android root of trust), when reported. |
 | `device_locked` | Whether the bootloader was locked, when reported. |
@@ -258,6 +258,10 @@ key's certificate chain (base64 DER, leaf first). The issuer accepts it only whe
    level for both attestation and KeyMint;
 5. the challenge in the extension equals the request's `challenge`, which the issuer made and has
    not expired.
+
+The issuer also reads `attestationApplicationId` (tag 709) into `app_id` as above; an unreadable or
+ambiguous value (a shared UID's several packages, a rotated signing key's several digests) leaves
+`app_id` out rather than failing the enrollment.
 
 **Apple.** App Attest cannot attest an arbitrary key: Apple attests a key of its own and says
 which app, on a genuine Apple device, holds it. So the app generates its P-256 signing key in the
@@ -528,10 +532,16 @@ honest as the device. See the master plan §3.5.
   that reported the key, not for the key, and any developer can ship an app that reports a key it
   can export; so it satisfies `attestation` only when its `environment` is `production` and
   `app_ids` (below) lists its `app_id`.
-- `app_ids: ["TEAMID.bundle.id", …]` — 1–16 Apple app ids (10-character team id, a dot, a bundle
-  id of dot-separated letters, digits and hyphens; at most 200 characters). `context.attestation`
-  must be an object whose `app_id` is in the list; otherwise `attested_app_required`. Android
-  attestations carry no `app_id`, so they never satisfy it.
+- `app_ids: ["TEAMID.bundle.id", "android:<package>:<sha256>", …]` — 1–16 app ids, at most 200
+  characters each: Apple app ids (10-character team id, a dot, a bundle id of dot-separated
+  letters, digits and hyphens) or Android apps (`android:`, a package name of two or more
+  dot-separated parts each starting with a letter and then letters, digits or `_`, `:`, and the
+  SHA-256 of the app's signing certificate as 64 lowercase hex digits). `context.attestation` must
+  be an object whose `app_id` is in the list; otherwise `attested_app_required`. An `android:` id
+  matches only an `android-key` attestation, and only one that also reports
+  `verified_boot: "verified"` and `device_locked: true` (Android's OS names the app, so a device
+  whose OS is not verified could name any app); any other id matches only a non-Android
+  attestation.
 - `verified_boot: true` — `context.attestation` must report `verified_boot: "verified"` and
   `device_locked: true`; otherwise `verified_boot_required`. `false` requires nothing.
 

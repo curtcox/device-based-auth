@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vite
 import { testEnv, call, newDevice } from '../test-utils/env.js';
 import { inspectCredential, signJws, createVerifier, createProof } from '../packages/verify/src/index.js';
 import { ORIGIN, worker } from '../test-utils/env.js';
-import { attestationAuthority, attestationChain } from '../test-utils/android-attestation.js';
+import { attestationAuthority, attestationChain, applicationId } from '../test-utils/android-attestation.js';
 import { appleAuthority, appleAttestation } from '../test-utils/apple-attestation.js';
 import { resetRevocationCache, createChallenge, verifyAttestation, tpmEkAnchorsFor } from './services/attestation.js';
 import { appleClientData } from './services/apple-attestation.js';
@@ -88,6 +88,27 @@ describe('attested enrollment (B5, Android)', () => {
     const plainStart = await call(env, 'POST', '/api/v1/enrollments', { body: { request: await plain.enrollRequest({ aud: ['hashbin.org'], grants }) } });
     const plainCredential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: plainStart.body.request } })).body.credential;
     expect((await attempt(plain, plainCredential)).reasons).toEqual([['attestation_required', 'verified_boot_required']]);
+  });
+
+  it('signs the attesting app into the credential and lets grants pin it, only on a locked, verified phone', async () => {
+    const app = `android:io.example.app:${'ab'.repeat(32)}`;
+    const grants = [{ actions: ['hashbin:content:write'], require: { app_ids: [app] } }];
+    const verifier = createVerifier({ issuer: ORIGIN, audience: 'hashbin.org', fetch: (url, init) => worker.fetch(new Request(url, init), env) });
+    const enrolled = async description => {
+      const device = await newDevice();
+      const start = await attestedStart(device, { grants, description: { application: applicationId(), ...description } });
+      const credential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: start.body.request } })).body.credential;
+      const url = 'https://hashbin.org/api/content';
+      const request = new Request(url, { method: 'POST', headers: { Authorization: `DBA ${credential}`, DPoP: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url, credential }) } });
+      return { payload: inspectCredential(credential).payload, result: await verifier.verifyRequest(request, { action: 'hashbin:content:write' }) };
+    };
+    const locked = await enrolled({});
+    expect(locked.payload.device.attestation.app_id).toBe(app);
+    expect(locked.result.allow).toBe(true);
+    // The same app on an unlocked phone: the OS that names the app cannot be trusted.
+    const unlocked = await enrolled({ locked: false });
+    expect(unlocked.payload.device.attestation.app_id).toBe(app);
+    expect(unlocked.result).toMatchObject({ allow: false, reasons: [['attested_app_required']] });
   });
 
   it('carries the attestation through enrollment-token redemption', async () => {
