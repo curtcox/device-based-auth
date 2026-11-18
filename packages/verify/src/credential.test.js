@@ -27,6 +27,15 @@ describe('jose', () => {
     const jwk = { kty: 'EC', crv: 'P-256', x: 'l8tFrhx-34tV3hRICRDY9zCkDlpBhF42UQUfWVAWBFs', y: '9VE4jf_Ok_o64zbTTlcuNJajHmt6v9TDVrU0CdvGRDA' };
     expect(await jwkThumbprint(jwk)).toBe('0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I');
   });
+  it('signs with an external signer (a key in a TPM or HSM) as with a CryptoKey', async () => {
+    const dev = await device();
+    let signed = null;
+    const signer = { async sign(bytes) { signed = bytes; return new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, dev.privateKey, bytes)); } };
+    const proof = await createProof({ privateKey: signer, publicJwk: dev.publicJwk, method: 'GET', url: 'https://hashbin.org/x', now: NOW });
+    expect(new TextDecoder().decode(signed)).toBe(proof.split('.').slice(0, 2).join('.'));
+    expect((await verifyProof(proof, { method: 'GET', url: 'https://hashbin.org/x', jkt: dev.jkt, now: NOW })).htm).toBe('GET');
+    await expect(createProof({ privateKey: { sign: async () => new Uint8Array(70) }, publicJwk: dev.publicJwk, method: 'GET', url: 'https://hashbin.org/x' })).rejects.toThrow(/64 bytes/);
+  });
 });
 
 describe('credentials', () => {

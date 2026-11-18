@@ -494,7 +494,7 @@ describe('OS secret store', () => {
     expect(keyStoreOption({})).toBe('auto');
     expect(keyStoreOption({ env: { DBA_KEY_STORE: 'file' } })).toBe('file');
     expect(keyStoreOption({ flag: 'OS', env: { DBA_KEY_STORE: 'file' } })).toBe('os');
-    expect(() => keyStoreOption({ flag: 'tpm' })).toThrow(UsageError);
+    expect(() => keyStoreOption({ flag: 'hsm' })).toThrow(UsageError);
   });
 
   it('keeps only the public key in key.json when the store works, and loads it back', async () => {

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# CI only: run enroll-tpm.sh against a software TPM (swtpm) instead of a real one. The swtpm gets
+# CI only: run enroll-tpm.sh (or the sample named as the first argument, such as dba-cli.sh)
+# against a software TPM (swtpm) instead of a real one. The swtpm gets
 # an EK certificate from the CA in $DBA_SAMPLE_TPM_CA (ca.key, ca.crt), which the local test
 # server trusts through TPM_EK_TEST_CA (scripts/run-samples.mjs); devicebasedauth.org itself
 # trusts only TPM manufacturers' EK CAs, so a swtpm cannot attest there.
@@ -26,4 +27,4 @@ swtpm socket --tpm2 --tpmstate dir="$work/state" --server type=tcp,port="$port" 
 swtpm_pid=$!
 trap 'kill "$swtpm_pid" 2>/dev/null; wait "$swtpm_pid" 2>/dev/null; rm -rf "$work"' EXIT
 for _ in $(seq 1 50); do (echo > "/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
-TPM2TOOLS_TCTI="swtpm:host=127.0.0.1,port=$port" bash "$here/enroll-tpm.sh"
+TPM2TOOLS_TCTI="swtpm:host=127.0.0.1,port=$port" bash "$here/${1:-enroll-tpm.sh}"

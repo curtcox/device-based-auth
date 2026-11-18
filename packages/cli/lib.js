@@ -4,8 +4,9 @@
  * everything here can be tested in-process against the Worker.
  */
 import {
-  signJws, generateKeyPair, exportPublicJwk, importJwk, publicJwk, jwkThumbprint, createProof, inspectCredential, describeGrant, validateGrants
+  signJws, generateKeyPair, exportPublicJwk, importJwk, publicJwk, jwkThumbprint, createProof, inspectCredential, describeGrant, validateGrants, unb64u
 } from '@devicebasedauth/verify';
+import { TPM_BACKEND, TPM_PROTECTION, TPM_NAME, TPM_PARENT, tpmPublicJwk, tpmSigner } from './tpm.js';
 
 export const DEFAULT_ORIGIN = 'https://devicebasedauth.org';
 export const ENROLL_TYP = 'dba-enroll+jwt';
@@ -140,11 +141,12 @@ export function enrollmentTokenOption({ flag, env = {} } = {}) {
 }
 
 /** The payload of an enrollment request (spec: POST /api/v1/enrollments). */
-export function enrollmentPayload({ aud, grants, name, kind = 'cli', lifetime, keyProtection = KEY_PROTECTION, now = Math.floor(Date.now() / 1000) }) {
+export function enrollmentPayload({ aud, grants, name, kind = 'cli', lifetime, keyProtection = KEY_PROTECTION, attestation, now = Math.floor(Date.now() / 1000) }) {
   if (!DEVICE_KINDS.includes(kind)) throw new UsageError(`--kind must be one of ${DEVICE_KINDS.join(', ')}`);
   // aud and grants may be left out when enrolling with an enrollment token (the token's template applies).
   const payload = { iat: now, ...(aud ? { aud } : {}), ...(grants ? { grants } : {}), device: { name: name || 'dba CLI', kind, key_protection: keyProtection } };
   if (lifetime !== undefined) payload.lifetime_seconds = lifetime;
+  if (attestation) payload.attestation = attestation;
   return payload;
 }
 
@@ -174,7 +176,8 @@ export function keyFile(key, now = new Date(), store = null) {
  * `secrets` (from osSecretStore); its private part is checked against the public key in the
  * file, so a swapped or stale store entry is caught here and not as a server-side refusal.
  */
-export async function loadDeviceKey(file, { secrets } = {}) {
+export async function loadDeviceKey(file, { secrets, tpm } = {}) {
+  if (file?.key_store === TPM_BACKEND) return loadTpmKey(file, tpm);
   if (file?.key_store) {
     if (!secrets || secrets.backend !== file.key_store) throw new UsageError(`key.json says the private key is in ${STORE_NAMES[file.key_store] || file.key_store}, which this system cannot reach.`);
     const d = await secrets.load(file.key_store_account);
@@ -191,6 +194,25 @@ export async function loadDeviceKey(file, { secrets } = {}) {
   return { privateKey: await importJwk(file.private_jwk, 'sign'), publicJwk: publicJwk(file.private_jwk), privateJwk: file.private_jwk };
 }
 
+/**
+ * The contents of key.json for a key made in the TPM by createTpmKey: the public key and the
+ * TPM's blobs (the private one is encrypted by the TPM, so the file is no secret).
+ */
+export function tpmKeyFile(key, now = new Date()) {
+  return { public_jwk: key.publicJwk, key_protection: TPM_PROTECTION, key_store: TPM_BACKEND, tpm_parent: TPM_PARENT, tpm_public: key.blobs.public, tpm_private: key.blobs.private, created_at: now.toISOString() };
+}
+
+/** A key.json naming a TPM key: a signer that asks the TPM, after checking the blobs belong to public_jwk. */
+function loadTpmKey(file, tpm) {
+  if (!tpm) throw new UsageError('key.json says the private key is in a TPM, which this system cannot reach (it needs tpm2-tools).');
+  if (file.tpm_parent !== TPM_PARENT || typeof file.tpm_public !== 'string' || typeof file.tpm_private !== 'string') throw new UsageError('key.json names a TPM key this version of dba cannot load.');
+  let jwk;
+  try { jwk = tpmPublicJwk(unb64u(file.tpm_public)); } catch { throw new UsageError('key.json\'s TPM public area is unreadable.'); }
+  if (jwk.x !== file.public_jwk?.x || jwk.y !== file.public_jwk?.y) throw new UsageError('key.json\'s TPM key does not match its public_jwk.');
+  const blobs = { public: file.tpm_public, private: file.tpm_private };
+  return { privateKey: tpmSigner(tpm.open, blobs), publicJwk: publicJwk(jwk), privateJwk: null, tpm: blobs };
+}
+
 /** Does the private key sign for the public key? (not every runtime checks that x, y match d on import) */
 async function keyPairMatches(key) {
   const data = crypto.getRandomValues(new Uint8Array(32));
@@ -201,10 +223,10 @@ async function keyPairMatches(key) {
 
 // ---- OS secret store ----------------------------------------------------------------------
 
-/** Where `dba enroll` keeps the private key: `auto` (the OS secret store when it works, else a file), `os` (fail without one) or `file`. */
-export const KEY_STORES = ['auto', 'os', 'file'];
+/** Where `dba enroll` keeps the private key: `auto` (the OS secret store when it works, else a file), `os` (fail without one), `file`, or `tpm` (made in the TPM; see tpm.js). */
+export const KEY_STORES = ['auto', 'os', 'file', 'tpm'];
 export const SECRET_SERVICE = 'org.devicebasedauth.dba';
-const STORE_NAMES = { 'macos-keychain': 'the macOS Keychain', 'secret-service': 'the Secret Service keyring (secret-tool)', 'windows-dpapi': 'Windows DPAPI (your Windows account)' };
+const STORE_NAMES = { 'macos-keychain': 'the macOS Keychain', 'secret-service': 'the Secret Service keyring (secret-tool)', 'windows-dpapi': 'Windows DPAPI (your Windows account)', [TPM_BACKEND]: TPM_NAME };
 
 /** --key-store, else DBA_KEY_STORE, else auto. */
 export function keyStoreOption({ flag, env = {} } = {}) {
@@ -482,6 +504,12 @@ export function describeCredential(payload, now = Math.floor(Date.now() / 1000))
   const version = typeof payload.jti === 'string' && payload.jti.startsWith(`${payload.cid}.`) ? ` (version ${payload.jti.slice(payload.cid.length + 1)})` : '';
   lines.push(payload.cnf ? `Credential ${payload.cid ?? '?'}${version}` : `Access token for credential ${payload.cid ?? '?'} (bearer: anyone holding it can use it)`);
   lines.push(`Device:    ${payload.sub ?? '?'} ${device}`.trimEnd());
+  const attestation = payload.device?.attestation;
+  if (attestation && typeof attestation === 'object') {
+    const clean = text => String(text).replace(/[\p{Cc}\p{Cf}]/gu, '');
+    const details = [attestation.format, attestation.tpm_manufacturer && `TPM manufacturer ${attestation.tpm_manufacturer}`, attestation.app_id && `app ${attestation.app_id}`].filter(Boolean).map(clean);
+    lines.push(`Attested:  ${clean(attestation.security_level ?? '?')} key (${details.join(', ')})`);
+  }
   lines.push(`Account:   ${payload.acct ?? '?'}`);
   lines.push(`Sites:     ${Array.isArray(payload.aud) ? payload.aud.join(', ') : '?'}`);
   if (Number.isSafeInteger(payload.exp)) lines.push(`${payload.exp > now ? 'Expires' : 'Expired'}:   ${iso(payload.exp)} (${relativeTime(payload.exp, now)})`);

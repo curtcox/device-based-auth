@@ -10,10 +10,12 @@ import { createPrivateKey } from 'node:crypto';
 import { homedir, hostname } from 'node:os';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
-  enrollmentPayload, enrollmentTokenOption, newDeviceKey, loadDeviceKey, keyStoreOption, osSecretStore, saveDeviceKey, forgetDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
+  enrollmentPayload, enrollmentTokenOption, newDeviceKey, tpmKeyFile, loadDeviceKey, keyStoreOption, osSecretStore, saveDeviceKey, forgetDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
   curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
 } from './lib.js';
 import { inspectCredential, createProof } from '@devicebasedauth/verify';
+import { TPM_BACKEND, TPM_PROTECTION, TPM_NAME, createTpmKey, tpmAttestation, tpmAvailable } from './tpm.js';
+import { nodeTpmSessions } from './tpm-node.js';
 
 const HELP = `dba — device credentials from devicebasedauth.org
 
@@ -22,7 +24,7 @@ Usage: dba [--profile NAME] [--origin URL] <command> [options]
 Enroll this machine:
   dba enroll --aud SITE[,SITE] (--action ACTION ... | --grant 'JSON' ...)
              [--name "My laptop"] [--kind cli] [--lifetime SECONDS] [--wait SECONDS]
-             [--print-request] [--force] [--key-store auto|os|file]
+             [--print-request] [--force] [--key-store auto|os|file|tpm]
       Makes a new P-256 key, asks for a credential and prints a link for the account owner to
       approve. Waits (default 900 s) and saves the credential. All --action values form one
       grant; each --grant adds one (or a JSON list). --print-request only prints the signed
@@ -31,6 +33,11 @@ Enroll this machine:
       is one (macOS Keychain; Secret Service via secret-tool on Linux; DPAPI on Windows) and the credential says
       key_protection "os-keychain"; else in a 0600 file, "software". --key-store os refuses to
       fall back to the file, file never tries the OS store (also DBA_KEY_STORE).
+      --key-store tpm makes the key inside the TPM 2.0 (needs tpm2-tools and access to
+      /dev/tpmrm0, or TPM2TOOLS_TCTI): it can never leave the TPM, which signs every request.
+      dba also proves to the server that the key is in a genuine TPM (EK credential
+      activation), so the credential says attestation "tpm" and satisfies grants that require
+      hardware; key_protection "tpm". \`dba certificate\` cannot export a TPM key.
   dba enroll --token dbae_… [--aud …] [--action …] [--name …]
       Enroll with an enrollment token the owner created for a fleet: no approval link, the
       credential is issued at once. The token's audiences and grants apply unless you narrow
@@ -160,7 +167,8 @@ async function loadProfile(globals) {
   // DPAPI blobs live in the profile directory, which a first enrollment has not made yet.
   const files = { read: readTextFile, write: async (path, text) => { await ensureDir(paths.dir); await writePrivate(path, text); }, remove: path => rm(path, { force: true }) };
   const secrets = osSecretStore({ platform: process.platform, run: runProgram, files, dir: paths.dir });
-  return { paths, config, origin, secrets, client: createClient({ origin }), autoRenew: autoRenewEnabled({ flag: globals['no-renew'], env: process.env }) };
+  const tpm = { backend: TPM_BACKEND, name: TPM_NAME, open: nodeTpmSessions() };
+  return { paths, config, origin, secrets, tpm, client: createClient({ origin }), autoRenew: autoRenewEnabled({ flag: globals['no-renew'], env: process.env }) };
 }
 
 /** The saved key and credential; a clear message when this profile has not enrolled yet. */
@@ -168,7 +176,7 @@ async function requireDevice(profile) {
   const file = await readJsonFile(profile.paths.key);
   const credential = await readTextFile(profile.paths.credential);
   if (!file || !credential) throw new UsageError(`No credential in ${profile.paths.dir}. Run \`dba enroll\` first.`);
-  return { key: await loadDeviceKey(file, { secrets: profile.secrets }), credential };
+  return { key: await loadDeviceKey(file, { secrets: profile.secrets, tpm: profile.tpm }), credential };
 }
 
 /**
@@ -235,6 +243,37 @@ function requestTarget(positionals, command) {
   return { method: method.toUpperCase(), url };
 }
 
+/**
+ * A new device key, kept as `mode` says: made in the TPM for "tpm", else in software and saved by
+ * saveDeviceKey. Returns { key, saved } like saveDeviceKey's result plus the loaded key.
+ */
+async function newSavedKey(profile, mode) {
+  if (mode !== 'tpm') {
+    const key = await newDeviceKey();
+    return { key, saved: await saveDeviceKey(key, { mode, secrets: profile.secrets }) };
+  }
+  if (!await tpmAvailable(profile.tpm.open)) throw new UsageError('No TPM is reachable: --key-store tpm needs tpm2-tools 5 and access to the TPM (/dev/tpmrm0, usually the "tss" group, or TPM2TOOLS_TCTI).');
+  const made = await createTpmKey(profile.tpm.open);
+  const file = tpmKeyFile(made);
+  return { key: await loadDeviceKey(file, { tpm: profile.tpm }), saved: { file, keyProtection: TPM_PROTECTION, store: null } };
+}
+
+/**
+ * The TPM's proof that the key is inside it. Enrollment goes ahead without one when the TPM
+ * cannot give it (no EK certificate, a manufacturer the server does not know): the credential is
+ * then still TPM-bound but grants that require attestation will deny.
+ */
+async function attestTpmKey(profile, key) {
+  try {
+    const attestation = await tpmAttestation(profile.tpm.open, key.tpm, { post: (path, body) => profile.client.request('POST', path, { body }) });
+    note('The TPM proved the key is inside it (EK credential activation).');
+    return attestation;
+  } catch (error) {
+    note(`dba: enrolling without attestation: ${error.message}${error.code ? ` (${error.code})` : ''}. Grants that require hardware attestation will deny this device.`);
+    return undefined;
+  }
+}
+
 // ---- commands ----------------------------------------------------------------------------
 
 async function enroll(profile, { options }) {
@@ -249,16 +288,17 @@ async function enroll(profile, { options }) {
   // Replacing the key orphans the current credential, so never do it by accident.
   if (!options.force && await readTextFile(profile.paths.credential)) throw new UsageError(`This profile already has a credential (${profile.paths.credential}). Use --profile NAME for another device, or --force to replace it.`);
 
-  const key = await newDeviceKey();
   // Keep the key before asking, so an interrupted wait can still be finished with `dba import`,
   // and so the request can say where the key lives.
   const previous = await readJsonFile(profile.paths.key);
-  const saved = await saveDeviceKey(key, { mode: keyStore, secrets: profile.secrets });
-  const request = await signEnrollmentRequest(key, enrollmentPayload({ aud, grants, name: options.name || hostname(), kind: options.kind, lifetime, keyProtection: saved.keyProtection }));
+  const { key, saved } = await newSavedKey(profile, keyStore);
   await ensureDir(profile.paths.dir);
   await writePrivate(profile.paths.key, `${JSON.stringify(saved.file, null, 2)}\n`);
   await forgetDeviceKey(previous, { secrets: profile.secrets });
-  if (saved.store) note(`Keeping the private key in ${profile.secrets.name}.`);
+  const attestation = key.tpm ? await attestTpmKey(profile, key) : undefined;
+  const request = await signEnrollmentRequest(key, enrollmentPayload({ aud, grants, name: options.name || hostname(), kind: options.kind, lifetime, keyProtection: saved.keyProtection, attestation }));
+  if (key.tpm) note(`The private key is in ${profile.tpm.name}; it cannot leave it.`);
+  else if (saved.store) note(`Keeping the private key in ${profile.secrets.name}.`);
   else if (keyStore === 'auto' && profile.secrets) note(`${profile.secrets.name} is not available; keeping the private key in ${profile.paths.key} (0600).`);
   await rm(profile.paths.credential, { force: true });
   await writePrivate(profile.paths.config, `${JSON.stringify({ ...profile.config, origin: profile.origin }, null, 2)}\n`);
@@ -318,7 +358,7 @@ async function importCredential(profile, { positionals }) {
   const credential = await credentialArgument(positionals[0]);
   const file = await readJsonFile(profile.paths.key);
   if (!file) throw new UsageError(`No key in ${profile.paths.dir}. Run \`dba enroll --print-request\` first.`);
-  if (!await credentialMatchesKey(credential, await loadDeviceKey(file, { secrets: profile.secrets }))) throw new UsageError('That credential was issued for a different key (cnf.jkt does not match key.json).');
+  if (!await credentialMatchesKey(credential, await loadDeviceKey(file, { secrets: profile.secrets, tpm: profile.tpm }))) throw new UsageError('That credential was issued for a different key (cnf.jkt does not match key.json).');
   await writePrivate(profile.paths.credential, `${credential}\n`);
   for (const line of describeCredential(inspectCredential(credential).payload)) out(line);
 }
@@ -356,6 +396,7 @@ async function token(profile, { options }) {
 async function certificate(profile, { options }) {
   const lifetime = secondsOption(options.lifetime, 'lifetime');
   const device = await usableDevice(profile);
+  if (!device.key.privateJwk) throw new UsageError('This device\'s key is in the TPM and cannot be written to a file for curl. Use `dba curl`, or a TLS stack with a TPM provider (tpm2-openssl).');
   const result = await profile.client.request('POST', '/api/v1/certificate', { device, body: lifetime ? { lifetime_seconds: lifetime } : {} });
   // curl and most TLS stacks want the key as PKCS#8 PEM; it is the same key as key.json.
   const keyPem = createPrivateKey({ key: device.key.privateJwk, format: 'jwk' }).export({ type: 'pkcs8', format: 'pem' });
@@ -383,12 +424,14 @@ async function renew(profile, { options }) {
   }
   const device = await requireDevice(profile);
   const { cid } = inspectCredential(device.credential).payload;
-  const next = options.rotate ? await newDeviceKey() : null;
-  const previous = next ? await readJsonFile(profile.paths.key) : null;
+  const previous = options.rotate ? await readJsonFile(profile.paths.key) : null;
   // The new key goes where the old one was. In the OS store it gets its own entry now (named by
   // its thumbprint, so the old one is untouched); key.json changes only after the server agreed:
-  // until then the old key and credential are the good pair.
-  const saved = next ? await saveDeviceKey(next, { mode: previous?.key_store ? 'os' : 'file', secrets: profile.secrets }) : null;
+  // until then the old key and credential are the good pair. A rotated credential carries no
+  // attestation (the server drops it), so a TPM key is not attested again here.
+  const fresh = options.rotate ? await newSavedKey(profile, previous?.key_store === TPM_BACKEND ? 'tpm' : previous?.key_store ? 'os' : 'file') : null;
+  const next = fresh?.key ?? null;
+  const saved = fresh?.saved ?? null;
   const body = next ? { new_key_proof: await rotationProof(next, cid) } : {};
   let result;
   try {

@@ -61,6 +61,13 @@ const SAMPLES = [
     expect: [/^Attestation challenge: [\w-]{43}$/m, /^Approved\. Attested: tpm \(id:00001014\)$/m, /^whoami: account sample-owner, device dev_\w+$/m, /only with a key attested to be in secure hardware/]
   },
   {
+    name: 'tpm dba-cli.sh', command: ['bash', 'docs/samples/tpm/swtpm.sh', 'dba-cli.sh'], env: () => ({ DBA_SAMPLE_TPM_CA: tpmCaDir, DBA_CLI: `node ${join(ROOT, 'packages/cli/dba.js')}` }),
+    needs: () => (hasTpmTools() && !!tpmCaDir) || 'swtpm, swtpm-tools, tpm2-tools, jq and openssl',
+    expect: [/^The TPM proved the key is inside it/m, /^Approved\. Saved the credential\.$/m, /^Attested: +tpm key \(tpm, TPM manufacturer id:00001014\)$/m, /key: tpm\)$/m,
+      /^key\.json keeps only the TPM's blobs: \["created_at","key_protection","key_store","public_jwk","tpm_parent","tpm_private","tpm_public"\]$/m,
+      /^whoami: account sample-owner, device dev_\w+$/m, /only with a key attested to be in secure hardware/]
+  },
+  {
     name: 'go_verify', command: ['go', 'run', '.'], cwd: 'docs/samples/go_verify', credential: true,
     needs: () => has('go', ['version']) || 'go',
     expect: [/^Signature: valid \(issuer key local-dev-1\)$/m, /^Device: dev_\w+$/m, /^Grant 1: \{"actions":\["hashbin:content:write"\]\}$/m]
