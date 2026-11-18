@@ -231,11 +231,12 @@ export function curlArgs(args, headers) {
  * Failures throw ApiError with the server's { error, code }.
  */
 export function createClient({ origin, fetch = (...args) => globalThis.fetch(...args) }) {
-  async function request(method, path, { body, device } = {}) {
+  async function request(method, path, { body, device, apiKey } = {}) {
     const url = new URL(path, origin).toString();
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (device) Object.assign(headers, await deviceHeaders({ ...device, method, url }));
+    if (apiKey) headers.Authorization = `ApiKey ${apiKey}`;
+    else if (device) Object.assign(headers, await deviceHeaders({ ...device, method, url }));
     let response;
     try { response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }); }
     catch (error) { throw new ApiError(`Could not reach ${new URL(url).origin}: ${error.cause?.message || error.message}`, 'network_error'); }
@@ -299,6 +300,31 @@ export function describeCredential(payload, now = Math.floor(Date.now() / 1000))
   grants.forEach((grant, i) => lines.push(`  ${i + 1}. ${describeGrant(grant)}`));
   if (!grants.length) lines.push('  (none)');
   return lines;
+}
+
+export const CREDENTIAL_STATES = ['active', 'expired', 'revoked'];
+
+/** The query string for GET /api/v1/credentials from `dba list` options. */
+export function listQuery({ status, audience, device, cursor } = {}) {
+  if (status !== undefined && !CREDENTIAL_STATES.includes(status)) throw new UsageError(`--status must be one of ${CREDENTIAL_STATES.join(', ')}`);
+  const params = new URLSearchParams();
+  for (const [name, value] of Object.entries({ status, audience, device, cursor })) if (value !== undefined) params.set(name, value);
+  const query = params.toString();
+  return `/api/v1/credentials${query ? `?${query}` : ''}`;
+}
+
+/**
+ * One line per credential for `dba list`: id, state, device name, sites and expiry. Device names
+ * are the owner's text; control characters are dropped so a name cannot rewrite the terminal.
+ */
+export function formatCredentialList(items, now = Math.floor(Date.now() / 1000)) {
+  if (!items.length) return ['No credentials.'];
+  const clean = text => String(text ?? '').replace(/[\p{Cc}\p{Cf}]/gu, '');
+  const rows = items.map(c => [clean(c.cid), clean(c.state), clean(c.device?.name || c.device_id), (c.aud || []).map(clean).join(','), Number.isSafeInteger(c.exp) ? `${c.exp > now ? 'expires' : 'expired'} ${relativeTime(c.exp, now)}` : '']);
+  const header = ['CREDENTIAL', 'STATE', 'DEVICE', 'SITES', 'EXPIRY'];
+  const widths = header.map((h, i) => Math.min(40, Math.max(h.length, ...rows.map(r => r[i].length))));
+  const fit = (text, width) => (text.length > width ? `${text.slice(0, width - 1)}…` : text).padEnd(width);
+  return [header, ...rows].map(row => row.map((cell, i) => (i === row.length - 1 ? cell : fit(cell, widths[i]))).join('  ').trimEnd());
 }
 
 /** True once two thirds of the lifetime has passed: the point the plan says devices renew. */

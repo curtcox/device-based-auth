@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn
+  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
 } from './lib.js';
 import { verifyJws, verifyProof, inspectCredential, jwkThumbprint, sha256b64u, generateKeyPair } from '../verify/src/index.js';
 import { testEnv, call, worker, ORIGIN } from '../../test-utils/env.js';
@@ -317,5 +317,43 @@ describe('automatic renewal', () => {
     const outcome = await renewIfDue({ client, device, save: async () => {}, withdrawn: true, now: iat + 10 });
     expect(outcome).toMatchObject({ renewed: true, result: { recovered: true, cost_microdollars: 0 } });
     expect(inspectCredential(outcome.result.credential).header.kid).toBe('test-2');
+  });
+});
+
+describe('dba list', () => {
+  it('builds the query and refuses unknown states', () => {
+    expect(listQuery()).toBe('/api/v1/credentials');
+    expect(listQuery({ status: 'active', audience: 'hashbin.org', cursor: 'cred:crd_x' })).toBe('/api/v1/credentials?status=active&audience=hashbin.org&cursor=cred%3Acrd_x');
+    expect(() => listQuery({ status: 'superseded' })).toThrow(/--status must be one of/);
+  });
+
+  it('prints aligned rows and strips terminal control characters from device names', () => {
+    const now = 1_800_000_000;
+    const lines = formatCredentialList([
+      { cid: 'crd_aaaaaaaa', state: 'active', device: { name: 'Laptop' }, aud: ['hashbin.org', 'cronly.org'], exp: now + 3 * 86400 },
+      { cid: 'crd_bbbbbbbb', state: 'revoked', device: { name: 'Evil\u001b[2Jname' }, aud: ['hashbin.org'], exp: now - 7200 }
+    ], now);
+    expect(lines[0]).toMatch(/^CREDENTIAL\s+STATE\s+DEVICE\s+SITES\s+EXPIRY$/);
+    expect(lines[1]).toMatch(/^crd_aaaaaaaa\s+active\s+Laptop\s+hashbin.org,cronly.org\s+expires in 3 days$/);
+    expect(lines[2]).toContain('Evil[2Jname');
+    expect(lines[2]).not.toContain('\u001b');
+    expect(lines[2]).toMatch(/expired 2 hours ago$/);
+    expect(formatCredentialList([])).toEqual(['No credentials.']);
+  });
+
+  it('lists through the API with an API key, or with a device that holds dba:credentials:read', async () => {
+    const env = await testEnv();
+    const client = createClient({ origin: ORIGIN, fetch: (url, init) => worker.fetch(new Request(url, init), env) });
+    await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
+    const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'cli', scopes: ['credentials:read'] } })).body.secret;
+    const reader = await newDeviceKey();
+    const issued = await call(env, 'POST', '/api/v1/credentials', { auth: 'alice', body: { public_jwk: reader.publicJwk, aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:credentials:read'] }] } });
+    expect(issued.status).toBe(200);
+    const byKey = await client.request('GET', listQuery({ status: 'active' }), { apiKey: key });
+    expect(byKey.items.map(c => c.cid)).toEqual([issued.body.cid]);
+    expect(byKey.cost_microdollars).toBe(5);
+    const byDevice = await client.request('GET', listQuery(), { device: { key: reader, credential: issued.body.credential } });
+    expect(byDevice.items).toHaveLength(1);
+    await expect(client.request('GET', listQuery(), { apiKey: 'dbak_nonsense' })).rejects.toMatchObject({ code: 'invalid_auth', status: 401 });
   });
 });

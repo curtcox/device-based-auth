@@ -155,7 +155,8 @@ dba headers POST https://hashbin.org/api/content</code></pre>
 curl -H &quot;Authorization: Bearer $(dba token --aud hashbin.org)&quot; https://hashbin.org/api/content
 dba enroll --aud hashbin.org --grant &#39;{&quot;actions&quot;:[&quot;hashbin:content:*&quot;],&quot;where&quot;:{&quot;source&quot;:&quot;network&quot;,&quot;countries&quot;:[&quot;US&quot;]}}&#39;
 dba renew --rotate                                                 # renew onto a fresh key
-dba revoke                                                         # revoke and delete the key</code></pre>
+dba revoke                                                         # revoke and delete the key
+DBA_API_KEY=dbak_… dba list --status active                       # every credential on the account</code></pre>
 <p>Like the browser SDK, the CLI renews for you: <code>dba headers</code>, <code>sign</code>, <code>curl</code>, <code>token</code> and <code>status --online</code> renew the credential first once two thirds of its lifetime has passed. If that fails (say the balance is too low) they warn and use the current credential, which is still valid. A device that runs rarely can renew from cron with <code>dba renew --if-due</code>; turn automatic renewal off with <code>--no-renew</code> or <code>DBA_AUTO_RENEW=0</code>.</p>
 <p>Agents and other programs that cannot wait can use <code>dba enroll --print-request</code> to get a signed request, submit it (for example through the MCP <code>request_enrollment</code> tool), and finish with <code>dba import</code>.</p>
 <h3>Fleets: enrollment tokens</h3>

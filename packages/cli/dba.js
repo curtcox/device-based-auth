@@ -11,7 +11,7 @@ import { homedir, hostname } from 'node:os';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn
+  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
 } from './lib.js';
 import { inspectCredential, createProof } from '@devicebasedauth/verify';
 
@@ -50,6 +50,12 @@ Use the credential:
                                             for a daily cron job on rarely used devices).
   dba revoke                                Revoke this device's credential and delete its files.
 
+The account:
+  dba list [--status active|expired|revoked] [--audience SITE] [--device ID] [--all] [--json]
+      Every credential on the account, 50 at a time (--all: every page). Uses DBA_API_KEY (an
+      API key with credentials:read) when set, else this device's credential, which then needs
+      dba:credentials:read. Each page is a metered read (5 µ$).
+
 Any credential:
   dba inspect CREDENTIAL|- [--json]         Decode it and ask the server about its signature and revocation.
   dba import CREDENTIAL|-                   Save a credential issued for this profile's key.
@@ -80,6 +86,7 @@ const COMMANDS = {
   certificate: { values: ['lifetime'] },
   renew: { booleans: ['rotate', 'if-due'] },
   revoke: {},
+  list: { values: ['status', 'audience', 'device'], booleans: ['all', 'json'] },
   help: {}
 };
 const GLOBAL = { values: ['profile', 'origin'], booleans: ['help', 'no-renew'] };
@@ -366,7 +373,27 @@ async function revoke(profile) {
   out(`Deleted the key and credential in ${profile.paths.dir}.`);
 }
 
-const HANDLERS = { enroll, status, whoami: status, inspect, import: importCredential, headers, sign, token, certificate, renew, revoke };
+async function list(profile, { options }) {
+  listQuery(options); // check the options before touching keys or the network
+  const apiKey = process.env.DBA_API_KEY?.trim();
+  let auth;
+  try { auth = apiKey ? { apiKey } : { device: await usableDevice(profile) }; } catch (error) {
+    if (error instanceof UsageError) throw new UsageError(`${error.message} Or set DBA_API_KEY to an API key with credentials:read.`);
+    throw error;
+  }
+  const items = []; let cursor; let more = false;
+  do {
+    const page = await profile.client.request('GET', listQuery({ status: options.status, audience: options.audience, device: options.device, cursor }), auth);
+    items.push(...page.items);
+    cursor = page.next_cursor || undefined;
+    more = !!cursor;
+  } while (options.all && cursor);
+  if (options.json) { out(JSON.stringify({ items, next_cursor: cursor ?? null }, null, 2)); return; }
+  for (const line of formatCredentialList(items)) out(line);
+  if (more) note('More credentials exist: add --all to list every page.');
+}
+
+const HANDLERS = { list, enroll, status, whoami: status, inspect, import: importCredential, headers, sign, token, certificate, renew, revoke };
 
 async function main(argv) {
   const { globals, command, rest } = splitCommand(argv);
