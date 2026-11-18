@@ -129,10 +129,19 @@ export function secondsOption(value, name) {
   return Number(value);
 }
 
+/** An enrollment token from --token or $DBA_ENROLLMENT_TOKEN (the variable keeps it out of shell history). */
+export function enrollmentTokenOption({ flag, env = {} } = {}) {
+  const token = (flag ?? env.DBA_ENROLLMENT_TOKEN ?? '').trim();
+  if (!token) return null;
+  if (!token.startsWith('dbae_')) throw new UsageError('An enrollment token starts with dbae_');
+  return token;
+}
+
 /** The payload of an enrollment request (spec: POST /api/v1/enrollments). */
 export function enrollmentPayload({ aud, grants, name, kind = 'cli', lifetime, now = Math.floor(Date.now() / 1000) }) {
   if (!DEVICE_KINDS.includes(kind)) throw new UsageError(`--kind must be one of ${DEVICE_KINDS.join(', ')}`);
-  const payload = { iat: now, aud, grants, device: { name: name || 'dba CLI', kind, key_protection: KEY_PROTECTION } };
+  // aud and grants may be left out when enrolling with an enrollment token (the token's template applies).
+  const payload = { iat: now, ...(aud ? { aud } : {}), ...(grants ? { grants } : {}), device: { name: name || 'dba CLI', kind, key_protection: KEY_PROTECTION } };
   if (lifetime !== undefined) payload.lifetime_seconds = lifetime;
   return payload;
 }

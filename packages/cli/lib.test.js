@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
-  enrollmentPayload, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
+  enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
   curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue
 } from './lib.js';
 import { verifyJws, verifyProof, inspectCredential, jwkThumbprint, sha256b64u } from '../verify/src/index.js';
@@ -225,6 +225,20 @@ describe('the client against the Worker', () => {
     await expect(client.request('GET', '/api/v1/whoami', { device: fresh })).rejects.toMatchObject({ code: 'revoked', status: 401 });
     const inspected = await client.request('POST', '/api/v1/inspect', { body: { credential: renewed.credential } });
     expect(inspected).toMatchObject({ signature_valid: true, revoked: true, valid: false });
+  });
+
+  it('enrolls with an enrollment token, taking the template when the request leaves it out', async () => {
+    const created = await call(env, 'POST', '/api/v1/enrollment-tokens', { auth: 'alice', body: { aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], max_uses: 1 } });
+    const token = enrollmentTokenOption({ env: { DBA_ENROLLMENT_TOKEN: ` ${created.body.token}\n` } });
+    const key = await newDeviceKey();
+    const payload = enrollmentPayload({ name: 'fleet box' });
+    expect(payload.aud).toBeUndefined();
+    const issued = await client.request('POST', '/api/v1/enrollments/redeem', { body: { request: await signEnrollmentRequest(key, payload), enrollment_token: token } });
+    expect(inspectCredential(issued.credential).payload).toMatchObject({ aud: ['hashbin.org'], device: { name: 'fleet box' } });
+    expect(await credentialMatchesKey(issued.credential, key)).toBe(true);
+    expect(enrollmentTokenOption({ flag: 'dbae_x', env: { DBA_ENROLLMENT_TOKEN: 'dbae_y' } })).toBe('dbae_x');
+    expect(enrollmentTokenOption({ env: {} })).toBeNull();
+    expect(() => enrollmentTokenOption({ flag: 'dbak_x' })).toThrow(UsageError);
   });
 
   it('reports unreachable servers as network errors', async () => {

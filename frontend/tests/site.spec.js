@@ -58,7 +58,7 @@ test('pages fit a phone screen without horizontal scrolling', async ({ page }) =
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), path).toBe(true);
   }
   await signIn(page, uniqueName('phone'));
-  for (const hash of ['#credentials', '#devices', '#issue', '#account', '#transactions', '#keys', '#audiences', '#panic']) {
+  for (const hash of ['#credentials', '#devices', '#issue', '#tokens', '#account', '#transactions', '#keys', '#audiences', '#panic']) {
     await page.goto(`/app.html${hash}`);
     await page.waitForLoadState('networkidle');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), hash).toBe(true);

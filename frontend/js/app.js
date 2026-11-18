@@ -571,6 +571,55 @@ async function keys() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Enrollment tokens (STATUS B2)
+
+async function tokens() {
+  const [data, audiences] = await Promise.all([api('/api/v1/enrollment-tokens'), api('/api/v1/audiences', { auth: false })]);
+  const created = h('div', { id: 'new-token' });
+  const form = h('form', { class: 'stack', id: 'token-form' },
+    h('div', { class: 'row' },
+      h('label', {}, 'Name', h('input', { name: 'name', value: 'Fleet', maxlength: 64, required: true })),
+      h('label', {}, 'Devices (max uses)', h('input', { name: 'max_uses', type: 'number', min: '1', max: '10000', step: '1', value: '10', required: true })),
+      h('label', {}, 'Valid for (days)', h('input', { name: 'days', type: 'number', min: '0.01', max: '90', step: 'any', value: '7', required: true })),
+      h('label', {}, 'Credential lifetime (days)', h('input', { name: 'lifetime_days', type: 'number', min: '0.01', max: '400', step: 'any', value: '30', required: true }))),
+    h('fieldset', {}, h('legend', {}, 'Audiences'), audiences.items.map(a => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'aud', value: a.name, checked: a.name === 'hashbin.org' }), a.name))),
+    h('label', {}, 'Grants (JSON array)', h('span', { class: 'hint' }, ' — every device gets these, or narrower ones it asks for; build them with the ', h('a', { href: '/tools/builder.html' }, 'grant builder')),
+      h('textarea', { name: 'grants', rows: 6, required: true, spellcheck: 'false', value: pretty([{ actions: ['hashbin:content:write'] }]) })),
+    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Create token'), h('span', { class: 'muted small' }, `Free to create; each device that enrolls costs ${usd(config.prices.issue)}.`)));
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(form, async () => {
+      let grants;
+      try { grants = JSON.parse(field(form, 'grants')); } catch { replace(created, notice('error', 'The grants are not valid JSON.')); return; }
+      const problems = validateGrants(grants);
+      if (problems.length) { replace(created, notice('error', h('strong', {}, 'The grants are not valid: '), h('ul', {}, problems.map(p => h('li', {}, p))))); return; }
+      const aud = [...form.querySelectorAll('input[name="aud"]:checked')].map(i => i.value);
+      try {
+        const token = await api('/api/v1/enrollment-tokens', { method: 'POST', body: { name: field(form, 'name'), aud, grants, max_uses: Number(field(form, 'max_uses')), expires_in_days: Number(field(form, 'days')), lifetime_seconds: Math.round(Number(field(form, 'lifetime_days')) * 86400) } });
+        replace(view, await tokens());
+        replace($('#new-token'), notice('warn', h('p', {}, h('strong', {}, 'Copy this token now. '), 'It is shown once. Anyone holding it can enroll devices with these grants, charged to your balance, until it is used up, expires or you revoke it.'),
+          h('div', { class: 'secret', id: 'token-secret' }, token.token), h('div', { class: 'actions' }, copyButton('Copy token', () => token.token)),
+          h('p', { class: 'small' }, 'On each device: ', h('code', {}, 'DBA_ENROLLMENT_TOKEN=<token> dba enroll --name <device>'), ', or in a browser ', h('code', {}, 'dba.enroll({}, { enrollmentToken })'), '.')));
+      } catch (error) { replace(created, errorBox(error)); }
+    });
+  });
+  const rows = data.items.map(t => [
+    h('strong', {}, t.name), h('span', { class: 'small' }, t.template.aud.join(', ')), `${num(t.uses)} / ${num(t.max_uses)}`, date(t.expires_at), badge(t.state === 'active' ? 'active' : 'revoked', t.state.replace('_', ' ')),
+    t.state === 'active' ? confirmButton('Revoke', `Revoke “${t.name}”? Devices already enrolled keep their credentials.`, async () => {
+      await api(`/api/v1/enrollment-tokens/${enc(t.id)}`, { method: 'DELETE' });
+      flash('success', `Revoked ${t.name}.`); await render();
+    }) : ''
+  ]);
+  return [
+    h('h1', {}, 'Enrollment tokens'),
+    h('p', { class: 'muted' }, 'Approve a fleet once: a token carries the audiences and grants you choose, for a number of devices, for a limited time. Each device still makes its own key and enrolls with the token instead of waiting for you to approve it.'),
+    created,
+    rows.length ? table(['Name', 'Audiences', 'Used', 'Expires', 'State', ''], rows, { class: 'token-list' }) : h('p', { class: 'muted' }, 'No enrollment tokens yet.'),
+    h('h2', {}, 'Create an enrollment token'), form
+  ];
+}
+
+// ---------------------------------------------------------------------------------------------
 // Audiences
 
 async function myAudiences(all) {
@@ -698,7 +747,7 @@ async function panic() {
   ];
 }
 
-const VIEWS = { credentials, credential, devices, approvals, issue, account: accountView, transactions, keys, audiences, panic };
+const VIEWS = { credentials, credential, devices, approvals, issue, tokens, account: accountView, transactions, keys, audiences, panic };
 
 // ---------------------------------------------------------------------------------------------
 // Boot

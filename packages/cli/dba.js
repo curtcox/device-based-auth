@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { homedir, hostname } from 'node:os';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
-  enrollmentPayload, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
+  enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
   curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue
 } from './lib.js';
 import { inspectCredential, createProof } from '@devicebasedauth/verify';
@@ -28,6 +28,10 @@ Enroll this machine:
       request (for agents and the MCP server); finish with \`dba import\`.
       The private key is kept in a 0600 file, so credentials made by this CLI say
       key_protection "software". It never leaves this machine.
+  dba enroll --token dbae_… [--aud …] [--action …] [--name …]
+      Enroll with an enrollment token the owner created for a fleet: no approval link, the
+      credential is issued at once. The token's audiences and grants apply unless you narrow
+      them. Prefer DBA_ENROLLMENT_TOKEN=dbae_… over --token to keep it out of shell history.
 
 Use the credential:
   dba status | whoami [--online] [--json]   What this device may do, in plain English.
@@ -60,7 +64,7 @@ Files: $DBA_HOME/<profile>/ (default ~/.config/dba/<profile>/): key.json, creden
 `;
 
 const COMMANDS = {
-  enroll: { values: ['name', 'kind', 'lifetime', 'wait'], repeatable: ['aud', 'grant', 'action'], booleans: ['print-request', 'force'] },
+  enroll: { values: ['name', 'kind', 'lifetime', 'wait', 'token'], repeatable: ['aud', 'grant', 'action'], booleans: ['print-request', 'force'] },
   status: { booleans: ['online', 'json'] },
   whoami: { booleans: ['online', 'json'] },
   inspect: { booleans: ['json'] },
@@ -184,8 +188,11 @@ function requestTarget(positionals, command) {
 // ---- commands ----------------------------------------------------------------------------
 
 async function enroll(profile, { options }) {
-  const aud = audiencesFromOption(options.aud);
-  const grants = grantsFromOptions(options);
+  const token = enrollmentTokenOption({ flag: options.token, env: process.env });
+  if (token && options['print-request']) throw new UsageError('--print-request is for approval links; with an enrollment token the credential is issued at once');
+  // With a token, audiences and grants are optional: the token's template applies.
+  const aud = token && !options.aud?.length ? undefined : audiencesFromOption(options.aud);
+  const grants = token && !options.grant?.length && !options.action?.length ? undefined : grantsFromOptions(options);
   const lifetime = secondsOption(options.lifetime, 'lifetime');
   const waitSeconds = secondsOption(options.wait, 'wait') ?? 900;
   // Replacing the key orphans the current credential, so never do it by accident.
@@ -199,6 +206,15 @@ async function enroll(profile, { options }) {
   await rm(profile.paths.credential, { force: true });
   await writePrivate(profile.paths.config, `${JSON.stringify({ ...profile.config, origin: profile.origin }, null, 2)}\n`);
   if (options['print-request']) { out(request); return; }
+
+  if (token) {
+    const issued = await profile.client.request('POST', '/api/v1/enrollments/redeem', { body: { request, enrollment_token: token } });
+    await writePrivate(profile.paths.credential, `${issued.credential}\n`);
+    out('Enrolled with the enrollment token. Saved the credential.');
+    out('');
+    for (const line of describeCredential(inspectCredential(issued.credential).payload)) out(line);
+    return;
+  }
 
   const start = await profile.client.request('POST', '/api/v1/enrollments', { body: { request } });
   out('Ask the account owner to open this link while signed in to devicebasedauth.org, check the grants and approve:');

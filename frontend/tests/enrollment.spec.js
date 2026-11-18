@@ -88,3 +88,31 @@ test('the dashboard can sign in with this browser as its own device (dba:session
   const list = await (await request.get('/api/v1/credentials', { headers: { Authorization: `LocalDev ${owner}` } })).json();
   expect(list.items.map(c => c.state)).toEqual(['revoked']);
 });
+
+test('an owner creates an enrollment token in the dashboard and a browser enrolls with it, no popup', async ({ page, request }) => {
+  const owner = uniqueName('fleet');
+  await fund(request, owner);
+  await signIn(page, owner);
+  await page.goto('/app.html#tokens');
+  await page.getByLabel('Name').fill('Kiosks');
+  await page.getByLabel('Devices (max uses)').fill('1');
+  await page.getByRole('button', { name: 'Create token' }).click();
+  const token = (await page.locator('#token-secret').textContent()).trim();
+  expect(token).toMatch(/^dbae_/);
+  await expect(page.locator('.token-list')).toContainText('0 / 1');
+
+  await page.goto('/tools/');
+  const result = await page.evaluate(async enrollmentToken => {
+    const { DBA } = await import('/sdk/dba.js');
+    const dba = new DBA({ origin: location.origin, name: 'kiosk' });
+    await dba.enroll({ device: { name: 'Kiosk 1' } }, { enrollmentToken });
+    const response = await dba.fetch('/api/v1/whoami');
+    return { status: response.status, body: await response.json() };
+  }, token);
+  expect(result.status).toBe(200);
+  expect(result.body).toMatchObject({ account: owner, kind: 'device', aud: ['hashbin.org'] });
+
+  await page.goto('/app.html#tokens');
+  await expect(page.locator('.token-list')).toContainText('1 / 1');
+  await expect(page.locator('.token-list')).toContainText('used up');
+});

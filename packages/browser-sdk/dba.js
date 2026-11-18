@@ -98,12 +98,20 @@ export class DBA {
    * Ask the account owner to approve this device. Opens the approval page in a popup (call from a
    * click handler so it is not blocked) and resolves with the credential.
    * @param {object} request { aud: string[], grants: object[], device?: {name, kind}, lifetime_seconds? }
-   * @param {object} [options] { popup: true, onApprovalUrl(url), timeoutMs }
+   * @param {object} [options] { popup: true, onApprovalUrl(url), timeoutMs, enrollmentToken }
+   *   enrollmentToken: a dbae_… token the owner created (kiosks, fleets); the credential is issued
+   *   at once without a popup, and aud/grants may be left out to take the token's.
    */
-  async enroll(request, { popup = true, onApprovalUrl, timeoutMs = 15 * 60000 } = {}) {
+  async enroll(request, { popup = true, onApprovalUrl, timeoutMs = 15 * 60000, enrollmentToken } = {}) {
     const { privateKey, publicJwk } = await this.key();
     const device = { name: defaultDeviceName(), kind: 'browser', ...request.device, key_protection: 'webcrypto-nonextractable' };
-    const signed = await signJws({ typ: 'dba-enroll+jwt', jwk: publicJwk }, { iat: Math.floor(Date.now() / 1000), aud: request.aud, grants: request.grants, device, ...(request.lifetime_seconds ? { lifetime_seconds: request.lifetime_seconds } : {}), return_origin: location.origin }, privateKey);
+    const signed = await signJws({ typ: 'dba-enroll+jwt', jwk: publicJwk }, { iat: Math.floor(Date.now() / 1000), ...(request.aud ? { aud: request.aud } : {}), ...(request.grants ? { grants: request.grants } : {}), device, ...(request.lifetime_seconds ? { lifetime_seconds: request.lifetime_seconds } : {}), return_origin: location.origin }, privateKey);
+    if (enrollmentToken) {
+      // Pre-approved by the owner (a kiosk or fleet): issued at once, no approval popup.
+      const issued = await this.api('/api/v1/enrollments/redeem', { method: 'POST', body: { request: signed, enrollment_token: enrollmentToken } });
+      this.state.credential = issued.credential; await this.save();
+      return issued.credential;
+    }
     const started = await this.api('/api/v1/enrollments', { method: 'POST', body: { request: signed } });
     const win = popup ? window.open(started.approval_url, 'devicebasedauth-approve', 'popup,width=520,height=760') : null;
     if (!win && onApprovalUrl) onApprovalUrl(started.approval_url);
