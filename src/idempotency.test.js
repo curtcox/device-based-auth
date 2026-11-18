@@ -22,7 +22,7 @@ describe('Idempotency-Key on POST /api/v1/credentials', () => {
     expect(again.status).toBe(200);
     expect(again.body).toMatchObject({ credential: first.body.credential, cid: first.body.cid, device_id: first.body.device_id, cost_microdollars: 0, idempotent_replay: true });
     expect(again.headers.get('X-DBA-Cost-Microdollars')).toBe('0');
-    expect(await balance(env, 'alice')).toBe(before - 75);
+    expect(await balance(env, 'alice')).toBe(before - 85);
     expect((await listed(env, 'alice')).map(c => c.cid)).toEqual([first.body.cid]);
   });
 
@@ -70,7 +70,7 @@ describe('approving one enrollment twice at once', () => {
     expect(ok.length).toBeGreaterThanOrEqual(1);
     for (const r of results) if (r.status !== 200) expect(r.body.code).toBe('already_decided');
     expect(new Set(ok.map(r => r.body.cid)).size).toBe(1);
-    expect(await balance(env, 'alice')).toBe(before - 75);
+    expect(await balance(env, 'alice')).toBe(before - 85);
     expect(await listed(env, 'alice')).toHaveLength(1);
   });
 });

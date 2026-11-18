@@ -21,7 +21,7 @@ describe('enrollment tokens (B2)', () => {
 
     const first = await redeem(created.body.token, await newDevice());
     expect(first.status).toBe(200);
-    expect(first.body).toMatchObject({ status: 'approved', cost_microdollars: 75 });
+    expect(first.body).toMatchObject({ status: 'approved', cost_microdollars: 85 });
     const { payload } = inspectCredential(first.body.credential);
     expect(payload).toMatchObject({ acct: 'alice', aud: ['hashbin.org'], grants: TEMPLATE.grants });
     expect(payload.exp - payload.iat).toBe(3600);

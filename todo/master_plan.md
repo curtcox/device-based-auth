@@ -390,7 +390,9 @@ only. Draft prices and the cost derivation are in
 - Free paths are static files, CDN-cached R2 objects, or session-only UI reads behind per-account
   and per-IP rate limits; anonymous enrollment writes nothing (§5.1).
 - Revocation is prepaid; record storage is prepaid for 13 months, after which expired records are
-  compacted into R2 archives (prepaid) and dropped from DO storage.
+  dropped from DO storage by a weekly compaction whose deletes the issue price also prepays
+  (an R2 archive was dropped: its per-run write would have cost more than the records; revoked
+  devices, deposits and daily/monthly summaries are kept).
 - **Clerk monthly retained users** are the one per-user cost not tied to an operation (free up to
   50,000 MRU). Mitigations: after first sign-in, users can sign into the DBA dashboard with their
   own DBA browser credential (no Clerk session, so no MRU); accounts with zero balance and no live

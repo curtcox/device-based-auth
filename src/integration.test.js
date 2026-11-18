@@ -16,7 +16,7 @@ describe('enrollment and offline verification', () => {
     const { start, approve } = await enroll(env, 'alice', device);
     expect(start.approval_url).toMatch(/^http:\/\/localhost:8787\/approve\.html#enr_/);
     expect(approve.status).toBe(200);
-    expect(approve.body.cost_microdollars).toBe(75);
+    expect(approve.body.cost_microdollars).toBe(85);
     const credential = approve.body.credential;
     const { header, payload } = inspectCredential(credential);
     expect(header).toMatchObject({ typ: 'dba-device+jwt', kid: 'test-1' });
@@ -26,7 +26,7 @@ describe('enrollment and offline verification', () => {
     expect(poll.body).toMatchObject({ status: 'approved', credential });
 
     const account = await call(env, 'GET', '/api/v1/account', { auth: 'alice' });
-    expect(account.body.balance_microdollars).toBe(1_000_000 - 75);
+    expect(account.body.balance_microdollars).toBe(1_000_000 - 85);
 
     const verifier = verifierFor(env);
     expect(await verifier.verifyRequest(await requestWith(device, credential), { action: 'hashbin:content:write' })).toMatchObject({ allow: true, account: 'alice' });
@@ -125,7 +125,7 @@ describe('renewal, rotation and access tokens', () => {
     const path = `/api/v1/credentials/${cid}/renew`;
     const keyProof = await signJws({ typ: 'dba-rotate+jwt', jwk: next.publicJwk }, { cid, iat: Math.floor(Date.now() / 1000) }, next.privateKey);
     const rotated = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: { new_key_proof: keyProof } });
-    expect(rotated.body).toMatchObject({ rotated: true, cost_microdollars: 75 });
+    expect(rotated.body).toMatchObject({ rotated: true, cost_microdollars: 85 });
     const fresh = inspectCredential(rotated.body.credential).payload;
     expect(fresh.cnf.jkt).toBe(next.jkt);
     await runAlarms(env);
@@ -339,7 +339,7 @@ describe('public endpoints', () => {
     expect((await call(env, 'GET', '/.well-known/jwks.json')).body.keys[0]).toMatchObject({ kid: 'test-1', kty: 'EC', crv: 'P-256' });
     expect((await call(env, 'GET', '/.well-known/jwks.json')).body.keys[0].d).toBeUndefined();
     expect((await call(env, 'GET', '/.well-known/openid-configuration')).body.issuer).toBe(ORIGIN);
-    expect((await call(env, 'GET', '/api/v1/quote?op=issue')).body.quote_microdollars).toBe(75);
+    expect((await call(env, 'GET', '/api/v1/quote?op=issue')).body.quote_microdollars).toBe(85);
     expect((await call(env, 'GET', '/api/v1/audiences?mine=1', { auth: 'operator' })).body.items.map(a => a.name)).toContain('hashbin.org');
     expect((await call(env, 'GET', '/api/v1/audiences?mine=1')).status).toBe(401);
     const list = await call(env, 'GET', '/status/v1/lists/0');
@@ -383,7 +383,7 @@ describe('account budget guards', () => {
     const third = await enroll(env, 'alice', await newDevice());
     expect(third.approve.status).toBe(429);
     expect(third.approve.body).toMatchObject({ code: 'issuance_limit', limit: 2 });
-    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.balance_microdollars).toBe(1_000_000 - 2 * 75);
+    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.balance_microdollars).toBe(1_000_000 - 2 * 85);
     await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body: { max_issues_per_day: 3 } });
     expect((await enroll(env, 'alice', await newDevice())).approve.status).toBe(200);
   });

@@ -24,9 +24,13 @@ export const OPERATIONS = Object.freeze({
   // round, four delivery rounds to up to 8 audiences (signing ~2 ms each), three alarm wake-ups,
   // and four outbox rewrites when every round fails (8 DO requests, 4 rows, 65 ms). Redeeming an
   // enrollment token (B2) adds the token check and its use counter (1 DO request, 1 row).
-  issue: { workerRequests: 3, doRequests: 19, rowWrites: 19, cpuMs: 80, storageKBMonths: 6 * 13, r2ClassA: 1 },
-  // Rate limit, credential status (auth), credential status (renew), funds check, renew.
-  renew: { workerRequests: 1, doRequests: 5, rowWrites: 5, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 },
+  // After 13 months compaction deletes what it wrote (credential, device, ledger, receipt and the
+  // issued and revoked audit rows: 6 rows), in an alarm wake-up that also rewrites its schedule
+  // (1 DO request, 1 row, 1 ms); worst case, one credential falls due per compaction run.
+  issue: { workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 81, storageKBMonths: 6 * 13, r2ClassA: 1 },
+  // Rate limit, credential status (auth), credential status (renew), funds check, renew; later
+  // compaction deletes its ledger, receipt and audit rows.
+  renew: { workerRequests: 1, doRequests: 5, rowWrites: 8, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 },
   // Rate limit, charge on the audience's balance row, registry (normally cached), issuer check
   // with usage counter + decision row + its pruning delete; decision rows are kept 90 days.
   decision: { workerRequests: 1, doRequests: 4, rowWrites: 4, cpuMs: 5, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
@@ -37,8 +41,9 @@ export const OPERATIONS = Object.freeze({
   token: { workerRequests: 1, doRequests: 4, rowWrites: 1, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 },
   // Consent (rate limit, registry, code put, code alarm) + token (take code, registry, charge).
   login: { workerRequests: 2, doRequests: 7, rowWrites: 4, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 },
-  // Rate limit, charge, registry write; 4 KB of catalog kept 13 months.
-  audience: { workerRequests: 1, doRequests: 3, rowWrites: 5, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }
+  // Rate limit, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
+  // the charge's ledger and receipt rows and the audit row.
+  audience: { workerRequests: 1, doRequests: 3, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }
 });
 
 /** Worst-case marginal cost of one operation in micro-dollars (not rounded). */
