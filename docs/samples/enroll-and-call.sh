@@ -11,6 +11,7 @@ dba() { node packages/cli/dba.js "$@"; }   # or: npm install -g @devicebasedauth
 export DBA_ORIGIN="${DBA_ORIGIN:-https://devicebasedauth.org}"
 # Keep the sample's key away from your real ~/.config/dba. Leave this out in real use.
 export DBA_HOME="${DBA_HOME:-$(mktemp -d)}"
+export DBA_KEY_STORE=file   # and keep a throwaway key out of the OS keychain
 
 # 1. Make a key and ask for permission to publish on hashbin.org. This prints a link; the
 #    account owner opens it, checks the grants and approves. The command waits for that.

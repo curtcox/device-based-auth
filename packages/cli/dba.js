@@ -10,7 +10,7 @@ import { createPrivateKey } from 'node:crypto';
 import { homedir, hostname } from 'node:os';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
-  enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
+  enrollmentPayload, enrollmentTokenOption, newDeviceKey, loadDeviceKey, keyStoreOption, osSecretStore, saveDeviceKey, forgetDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
   curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
 } from './lib.js';
 import { inspectCredential, createProof } from '@devicebasedauth/verify';
@@ -22,13 +22,15 @@ Usage: dba [--profile NAME] [--origin URL] <command> [options]
 Enroll this machine:
   dba enroll --aud SITE[,SITE] (--action ACTION ... | --grant 'JSON' ...)
              [--name "My laptop"] [--kind cli] [--lifetime SECONDS] [--wait SECONDS]
-             [--print-request] [--force]
+             [--print-request] [--force] [--key-store auto|os|file]
       Makes a new P-256 key, asks for a credential and prints a link for the account owner to
       approve. Waits (default 900 s) and saves the credential. All --action values form one
       grant; each --grant adds one (or a JSON list). --print-request only prints the signed
       request (for agents and the MCP server); finish with \`dba import\`.
-      The private key is kept in a 0600 file, so credentials made by this CLI say
-      key_protection "software". It never leaves this machine.
+      The private key never leaves this machine. It is kept in the OS secret store when there
+      is one (macOS Keychain; Secret Service via secret-tool on Linux) and the credential says
+      key_protection "os-keychain"; else in a 0600 file, "software". --key-store os refuses to
+      fall back to the file, file never tries the OS store (also DBA_KEY_STORE).
   dba enroll --token dbae_… [--aud …] [--action …] [--name …]
       Enroll with an enrollment token the owner created for a fleet: no approval link, the
       credential is issued at once. The token's audiences and grants apply unless you narrow
@@ -72,10 +74,11 @@ Options:
                    then https://devicebasedauth.org).
 
 Files: $DBA_HOME/<profile>/ (default ~/.config/dba/<profile>/): key.json, credential.jwt, config.json.
+A key in the OS secret store is listed there under service org.devicebasedauth.dba.
 `;
 
 const COMMANDS = {
-  enroll: { values: ['name', 'kind', 'lifetime', 'wait', 'token'], repeatable: ['aud', 'grant', 'action'], booleans: ['print-request', 'force'] },
+  enroll: { values: ['name', 'kind', 'lifetime', 'wait', 'token', 'key-store'], repeatable: ['aud', 'grant', 'action'], booleans: ['print-request', 'force'] },
   status: { booleans: ['online', 'json'] },
   whoami: { booleans: ['online', 'json'] },
   inspect: { booleans: ['json'] },
@@ -116,6 +119,28 @@ async function writePrivate(path, text) {
   await rename(temp, path);
 }
 
+/**
+ * Run a program without a shell, feeding `input` on stdin. Resolves to { code, stdout }; code is
+ * null when it could not start or took longer than `timeoutMs` (a keyring waiting for an unlock
+ * prompt nobody will answer).
+ */
+function runProgram(command, args, input, { timeoutMs = 20_000 } = {}) {
+  return new Promise(resolve => {
+    let child;
+    try { child = spawn(command, args, { stdio: ['pipe', 'pipe', 'ignore'] }); } catch { resolve({ code: null, stdout: '' }); return; }
+    let stdout = '';
+    let done = false;
+    const finish = code => { if (!done) { done = true; clearTimeout(timer); resolve({ code, stdout }); } };
+    const timer = setTimeout(() => { child.kill(); finish(null); }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.on('error', () => finish(null));
+    child.on('close', code => finish(code));
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+
 async function ensureDir(dir) {
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700);
@@ -132,7 +157,8 @@ async function loadProfile(globals) {
   const paths = configPaths({ env: process.env, home: homedir(), profile: globals.profile });
   const config = await readJsonFile(paths.config) || {};
   const origin = resolveOrigin({ flag: globals.origin, env: process.env, saved: config.origin });
-  return { paths, config, origin, client: createClient({ origin }), autoRenew: autoRenewEnabled({ flag: globals['no-renew'], env: process.env }) };
+  const secrets = osSecretStore({ platform: process.platform, run: runProgram });
+  return { paths, config, origin, secrets, client: createClient({ origin }), autoRenew: autoRenewEnabled({ flag: globals['no-renew'], env: process.env }) };
 }
 
 /** The saved key and credential; a clear message when this profile has not enrolled yet. */
@@ -140,7 +166,7 @@ async function requireDevice(profile) {
   const file = await readJsonFile(profile.paths.key);
   const credential = await readTextFile(profile.paths.credential);
   if (!file || !credential) throw new UsageError(`No credential in ${profile.paths.dir}. Run \`dba enroll\` first.`);
-  return { key: await loadDeviceKey(file), credential };
+  return { key: await loadDeviceKey(file, { secrets: profile.secrets }), credential };
 }
 
 /**
@@ -217,14 +243,21 @@ async function enroll(profile, { options }) {
   const grants = token && !options.grant?.length && !options.action?.length ? undefined : grantsFromOptions(options);
   const lifetime = secondsOption(options.lifetime, 'lifetime');
   const waitSeconds = secondsOption(options.wait, 'wait') ?? 900;
+  const keyStore = keyStoreOption({ flag: options['key-store'], env: process.env });
   // Replacing the key orphans the current credential, so never do it by accident.
   if (!options.force && await readTextFile(profile.paths.credential)) throw new UsageError(`This profile already has a credential (${profile.paths.credential}). Use --profile NAME for another device, or --force to replace it.`);
 
   const key = await newDeviceKey();
-  const request = await signEnrollmentRequest(key, enrollmentPayload({ aud, grants, name: options.name || hostname(), kind: options.kind, lifetime }));
+  // Keep the key before asking, so an interrupted wait can still be finished with `dba import`,
+  // and so the request can say where the key lives.
+  const previous = await readJsonFile(profile.paths.key);
+  const saved = await saveDeviceKey(key, { mode: keyStore, secrets: profile.secrets });
+  const request = await signEnrollmentRequest(key, enrollmentPayload({ aud, grants, name: options.name || hostname(), kind: options.kind, lifetime, keyProtection: saved.keyProtection }));
   await ensureDir(profile.paths.dir);
-  // Save the key before asking, so an interrupted wait can still be finished with `dba import`.
-  await writePrivate(profile.paths.key, `${JSON.stringify(keyFile(key), null, 2)}\n`);
+  await writePrivate(profile.paths.key, `${JSON.stringify(saved.file, null, 2)}\n`);
+  await forgetDeviceKey(previous, { secrets: profile.secrets });
+  if (saved.store) note(`Keeping the private key in ${profile.secrets.name}.`);
+  else if (keyStore === 'auto' && profile.secrets) note(`${profile.secrets.name} is not available; keeping the private key in ${profile.paths.key} (0600).`);
   await rm(profile.paths.credential, { force: true });
   await writePrivate(profile.paths.config, `${JSON.stringify({ ...profile.config, origin: profile.origin }, null, 2)}\n`);
   if (options['print-request']) { out(request); return; }
@@ -283,7 +316,7 @@ async function importCredential(profile, { positionals }) {
   const credential = await credentialArgument(positionals[0]);
   const file = await readJsonFile(profile.paths.key);
   if (!file) throw new UsageError(`No key in ${profile.paths.dir}. Run \`dba enroll --print-request\` first.`);
-  if (!await credentialMatchesKey(credential, await loadDeviceKey(file))) throw new UsageError('That credential was issued for a different key (cnf.jkt does not match key.json).');
+  if (!await credentialMatchesKey(credential, await loadDeviceKey(file, { secrets: profile.secrets }))) throw new UsageError('That credential was issued for a different key (cnf.jkt does not match key.json).');
   await writePrivate(profile.paths.credential, `${credential}\n`);
   for (const line of describeCredential(inspectCredential(credential).payload)) out(line);
 }
@@ -349,10 +382,23 @@ async function renew(profile, { options }) {
   const device = await requireDevice(profile);
   const { cid } = inspectCredential(device.credential).payload;
   const next = options.rotate ? await newDeviceKey() : null;
+  const previous = next ? await readJsonFile(profile.paths.key) : null;
+  // The new key goes where the old one was. In the OS store it gets its own entry now (named by
+  // its thumbprint, so the old one is untouched); key.json changes only after the server agreed:
+  // until then the old key and credential are the good pair.
+  const saved = next ? await saveDeviceKey(next, { mode: previous?.key_store ? 'os' : 'file', secrets: profile.secrets }) : null;
   const body = next ? { new_key_proof: await rotationProof(next, cid) } : {};
-  const result = await profile.client.request('POST', `/api/v1/credentials/${encodeURIComponent(cid)}/renew`, { device, body });
-  // Save only after the server agreed: until then the old key and credential are the good pair.
-  if (next) await writePrivate(profile.paths.key, `${JSON.stringify(keyFile(next), null, 2)}\n`);
+  let result;
+  try {
+    result = await profile.client.request('POST', `/api/v1/credentials/${encodeURIComponent(cid)}/renew`, { device, body });
+  } catch (error) {
+    if (saved) await forgetDeviceKey(saved.file, { secrets: profile.secrets });
+    throw error;
+  }
+  if (saved) {
+    await writePrivate(profile.paths.key, `${JSON.stringify(saved.file, null, 2)}\n`);
+    await forgetDeviceKey(previous, { secrets: profile.secrets });
+  }
   await writePrivate(profile.paths.credential, `${result.credential}\n`);
   out(`${result.rotated ? 'Rotated to a new key and renewed' : 'Renewed'} ${result.cid}${result.recovered ? ' (the issuer withdrew the key that signed it; no charge)' : ''} (now ${result.jti}); expires ${new Date(result.exp * 1000).toISOString()} (${relativeTime(result.exp)}).`);
 }
@@ -368,6 +414,7 @@ async function revoke(profile) {
     if (!['revoked', 'expired'].includes(error.code)) throw error;
     out(`${cid} was already ${error.code}.`);
   }
+  await forgetDeviceKey(await readJsonFile(profile.paths.key), { secrets: profile.secrets });
   for (const path of [profile.paths.credential, profile.paths.key, profile.paths.config, profile.paths.certificate, profile.paths.certificateKey, profile.paths.ca]) await rm(path, { force: true });
   await rmdir(profile.paths.dir).catch(() => {});
   out(`Deleted the key and credential in ${profile.paths.dir}.`);

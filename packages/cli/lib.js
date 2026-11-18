@@ -11,8 +11,10 @@ export const DEFAULT_ORIGIN = 'https://devicebasedauth.org';
 export const ENROLL_TYP = 'dba-enroll+jwt';
 export const ROTATE_TYP = 'dba-rotate+jwt';
 export const DEVICE_KINDS = ['browser', 'phone', 'desktop', 'server', 'cli', 'agent', 'iot', 'other'];
-/** Keys made by this CLI live in a file, so the credential must say so; approvers see it. */
+/** Keys in a 0600 file say so in the credential; approvers see it. */
 export const KEY_PROTECTION = 'software';
+/** Keys whose private part is in the OS secret store (macOS Keychain, Secret Service). */
+export const KEYCHAIN_PROTECTION = 'os-keychain';
 
 /** A mistake in how the command was called. dba.js prints it with a pointer to `dba help`. */
 export class UsageError extends Error {
@@ -138,18 +140,18 @@ export function enrollmentTokenOption({ flag, env = {} } = {}) {
 }
 
 /** The payload of an enrollment request (spec: POST /api/v1/enrollments). */
-export function enrollmentPayload({ aud, grants, name, kind = 'cli', lifetime, now = Math.floor(Date.now() / 1000) }) {
+export function enrollmentPayload({ aud, grants, name, kind = 'cli', lifetime, keyProtection = KEY_PROTECTION, now = Math.floor(Date.now() / 1000) }) {
   if (!DEVICE_KINDS.includes(kind)) throw new UsageError(`--kind must be one of ${DEVICE_KINDS.join(', ')}`);
   // aud and grants may be left out when enrolling with an enrollment token (the token's template applies).
-  const payload = { iat: now, ...(aud ? { aud } : {}), ...(grants ? { grants } : {}), device: { name: name || 'dba CLI', kind, key_protection: KEY_PROTECTION } };
+  const payload = { iat: now, ...(aud ? { aud } : {}), ...(grants ? { grants } : {}), device: { name: name || 'dba CLI', kind, key_protection: keyProtection } };
   if (lifetime !== undefined) payload.lifetime_seconds = lifetime;
   return payload;
 }
 
 /**
- * A new device key. It is extractable because the CLI has to keep it in a file between runs;
- * that is why its credential says key_protection "software".
- * Returns { privateKey, publicJwk, privateJwk }.
+ * A new device key. It is extractable because the CLI has to keep it between runs, in the OS
+ * secret store or a 0600 file (see saveDeviceKey); either way it is a software key, never a
+ * hardware-bound one. Returns { privateKey, publicJwk, privateJwk }.
  */
 export async function newDeviceKey() {
   const pair = await generateKeyPair(true);
@@ -157,15 +159,138 @@ export async function newDeviceKey() {
   return { privateKey: pair.privateKey, publicJwk: await exportPublicJwk(pair.publicKey), privateJwk: { kty: 'EC', crv: 'P-256', x: privateJwk.x, y: privateJwk.y, d: privateJwk.d } };
 }
 
-/** The contents of key.json for a key from newDeviceKey. */
-export function keyFile(key, now = new Date()) {
+/**
+ * The contents of key.json for a key from newDeviceKey. With `store` (an entry saved by
+ * saveDeviceKey in the OS secret store) the file holds only the public key and where the private
+ * part is, so copying the profile directory does not copy the key.
+ */
+export function keyFile(key, now = new Date(), store = null) {
+  if (store) return { public_jwk: key.publicJwk, key_protection: KEYCHAIN_PROTECTION, key_store: store.backend, key_store_account: store.account, created_at: now.toISOString() };
   return { private_jwk: key.privateJwk, public_jwk: key.publicJwk, key_protection: KEY_PROTECTION, created_at: now.toISOString() };
 }
 
-/** Load key.json contents back into a signing key. */
-export async function loadDeviceKey(file) {
+/**
+ * Load key.json contents back into a signing key. A key kept in the OS secret store needs
+ * `secrets` (from osSecretStore); its private part is checked against the public key in the
+ * file, so a swapped or stale store entry is caught here and not as a server-side refusal.
+ */
+export async function loadDeviceKey(file, { secrets } = {}) {
+  if (file?.key_store) {
+    if (!secrets || secrets.backend !== file.key_store) throw new UsageError(`key.json says the private key is in ${STORE_NAMES[file.key_store] || file.key_store}, which this system cannot reach.`);
+    const d = await secrets.load(file.key_store_account);
+    if (!d) throw new UsageError(`The private key for this profile is missing from ${STORE_NAMES[file.key_store]} (entry ${file.key_store_account}). Enroll again with \`dba enroll --force\`.`);
+    const privateJwk = { kty: 'EC', crv: 'P-256', x: file.public_jwk?.x, y: file.public_jwk?.y, d };
+    const mismatch = new UsageError(`The private key in ${STORE_NAMES[file.key_store]} (entry ${file.key_store_account}) does not belong to key.json's public key.`);
+    // Node refuses to import a d that does not match x, y; other runtimes may not, hence the signature check.
+    const privateKey = await importJwk(privateJwk, 'sign').catch(() => { throw mismatch; });
+    const key = { privateKey, publicJwk: publicJwk(privateJwk), privateJwk };
+    if (!await keyPairMatches(key)) throw mismatch;
+    return key;
+  }
   if (!file?.private_jwk?.d) throw new Error('key.json has no private key');
   return { privateKey: await importJwk(file.private_jwk, 'sign'), publicJwk: publicJwk(file.private_jwk), privateJwk: file.private_jwk };
+}
+
+/** Does the private key sign for the public key? (not every runtime checks that x, y match d on import) */
+async function keyPairMatches(key) {
+  const data = crypto.getRandomValues(new Uint8Array(32));
+  const algorithm = { name: 'ECDSA', hash: 'SHA-256' };
+  const signature = await crypto.subtle.sign(algorithm, key.privateKey, data);
+  return crypto.subtle.verify(algorithm, await importJwk(key.publicJwk, 'verify'), signature, data);
+}
+
+// ---- OS secret store ----------------------------------------------------------------------
+
+/** Where `dba enroll` keeps the private key: `auto` (the OS secret store when it works, else a file), `os` (fail without one) or `file`. */
+export const KEY_STORES = ['auto', 'os', 'file'];
+export const SECRET_SERVICE = 'org.devicebasedauth.dba';
+const STORE_NAMES = { 'macos-keychain': 'the macOS Keychain', 'secret-service': 'the Secret Service keyring (secret-tool)' };
+
+/** --key-store, else DBA_KEY_STORE, else auto. */
+export function keyStoreOption({ flag, env = {} } = {}) {
+  const value = (flag ?? env.DBA_KEY_STORE ?? 'auto').trim().toLowerCase() || 'auto';
+  if (!KEY_STORES.includes(value)) throw new UsageError(`--key-store must be one of ${KEY_STORES.join(', ')}`);
+  return value;
+}
+
+/**
+ * The OS secret store for this platform, or null when there is none the CLI knows: the macOS
+ * Keychain through `security`, or the freedesktop Secret Service (GNOME Keyring, KWallet) through
+ * `secret-tool`. Windows and headless Linux without secret-tool use the file.
+ *
+ * `run(command, args, input)` runs a program without a shell and resolves to { code, stdout }
+ * (code null when it could not start). The secret never goes on a command line, where other
+ * users could read it from the process list: secret-tool reads it from stdin, and `security`
+ * gets it inside a command typed into its interactive mode (`security -i`), also on stdin.
+ * Entries are named by the key's JWK thumbprint, which is base64url and needs no quoting.
+ */
+export function osSecretStore({ platform, run }) {
+  const check = account => { if (!/^[A-Za-z0-9_-]{43}$/.test(account)) throw new Error('secret store account must be a JWK thumbprint'); };
+  const checkSecret = secret => { if (!/^[A-Za-z0-9_-]+$/.test(secret)) throw new Error('secret must be base64url'); };
+  if (platform === 'darwin') {
+    return {
+      backend: 'macos-keychain',
+      name: STORE_NAMES['macos-keychain'],
+      async save(account, secret) {
+        check(account); checkSecret(secret);
+        const result = await run('security', ['-i'], `add-generic-password -U -s ${SECRET_SERVICE} -a ${account} -l dba-cli-device-key -w ${secret}\n`);
+        return result.code === 0;
+      },
+      async load(account) {
+        check(account);
+        const result = await run('security', ['find-generic-password', '-s', SECRET_SERVICE, '-a', account, '-w'], '');
+        return result.code === 0 ? result.stdout.trim() || null : null;
+      },
+      async remove(account) { check(account); await run('security', ['delete-generic-password', '-s', SECRET_SERVICE, '-a', account], ''); }
+    };
+  }
+  if (platform === 'linux' || platform === 'freebsd' || platform === 'openbsd') {
+    return {
+      backend: 'secret-service',
+      name: STORE_NAMES['secret-service'],
+      async save(account, secret) {
+        check(account); checkSecret(secret);
+        const result = await run('secret-tool', ['store', '--label=dba CLI device key', 'service', SECRET_SERVICE, 'account', account], secret);
+        return result.code === 0;
+      },
+      async load(account) {
+        check(account);
+        const result = await run('secret-tool', ['lookup', 'service', SECRET_SERVICE, 'account', account], '');
+        return result.code === 0 ? result.stdout.trim() || null : null;
+      },
+      async remove(account) { check(account); await run('secret-tool', ['clear', 'service', SECRET_SERVICE, 'account', account], ''); }
+    };
+  }
+  return null;
+}
+
+/**
+ * Keep a new key: its private part in the OS secret store when `mode` allows and the store works
+ * (read back to be sure: a locked or absent keyring can report success), else in key.json.
+ * Returns { file, keyProtection, store } where `file` is the key.json contents and `store` the
+ * secret-store entry ({ backend, account }) or null. Throws for mode "os" without a working store.
+ */
+export async function saveDeviceKey(key, { mode = 'auto', secrets, now = new Date() } = {}) {
+  if (mode !== 'file' && secrets) {
+    const account = await jwkThumbprint(key.publicJwk);
+    let saved = false;
+    try { saved = await secrets.save(account, key.privateJwk.d) && await secrets.load(account) === key.privateJwk.d; } catch { saved = false; }
+    if (saved) {
+      const store = { backend: secrets.backend, account };
+      return { file: keyFile(key, now, store), keyProtection: KEYCHAIN_PROTECTION, store };
+    }
+    await secrets.remove(account).catch(() => {});
+    if (mode === 'os') throw new UsageError(`Could not keep the key in ${secrets.name}. Unlock it, or use --key-store file.`);
+  } else if (mode === 'os') {
+    throw new UsageError('This system has no OS secret store dba can use (macOS Keychain, or secret-tool on Linux). Use --key-store file.');
+  }
+  return { file: keyFile(key, now), keyProtection: KEY_PROTECTION, store: null };
+}
+
+/** Remove a key.json's private part from the OS secret store, if it is there. Never throws. */
+export async function forgetDeviceKey(file, { secrets } = {}) {
+  if (!file?.key_store || !secrets || secrets.backend !== file.key_store) return;
+  await secrets.remove(file.key_store_account).catch(() => {});
 }
 
 /** Sign an enrollment request with the device's new key; the server checks it against header.jwk. */
