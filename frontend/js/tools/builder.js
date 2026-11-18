@@ -77,6 +77,8 @@ export function readGrant() {
   if (form.elements.step_up.checked) require.step_up = true;
   if (form.elements.attestation.value) require.attestation = form.elements.attestation.value;
   if (form.elements.verified_boot.checked) require.verified_boot = true;
+  const appIds = form.elements.app_ids.value.split(/[\s,]+/).filter(Boolean);
+  if (appIds.length) require.app_ids = appIds;
   if (Object.keys(require).length) grant.require = require;
   return grant;
 }

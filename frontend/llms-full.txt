@@ -22,7 +22,7 @@ MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorizati
 A credential is a compact JWS (ES256), header `{"typ":"dba-device+jwt","alg":"ES256","kid":…}`. Decode the middle segment (base64url JSON) to read it:
 `iss`, `sub` (device id), `acct` (issuing account), `aud` (site names), `cid` (credential id), `jti`, `iat`/`nbf`/`exp`, `cnf.jkt` (device key thumbprint), `device`, `grants`, `status.status_list {idx, uri}`, `ver`.
 
-A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "require": {"online","step_up","attestation":"hardware|strongbox","verified_boot"} }`. Deny by default; any passing grant allows; unknown constraints deny.
+A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "require": {"online","step_up","attestation":"hardware|strongbox","verified_boot","app_ids":["TEAMID.bundle.id"]} }`. Deny by default; any passing grant allows; unknown constraints deny.
 
 Present it as `Authorization: DBA <credential>` plus `DPoP: <proof>` (RFC 9449 proof JWT signed by the device key with htm, htu, iat, jti, ath).
 
@@ -46,6 +46,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - CLI / agent: `dba enroll --aud example.com --action example:write` prints an approval URL for the human owner, then polls. `dba curl …`, `dba token --aud example.com`, `dba renew`, `dba revoke`, `dba list` (the account's credentials; `DBA_API_KEY` with `credentials:read`, or a device holding `dba:credentials:read`). The CLI renews automatically at 2/3 of the lifetime when it uses the credential (`--no-renew` or `DBA_AUTO_RENEW=0` to stop); `dba renew --if-due` suits cron.
 - HTTP: `POST /api/v1/enrollments {request}` where request is a JWS (typ `dba-enroll+jwt`, the new public key in the header `jwk`) over `{iat, aud, grants, device, lifetime_seconds?}`. Response: `approval_url` (give it to the human), `poll_url`. Poll `GET poll_url` until `status` is `approved` (then `credential` is included), `denied` or `expired`.
 - Android key attestation (optional): `POST /api/v1/enrollments/attestation-challenge` → `challenge`; generate the Keystore key with `setAttestationChallenge(challenge ASCII bytes)`; add `attestation: {format: "android-key", challenge, x5c: [base64 DER, leaf first]}` to the enrollment request payload. Verified chains put `device.attestation {format, security_level: tee|strongbox, verified_boot, device_locked, verified_at}` in the credential; a rejected chain is `400 invalid_attestation`. Sample: docs/samples/android.
+- Apple App Attest (optional): same challenge; make the key in the Secure Enclave, then `attestKey(keyId, clientDataHash: SHA-256("<challenge>.<JWK thumbprint>"))` and add `attestation: {format: "apple-appattest", challenge, app_id: "TEAMID.bundle.id", key_id, object}` (base64). Gives `device.attestation {format, security_level: secure_enclave, app_id, environment}`; it satisfies `require.attestation` only for production builds of apps listed in `require.app_ids` (Apple attests the app, not the key).
 - Fleets: the owner creates an enrollment token (`POST /api/v1/enrollment-tokens {name, aud, grants, lifetime_seconds, max_uses, expires_in_days}` → `token: dbae_…`, shown once). Each device signs its usual enrollment request (aud/grants optional; may only narrow the token's) and sends `POST /api/v1/enrollments/redeem {request, enrollment_token}` — issued at once, issue price charged to the token's account. CLI: `DBA_ENROLLMENT_TOKEN=dbae_… dba enroll`; SDK: `dba.enroll({}, { enrollmentToken })`.
 - mTLS: `POST /api/v1/certificate {lifetime_seconds?}` (device credential + DPoP; 300–86400 s, default 3600; token price) returns a PEM X.509 client certificate for the device's own key, signed by the CA in `/.well-known/dba-ca.pem`; CN = device id, SAN URIs `urn:devicebasedauth:{device,credential,account}:…`; no grants, no revocation. CLI: `dba certificate` then `curl --cert client.crt --key client.key`.
 - Pre-approved issuance: `POST /api/v1/credentials {public_jwk, aud, grants, device, lifetime_seconds}` with an API key holding `credentials:issue` (or a device credential holding `dba:credentials:issue`, which can only delegate narrower grants).
@@ -86,7 +87,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `POST /api/v1/inspect` (public): Decode and check a credential; optionally evaluate an action. Free.
 - `POST /api/v1/enrollments` (public): Start an enrollment with a request JWS (typ dba-enroll+jwt) signed by the new device key. Returns the approval URL and a poll URL. Free; nothing is stored.
 - `POST /api/v1/enrollments/describe` (public): Describe a pending enrollment ticket for the approval page. Free.
-- `POST /api/v1/enrollments/attestation-challenge` (public): A challenge for Android Key Attestation, valid 10 minutes: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:"android-key", challenge, x5c[]} to the enrollment request. Free; stateless.
+- `POST /api/v1/enrollments/attestation-challenge` (public): A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:"android-key", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256("<challenge>.<JWK thumbprint of the enrolled key>") and add {format:"apple-appattest", challenge, app_id, key_id, object}. Free; stateless.
 - `GET /api/v1/enrollments/{id}` (public): Poll an enrollment until it is approved, denied or expired.
 - `POST /api/v1/enrollments/approve` (session): Approve an enrollment (optionally narrowing grants) and issue the credential. Charges the issue price.
 - `POST /api/v1/enrollments/deny` (session): Deny an enrollment.
@@ -224,14 +225,16 @@ credential rotates to a new key.
 
 | Member | Meaning |
 |--------|---------|
-| `format` | `android-key` (Android Key Attestation). Apple App Attest and TPM are not supported yet. |
-| `security_level` | `tee` or `strongbox`: where the key lives. Software keys are never attested. |
+| `format` | `android-key` (Android Key Attestation) or `apple-appattest` (Apple App Attest). TPM is not supported yet. |
+| `security_level` | `tee`, `strongbox` or `secure_enclave`: where the key lives. Software keys are never attested. |
+| `app_id` | `apple-appattest` only: the app (`TEAMID.bundle.id`) that Apple attested and that reported the key. |
+| `environment` | `apple-appattest` only: `production` (App Store, TestFlight, enterprise) or `development`. |
 | `verified_boot` | `verified`, `self_signed`, `unverified`, `failed` or `unknown` (Android root of trust), when reported. |
 | `device_locked` | Whether the bootloader was locked, when reported. |
 | `attestation_version` | The Keymaster/KeyMint attestation version. |
 | `verified_at` | NumericDate the issuer checked the evidence. |
 
-With an attestation, `key_protection` is set by the issuer (`android-keystore`).
+With an attestation, `key_protection` is set by the issuer (`android-keystore` or `secure-enclave`).
 
 **Android.** The device asks `POST /api/v1/enrollments/attestation-challenge` for a challenge (a
 43-character string, valid 10 minutes), generates its P-256 signing key in the Android Keystore
@@ -251,6 +254,30 @@ key's certificate chain (base64 DER, leaf first). The issuer accepts it only whe
    level for both attestation and KeyMint;
 5. the challenge in the extension equals the request's `challenge`, which the issuer made and has
    not expired.
+
+**Apple.** App Attest cannot attest an arbitrary key: Apple attests a key of its own and says
+which app, on a genuine Apple device, holds it. So the app generates its P-256 signing key in the
+Secure Enclave (`kSecAttrTokenIDSecureEnclave`), gets a challenge as above, calls
+`DCAppAttestService.generateKey()` and then `attestKey(keyId, clientDataHash:)` with
+`clientDataHash = SHA-256("<challenge>.<JWK thumbprint (RFC 7638) of the Secure Enclave key>")`,
+and adds `attestation: { format: "apple-appattest", challenge, app_id, key_id, object }` to its
+enrollment request (`key_id` and `object` base64; `app_id` is `TEAMID.bundle.id`). The issuer
+follows Apple's "Validating apps that connect to your server" and accepts it only when:
+
+1. `object` is CBOR with `fmt` `apple-appattest` and an `x5c` of the credential certificate and
+   its intermediate; the certificate is signed by the intermediate, the intermediate by the pinned
+   Apple App Attestation Root CA, and neither is outside its validity period;
+2. the certificate's extension 1.2.840.113635.100.8.2 holds
+   `SHA-256(authData ‖ SHA-256("<challenge>.<thumbprint>"))`, with the enrolled key's thumbprint
+   and a challenge the issuer made and has not expired;
+3. `key_id` is the SHA-256 of the certificate's public key and is also `authData`'s credential id;
+4. `authData`'s RP id hash is `SHA-256(app_id)`, its counter is 0, and its AAGUID names the
+   production or development environment.
+
+The app's receipt (for Apple's fraud-metric service) is not used. What this proves is that a
+genuine copy of `app_id` reported the key, so it is only as good as that app: the
+`secure_enclave` level counts for `require.attestation` only in grants that also name the app
+(`require.app_ids`, evaluation.md §3.6).
 
 Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
 without attestation omits the member.

@@ -22,6 +22,7 @@
 <li><a href="#browser">Quick start: browser SDK</a></li>
 <li><a href="#cli">Quick start: CLI</a></li>
 <li><a href="#android">Quick start: Android</a></li>
+<li><a href="#ios">iOS: Apple App Attest</a></li>
 <li><a href="#verify">Verify requests on your server</a></li>
 <li><a href="#workers">Cloudflare Worker middleware</a></li>
 <li><a href="#authorize">Online authorization API</a></li>
@@ -191,6 +192,20 @@ Object result = client.call("POST", "https://hashbin.org/api/content", credentia
         });
         String payload = new String(Base64.getUrlDecoder().decode(credential.split(&quot;\\.&quot;)[1]), java.nio.charset.StandardCharsets.UTF_8);</code></pre>
 <p class="small muted">Store the credential next to the key alias (it is not secret) and renew it at about two thirds of its lifetime with <code>client.call("POST", origin + "/api/v1/credentials/" + cid + "/renew", credential, DbaClient.map())</code>, as <code>Main.java</code> does. An iOS sample (Secure Enclave) is still to come; until then the same steps apply with <code>SecureEnclave.P256.Signing.PrivateKey</code>.</p>
+</section>
+
+<section id="ios">
+<h2>iOS: Apple App Attest</h2>
+<p>App Attest cannot vouch for an arbitrary key: Apple attests a key of its own and says which app, on a genuine iPhone or iPad, holds it. So an iOS app makes its DBA key in the Secure Enclave as usual and then has App Attest vouch for that key:</p>
+<ol>
+<li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>
+<li>Generate the P-256 signing key in the Secure Enclave and compute its JWK thumbprint (RFC 7638).</li>
+<li>Call <code>DCAppAttestService.shared.generateKey()</code>, then <code>attestKey(keyId, clientDataHash:)</code> with the SHA-256 of the UTF-8 string <code>"&lt;challenge&gt;.&lt;thumbprint&gt;"</code>.</li>
+<li>Add <code>attestation: { format: "apple-appattest", challenge, app_id: "TEAMID.bundle.id", key_id, object }</code> (<code>key_id</code> and <code>object</code> base64) to the signed enrollment request.</li>
+</ol>
+<p>The issuer checks Apple's certificate chain, the nonce, the key id, the app id and the counter (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>) and signs <code>{ format: "apple-appattest", security_level: "secure_enclave", app_id, environment }</code> into <code>device.attestation</code>; the approval page says <em>Secure Enclave, reported by the app … as attested by Apple</em>. Because what Apple proves is the app, not the key, a grant counts it for <code>require.attestation</code> only when it also names the app in <code>require.app_ids</code>, and only for production builds:</p>
+<pre class="code"><code>{ "actions": ["hashbin:content:write"],
+  "require": { "attestation": "hardware", "app_ids": ["ABCDE12345.org.example.wallet"] } }</code></pre>
 </section>
 
 <section id="verify">

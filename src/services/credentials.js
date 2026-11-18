@@ -22,10 +22,12 @@ export function cleanDevice(device = {}) {
   return { name, kind, key_protection };
 }
 
+const ATTESTED_KEY_PROTECTION = { 'android-key': 'android-keystore', 'apple-appattest': 'secure-enclave' };
+
 /** The device claim with a verified attestation (which also settles key_protection). */
 export function withAttestation(device, attestation, at) {
   if (!attestation) return device;
-  return { ...device, key_protection: attestation.format === 'android-key' ? 'android-keystore' : device.key_protection, attestation: { ...attestation, verified_at: at } };
+  return { ...device, key_protection: ATTESTED_KEY_PROTECTION[attestation.format] ?? device.key_protection, attestation: { ...attestation, verified_at: at } };
 }
 
 /** The device claim without attestation, for a credential moved to a key nobody attested. */

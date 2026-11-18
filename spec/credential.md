@@ -79,14 +79,16 @@ credential rotates to a new key.
 
 | Member | Meaning |
 |--------|---------|
-| `format` | `android-key` (Android Key Attestation). Apple App Attest and TPM are not supported yet. |
-| `security_level` | `tee` or `strongbox`: where the key lives. Software keys are never attested. |
+| `format` | `android-key` (Android Key Attestation) or `apple-appattest` (Apple App Attest). TPM is not supported yet. |
+| `security_level` | `tee`, `strongbox` or `secure_enclave`: where the key lives. Software keys are never attested. |
+| `app_id` | `apple-appattest` only: the app (`TEAMID.bundle.id`) that Apple attested and that reported the key. |
+| `environment` | `apple-appattest` only: `production` (App Store, TestFlight, enterprise) or `development`. |
 | `verified_boot` | `verified`, `self_signed`, `unverified`, `failed` or `unknown` (Android root of trust), when reported. |
 | `device_locked` | Whether the bootloader was locked, when reported. |
 | `attestation_version` | The Keymaster/KeyMint attestation version. |
 | `verified_at` | NumericDate the issuer checked the evidence. |
 
-With an attestation, `key_protection` is set by the issuer (`android-keystore`).
+With an attestation, `key_protection` is set by the issuer (`android-keystore` or `secure-enclave`).
 
 **Android.** The device asks `POST /api/v1/enrollments/attestation-challenge` for a challenge (a
 43-character string, valid 10 minutes), generates its P-256 signing key in the Android Keystore
@@ -106,6 +108,30 @@ key's certificate chain (base64 DER, leaf first). The issuer accepts it only whe
    level for both attestation and KeyMint;
 5. the challenge in the extension equals the request's `challenge`, which the issuer made and has
    not expired.
+
+**Apple.** App Attest cannot attest an arbitrary key: Apple attests a key of its own and says
+which app, on a genuine Apple device, holds it. So the app generates its P-256 signing key in the
+Secure Enclave (`kSecAttrTokenIDSecureEnclave`), gets a challenge as above, calls
+`DCAppAttestService.generateKey()` and then `attestKey(keyId, clientDataHash:)` with
+`clientDataHash = SHA-256("<challenge>.<JWK thumbprint (RFC 7638) of the Secure Enclave key>")`,
+and adds `attestation: { format: "apple-appattest", challenge, app_id, key_id, object }` to its
+enrollment request (`key_id` and `object` base64; `app_id` is `TEAMID.bundle.id`). The issuer
+follows Apple's "Validating apps that connect to your server" and accepts it only when:
+
+1. `object` is CBOR with `fmt` `apple-appattest` and an `x5c` of the credential certificate and
+   its intermediate; the certificate is signed by the intermediate, the intermediate by the pinned
+   Apple App Attestation Root CA, and neither is outside its validity period;
+2. the certificate's extension 1.2.840.113635.100.8.2 holds
+   `SHA-256(authData ‖ SHA-256("<challenge>.<thumbprint>"))`, with the enrolled key's thumbprint
+   and a challenge the issuer made and has not expired;
+3. `key_id` is the SHA-256 of the certificate's public key and is also `authData`'s credential id;
+4. `authData`'s RP id hash is `SHA-256(app_id)`, its counter is 0, and its AAGUID names the
+   production or development environment.
+
+The app's receipt (for Apple's fraud-metric service) is not used. What this proves is that a
+genuine copy of `app_id` reported the key, so it is only as good as that app: the
+`secure_enclave` level counts for `require.attestation` only in grants that also name the app
+(`require.app_ids`, evaluation.md §3.6).
 
 Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
 without attestation omits the member.

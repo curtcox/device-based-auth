@@ -167,6 +167,9 @@ export function describeKey(device) {
     const details = [LEVELS[a.security_level] || a.security_level, a.verified_boot && (BOOT[a.verified_boot] || a.verified_boot), a.device_locked === false ? 'bootloader unlocked' : a.device_locked ? 'bootloader locked' : null].filter(Boolean);
     return `Android Keystore, attested by Google (${details.join(', ')})`;
   }
+  if (a?.format === 'apple-appattest') {
+    return `Secure Enclave, reported by the app ${a.app_id} as attested by Apple (${a.environment === 'production' ? 'App Store or TestFlight build' : 'development build'})`;
+  }
   const kp = device?.key_protection;
   return `${KEY_PROTECTION[kp] || kp || 'unknown'} (self-reported)`;
 }

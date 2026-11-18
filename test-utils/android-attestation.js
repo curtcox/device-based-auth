@@ -5,10 +5,10 @@ import { seq, set, octets, bits, utf8, bool, explicit, integer, oid, time, small
 
 const ENUM = 0x0a;
 const name = cn => seq(set(seq(oid('2.5.4.3'), utf8(cn))));
-const ext = (id, value, critical = false) => seq(oid(id), ...(critical ? [bool(true)] : []), octets(value));
+export const ext = (id, value, critical = false) => seq(oid(id), ...(critical ? [bool(true)] : []), octets(value));
 const b64 = der => btoa(String.fromCharCode(...der));
 
-async function spkiOf(publicKey) { return new Uint8Array(await crypto.subtle.exportKey('spki', publicKey)); }
+export async function spkiOf(publicKey) { return new Uint8Array(await crypto.subtle.exportKey('spki', publicKey)); }
 
 async function signTbs(tbs, signer) {
   if (signer.kind === 'ec') {
@@ -20,7 +20,7 @@ async function signTbs(tbs, signer) {
   return seq(tbs, seq(oid('1.2.840.113549.1.1.11'), new Uint8Array([5, 0])), bits(sig));
 }
 
-async function certificate({ serial, issuer, subject, spki, signer, notBefore, notAfter, extensions = [] }) {
+export async function certificate({ serial, issuer, subject, spki, signer, notBefore, notAfter, extensions = [] }) {
   const algId = signer.kind === 'ec' ? seq(oid(signer.hash === 'SHA-384' ? '1.2.840.10045.4.3.3' : '1.2.840.10045.4.3.2')) : seq(oid('1.2.840.113549.1.1.11'), new Uint8Array([5, 0]));
   const tbs = seq(explicit(0, integer(Uint8Array.of(2))), integer(serial), algId, name(issuer), seq(time(notBefore), time(notAfter)), name(subject), spki,
     ...(extensions.length ? [explicit(3, seq(...extensions))] : []));

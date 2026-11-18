@@ -3,12 +3,15 @@ import { testEnv, call, newDevice } from '../test-utils/env.js';
 import { inspectCredential, signJws, createVerifier, createProof } from '../packages/verify/src/index.js';
 import { ORIGIN, worker } from '../test-utils/env.js';
 import { attestationAuthority, attestationChain } from '../test-utils/android-attestation.js';
+import { appleAuthority, appleAttestation } from '../test-utils/apple-attestation.js';
 import { resetRevocationCache, createChallenge, verifyAttestation } from './services/attestation.js';
+import { appleClientData } from './services/apple-attestation.js';
+import { jwkThumbprint } from '../packages/verify/src/jose.js';
 
-let authority; let env;
-beforeAll(async () => { authority = await attestationAuthority(); });
+let authority; let apple; let env;
+beforeAll(async () => { authority = await attestationAuthority(); apple = await appleAuthority(); });
 beforeEach(async () => {
-  env = await testEnv({ ANDROID_ATTESTATION_TEST_ROOT: authority.rootPin });
+  env = await testEnv({ ANDROID_ATTESTATION_TEST_ROOT: authority.rootPin, APPLE_ATTESTATION_TEST_ROOT: apple.rootSpkiB64u });
   await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
   resetRevocationCache();
   // Google's revocation list, as the Worker would fetch it.
@@ -125,5 +128,55 @@ describe('attested enrollment (B5, Android)', () => {
     const local = { ENVIRONMENT: 'local', TOKEN_SIGNING_KEY: 'test-token-key', ANDROID_ATTESTATION_TEST_ROOT: authority.rootPin };
     await expect(verifyAttestation(attestation, device.publicJwk, local)).resolves.toMatchObject({ security_level: 'strongbox' });
     await expect(verifyAttestation(attestation, device.publicJwk, { ...local, ENVIRONMENT: 'production' })).rejects.toThrow(/Google attestation root/);
+  });
+});
+
+const APP = 'ABCDE12345.org.example.wallet';
+
+/** An iOS app's enrollment: App Attest vouches for the Secure Enclave key by its thumbprint. */
+async function appleStart(device, { grants = [{ actions: ['hashbin:content:write'] }], appId = APP, environment, bindTo } = {}) {
+  const { body: { challenge } } = await call(env, 'POST', '/api/v1/enrollments/attestation-challenge');
+  const jkt = await jwkThumbprint((bindTo ?? device).publicJwk);
+  const { object, keyId } = await appleAttestation(apple, { appId, clientData: appleClientData(challenge, jkt), environment });
+  const request = await device.enrollRequest({ aud: ['hashbin.org'], grants, device: { name: 'iPhone', kind: 'phone' }, attestation: { format: 'apple-appattest', challenge, app_id: APP, key_id: keyId, object } });
+  return call(env, 'POST', '/api/v1/enrollments', { body: { request } });
+}
+
+describe('attested enrollment (B5, Apple App Attest)', () => {
+  it('signs the app attestation into the credential and lets grants pin the app', async () => {
+    const pinned = [{ actions: ['hashbin:content:write'], require: { attestation: 'hardware', app_ids: [APP] } }];
+    const device = await newDevice();
+    const start = await appleStart(device, { grants: pinned });
+    expect(start.status, JSON.stringify(start.body)).toBe(200);
+    const described = await call(env, 'POST', '/api/v1/enrollments/describe', { body: { request: start.body.request } });
+    expect(described.body.device).toMatchObject({ key_protection: 'secure-enclave', attestation: { format: 'apple-appattest', security_level: 'secure_enclave', app_id: APP, environment: 'production' } });
+    const credential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: start.body.request } })).body.credential;
+    expect(inspectCredential(credential).payload.device.attestation).toMatchObject({ format: 'apple-appattest', app_id: APP });
+
+    const verifier = createVerifier({ issuer: ORIGIN, audience: 'hashbin.org', fetch: (url, init) => worker.fetch(new Request(url, init), env) });
+    const attempt = async (d, c) => verifier.verifyRequest(new Request('https://hashbin.org/api/content', { method: 'POST', headers: { Authorization: `DBA ${c}`, DPoP: await createProof({ privateKey: d.privateKey, publicJwk: d.publicJwk, method: 'POST', url: 'https://hashbin.org/api/content', credential: c }) } }), { action: 'hashbin:content:write' });
+    expect((await attempt(device, credential)).allow).toBe(true);
+
+    // The same attestation does not satisfy a grant that does not name the app.
+    const unpinned = await newDevice();
+    const plainStart = await appleStart(unpinned, { grants: [{ actions: ['hashbin:content:write'], require: { attestation: 'hardware' } }] });
+    const plainCredential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: plainStart.body.request } })).body.credential;
+    expect((await attempt(unpinned, plainCredential)).reasons).toEqual([['attestation_required']]);
+  });
+
+  it('refuses an attestation that vouches for another key, app or challenge', async () => {
+    const device = await newDevice();
+    expect((await appleStart(device, { bindTo: await newDevice() })).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('nonce does not match') });
+    expect((await appleStart(device, { appId: 'ABCDE12345.org.example.other' })).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('another app') });
+  });
+
+  it('trusts the test root only on a local server', async () => {
+    const device = await newDevice();
+    const { challenge } = await createChallenge('test-token-key');
+    const { object, keyId } = await appleAttestation(apple, { appId: APP, clientData: appleClientData(challenge, await jwkThumbprint(device.publicJwk)) });
+    const attestation = { format: 'apple-appattest', challenge, app_id: APP, key_id: keyId, object };
+    const local = { ENVIRONMENT: 'local', TOKEN_SIGNING_KEY: 'test-token-key', APPLE_ATTESTATION_TEST_ROOT: apple.rootSpkiB64u };
+    await expect(verifyAttestation(attestation, device.publicJwk, local)).resolves.toMatchObject({ app_id: APP });
+    await expect(verifyAttestation(attestation, device.publicJwk, { ...local, ENVIRONMENT: 'production' })).rejects.toThrow(/Apple App Attestation Root CA/);
   });
 });

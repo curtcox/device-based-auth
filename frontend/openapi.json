@@ -630,7 +630,7 @@
                 "properties": {
                   "request": {
                     "type": "string",
-                    "description": "JWS, header {typ:\"dba-enroll+jwt\", alg:\"ES256\", jwk}, payload {iat, aud[], grants[], device{name,kind,key_protection}, lifetime_seconds?, return_origin?, attestation?{format:\"android-key\", challenge, x5c[] (base64 DER, leaf first)}}."
+                    "description": "JWS, header {typ:\"dba-enroll+jwt\", alg:\"ES256\", jwk}, payload {iat, aud[], grants[], device{name,kind,key_protection}, lifetime_seconds?, return_origin?, attestation?{format:\"android-key\", challenge, x5c[] (base64 DER, leaf first)} or {format:\"apple-appattest\", challenge, app_id:\"TEAMID.bundle.id\", key_id (base64), object (base64 attestation object; clientDataHash = SHA-256(\"<challenge>.<JWK thumbprint>\"))}}."
                   }
                 }
               }
@@ -729,7 +729,7 @@
     "/api/v1/enrollments/attestation-challenge": {
       "post": {
         "operationId": "post_api_v1_enrollments_attestation_challenge",
-        "summary": "A challenge for Android Key Attestation, valid 10 minutes: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:\"android-key\", challenge, x5c[]} to the enrollment request. Free; stateless.",
+        "summary": "A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:\"android-key\", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256(\"<challenge>.<JWK thumbprint of the enrolled key>\") and add {format:\"apple-appattest\", challenge, app_id, key_id, object}. Free; stateless.",
         "x-access": "public",
         "security": [],
         "parameters": [

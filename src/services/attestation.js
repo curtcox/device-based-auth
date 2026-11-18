@@ -1,5 +1,5 @@
 // Device key attestation (STATUS B5): evidence from the platform that a device key was generated
-// inside secure hardware. Today: Android Key Attestation. A verified attestation becomes
+// inside secure hardware. Android Key Attestation here; Apple App Attest in apple-attestation.js. A verified attestation becomes
 // `device.attestation` in the credential, set only by the issuer (spec/credential.md §3a).
 //
 // Android: the device generates its key in the Keystore with setAttestationChallenge(challenge)
@@ -8,9 +8,10 @@
 // enrolled key, the KeyDescription extension appears in the leaf only (so an attested signing key
 // cannot vouch for a forged leaf), and the key was generated (not imported) in a TEE or StrongBox
 // as an EC signing key, with our challenge.
-import { b64u, unb64u } from '../../packages/verify/src/jose.js';
+import { b64u, unb64u, jwkThumbprint } from '../../packages/verify/src/jose.js';
 import { assert, ApiError } from '../utils/errors.js';
 import { children, parseOne, expectTag, decodeOid, decodeSmallInt, integerHex, decodeTime, concat } from './der.js';
+import { verifyAppleAttestation, appleClientData, appleRootSpki } from './apple-attestation.js';
 
 /**
  * SHA-256 of the SubjectPublicKeyInfo of each Google hardware attestation root, from
@@ -101,7 +102,7 @@ function rawEcdsa(der, size) {
 }
 
 /** True when `cert` was signed by the key in `issuerSpki`. */
-async function signedBy(cert, issuerSpki) {
+export async function signedBy(cert, issuerSpki) {
   const algorithm = SIGNATURE_ALGORITHMS[cert.signatureAlgorithm];
   if (!algorithm) throw new Error(`unsupported signature algorithm ${cert.signatureAlgorithm}`);
   const { key, size } = await importSpki(issuerSpki, algorithm);
@@ -244,18 +245,22 @@ export async function checkChallenge(challenge, secret, now = Date.now()) {
 
 /**
  * Verify the `attestation` member of an enrollment request for `jwk`. Returns the claim to put in
- * `device.attestation`. Formats other than android-key are refused (Apple App Attest and TPM
- * are still backlog).
+ * `device.attestation`. Formats: android-key and apple-appattest (TPM is still backlog).
  */
 export async function verifyAttestation(attestation, jwk, env, { now = Date.now(), fetcher = fetch } = {}) {
   assert(attestation && typeof attestation === 'object' && !Array.isArray(attestation), 'invalid_attestation', 'attestation must be an object');
-  assert(attestation.format === 'android-key', 'invalid_attestation', 'attestation.format must be android-key');
+  assert(attestation.format === 'android-key' || attestation.format === 'apple-appattest', 'invalid_attestation', 'attestation.format must be android-key or apple-appattest');
   await checkChallenge(attestation.challenge, env.TOKEN_SIGNING_KEY, now);
+  // A local server (only) may trust one extra root per platform, so tests can attest with their own chain.
+  const local = env.ENVIRONMENT === 'local';
+  if (attestation.format === 'apple-appattest') {
+    for (const member of ['object', 'key_id', 'app_id']) assert(typeof attestation[member] === 'string', 'invalid_attestation', `attestation.${member} is required for apple-appattest`);
+    const roots = [appleRootSpki(), ...(local && env.APPLE_ATTESTATION_TEST_ROOT ? [unb64u(env.APPLE_ATTESTATION_TEST_ROOT)] : [])];
+    return verifyAppleAttestation({ object: attestation.object, keyId: attestation.key_id, appId: attestation.app_id, clientData: appleClientData(attestation.challenge, await jwkThumbprint(jwk)), now, roots });
+  }
   let revoked;
   try { revoked = await androidRevokedSerials(fetcher, now); }
   catch { throw new ApiError(503, 'attestation_unavailable', 'Google\'s attestation revocation list is unavailable; try again shortly'); }
-  // A local server (only) may trust one extra root, so tests can attest with their own chain.
-  const roots = env.ENVIRONMENT === 'local' && env.ANDROID_ATTESTATION_TEST_ROOT ? [...ANDROID_ROOT_SPKI_SHA256, env.ANDROID_ATTESTATION_TEST_ROOT] : ANDROID_ROOT_SPKI_SHA256;
+  const roots = local && env.ANDROID_ATTESTATION_TEST_ROOT ? [...ANDROID_ROOT_SPKI_SHA256, env.ANDROID_ATTESTATION_TEST_ROOT] : ANDROID_ROOT_SPKI_SHA256;
   return verifyAndroidAttestation({ x5c: attestation.x5c, jwk, challenge: new TextEncoder().encode(attestation.challenge), now, revoked, roots });
 }
-
