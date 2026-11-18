@@ -38,7 +38,7 @@ base64url-decoding its middle segment.
 | `jti` | yes | Unique id of this version, `<cid>.<version>`. |
 | `iat`, `nbf`, `exp` | yes | NumericDate seconds. `exp > nbf`. Verifiers allow 60 s clock skew. |
 | `cnf.jkt` | yes (device) | RFC 7638 SHA-256 thumbprint of the device public key. Absent on access tokens. |
-| `device` | no | `{ name, kind, key_protection }` for display. `kind` ∈ `browser`, `phone`, `desktop`, `server`, `cli`, `agent`, `iot`, `other`. `key_protection` ∈ `webcrypto-nonextractable`, `secure-enclave`, `android-keystore`, `tpm`, `os-keychain`, `software`. Self-reported unless attested. |
+| `device` | no | `{ name, kind, key_protection }` for display. `kind` ∈ `browser`, `phone`, `desktop`, `server`, `cli`, `agent`, `iot`, `other`. `key_protection` ∈ `webcrypto-nonextractable`, `secure-enclave`, `android-keystore`, `tpm`, `os-keychain`, `software`. Self-reported unless `device.attestation` is present (§3a). |
 | `grants` | yes | 1–32 grants; see [evaluation.md](evaluation.md). |
 | `status.status_list` | yes | `{ idx, uri }` — the credential's bit in an IETF OAuth Token Status List. |
 | `ver` | yes | Grant vocabulary version, `1`. |
@@ -68,6 +68,47 @@ Unknown top-level claims MUST be ignored. Unknown **grant** members MUST make th
   "ver": 1
 }
 ```
+
+## 3a. Device key attestation
+
+`device.attestation` is present only when the issuer verified platform evidence, at enrollment,
+that the device key was generated inside secure hardware. Devices cannot set it: the issuer drops
+any `attestation` a device or API caller puts in `device`. Verifiers may rely on it as far as they
+trust the issuer; it says nothing about the device after `verified_at`, and it is removed when a
+credential rotates to a new key.
+
+| Member | Meaning |
+|--------|---------|
+| `format` | `android-key` (Android Key Attestation). Apple App Attest and TPM are not supported yet. |
+| `security_level` | `tee` or `strongbox`: where the key lives. Software keys are never attested. |
+| `verified_boot` | `verified`, `self_signed`, `unverified`, `failed` or `unknown` (Android root of trust), when reported. |
+| `device_locked` | Whether the bootloader was locked, when reported. |
+| `attestation_version` | The Keymaster/KeyMint attestation version. |
+| `verified_at` | NumericDate the issuer checked the evidence. |
+
+With an attestation, `key_protection` is set by the issuer (`android-keystore`).
+
+**Android.** The device asks `POST /api/v1/enrollments/attestation-challenge` for a challenge (a
+43-character string, valid 10 minutes), generates its P-256 signing key in the Android Keystore
+with `setAttestationChallenge(<the challenge's ASCII bytes>)`, and adds
+`attestation: { format: "android-key", challenge, x5c }` to its enrollment request, `x5c` being the
+key's certificate chain (base64 DER, leaf first). The issuer accepts it only when:
+
+1. the chain has 2–8 certificates, each signed by the next, the last by itself, and its public key
+   is a pinned Google hardware attestation root;
+2. no certificate is expired (the leaf's `notBefore` is set by the device clock and not checked)
+   or on Google's attestation revocation list (if the list cannot be fetched, enrollment fails
+   with `503 attestation_unavailable` rather than continuing unattested);
+3. the KeyDescription extension (OID 1.3.6.1.4.1.11129.2.1.17) is in the leaf **only** — otherwise
+   an attested signing key could sign a forged leaf;
+4. the leaf's public key is the enrolled key, and the hardware-enforced list says it was generated
+   on the device (`origin` GENERATED), as an EC P-256 key with purpose SIGN, at TEE or StrongBox
+   level for both attestation and KeyMint;
+5. the challenge in the extension equals the request's `challenge`, which the issuer made and has
+   not expired.
+
+Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
+without attestation omits the member.
 
 ## 4. Presenting a credential
 

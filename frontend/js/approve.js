@@ -6,7 +6,7 @@
  */
 import { api } from './api.js';
 import { initAuth, renderSignIn, signedInLabel } from './auth.js';
-import { h, $, replace, usd, money, date, relative, pretty, badge, notice, dl, field } from './html.js';
+import { h, $, replace, usd, money, date, relative, pretty, badge, notice, dl, field, describeKey } from './html.js';
 import { validateGrants, describeGrant } from '/lib/verify/index.js';
 
 const ticket = location.hash.slice(1);
@@ -14,14 +14,6 @@ const root = $('#approve-root');
 const signInArea = $('#approve-sign-in');
 let info = null;
 
-const KEY_PROTECTION = {
-  'webcrypto-nonextractable': 'a browser key that cannot be exported',
-  'secure-enclave': 'Apple Secure Enclave',
-  'android-keystore': 'Android Keystore',
-  tpm: 'a TPM',
-  'os-keychain': 'the operating system keychain',
-  software: 'a key file (software)'
-};
 const UNITS = { minutes: 60, hours: 3600, days: 86400 };
 
 function bestUnit(seconds) {
@@ -46,7 +38,7 @@ function describe() {
     h('h2', {}, info.device?.name || 'Unnamed device', ' ', badge(info.status)),
     dl([
       ['Kind', info.device?.kind || 'other'],
-      ['Key', `${KEY_PROTECTION[info.device?.key_protection] || info.device?.key_protection || 'unknown'} (self-reported)`],
+      ['Key', describeKey(info.device)],
       ['Key thumbprint', h('span', { class: 'mono small' }, info.jkt)],
       ['Lifetime', `${amount} ${unit} (renewable)`],
       ['Price', h('strong', { id: 'price' }, money(info.price_microdollars))],

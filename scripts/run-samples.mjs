@@ -47,7 +47,7 @@ const SAMPLES = [
   {
     name: 'android', command: ['bash', 'docs/samples/android/run.sh'],
     needs: () => has('javac', ['--version']) || 'a JDK (javac 17+)',
-    expect: [/^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m, /^Renewed: crd_\w+\.2$/m]
+    expect: [/^Attestation challenge: [\w-]{43}$/m, /^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m, /^Renewed: crd_\w+\.2$/m]
   },
   {
     name: 'go_verify', command: ['go', 'run', '.'], cwd: 'docs/samples/go_verify', credential: true,

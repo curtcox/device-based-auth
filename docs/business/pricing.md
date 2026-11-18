@@ -44,11 +44,19 @@ handler adds a Durable Object call or a storage write.
 | Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 1 row | 2 | 4 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 4 rows | 6 | 10 | **10** |
 | Register or change an audience | Audience owner | 1 Worker req, 3 DO req, 5 rows, 4 KB × 13 months | 17 | 28 | **100** |
-| Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
+| Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
 
 Decision and login prices sit exactly at their floors (the thinnest margin the rule allows), and
 issue is 1 µ$ above its floor since it prepays revocation webhooks and enrollment-token redemption.
 Any upward correction found in an audit must raise those prices.
+
+### Key attestation adds nothing to the issue price
+
+Android key attestation (B5) is checked when the enrollment starts, which is free and behind the
+cost brake: one HMAC for the challenge, then parsing and verifying a 3–5 certificate chain (one
+RSA or ECDSA verification per certificate, a few ms of CPU, about 0.1 µ$) and Google's revocation
+list, fetched at most once an hour per isolate and cached at the edge. The verified result travels
+inside the signed approval ticket, so approval and issuance do no extra work.
 
 ### Why aggregate small charges
 

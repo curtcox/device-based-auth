@@ -145,3 +145,28 @@ export function field(form, name) { const el = form.elements.namedItem(name); re
 
 /** Split "a, b\nc" into ["a", "b", "c"]. */
 export function splitList(text) { return String(text || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean); }
+
+const KEY_PROTECTION = {
+  'webcrypto-nonextractable': 'a browser key that cannot be exported',
+  'secure-enclave': 'Apple Secure Enclave',
+  'android-keystore': 'Android Keystore',
+  tpm: 'a TPM',
+  'os-keychain': 'the operating system keychain',
+  software: 'a key file (software)'
+};
+const LEVELS = { tee: 'trusted execution environment', strongbox: 'StrongBox secure element' };
+const BOOT = { verified: 'verified boot', self_signed: 'custom OS (self-signed boot)', unverified: 'unverified boot', failed: 'boot verification failed', unknown: 'boot state unknown' };
+
+/**
+ * Where a device's key lives, in words: verified by platform attestation (STATUS B5) when the
+ * credential carries device.attestation, otherwise as the device reported it.
+ */
+export function describeKey(device) {
+  const a = device?.attestation;
+  if (a?.format === 'android-key') {
+    const details = [LEVELS[a.security_level] || a.security_level, a.verified_boot && (BOOT[a.verified_boot] || a.verified_boot), a.device_locked === false ? 'bootloader unlocked' : a.device_locked ? 'bootloader locked' : null].filter(Boolean);
+    return `Android Keystore, attested by Google (${details.join(', ')})`;
+  }
+  const kp = device?.key_protection;
+  return `${KEY_PROTECTION[kp] || kp || 'unknown'} (self-reported)`;
+}

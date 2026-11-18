@@ -77,8 +77,20 @@ public final class DbaClient {
      */
     public String enroll(List<String> audiences, List<Object> grants, Map<String, Object> device, ApprovalListener listener)
             throws IOException, GeneralSecurityException, InterruptedException {
+        return enroll(audiences, grants, device, null, listener);
+    }
+
+    /**
+     * As above, with key attestation: {@code attestation} is
+     * {@link AndroidKeystoreKeys#attestation(String)} for a key created with a challenge from
+     * {@link #attestationChallenge(String)}. A rejected attestation fails the enrollment
+     * (ApiException code invalid_attestation) rather than enrolling unattested.
+     */
+    public String enroll(List<String> audiences, List<Object> grants, Map<String, Object> device, Map<String, Object> attestation, ApprovalListener listener)
+            throws IOException, GeneralSecurityException, InterruptedException {
         Map<String, Object> header = map("typ", "dba-enroll+jwt", "jwk", publicJwk);
         Map<String, Object> payload = map("iat", now(), "aud", audiences, "grants", grants, "device", device);
+        if (attestation != null) payload.put("attestation", attestation);
         Map<String, Object> start = asMap(send("POST", origin + "/api/v1/enrollments", map("request", signJws(header, payload)), null));
         listener.onApprovalUrl((String) start.get("approval_url"));
 
@@ -93,6 +105,12 @@ public final class DbaClient {
             if (poll.get("interval") instanceof Number) interval = ((Number) poll.get("interval")).longValue();
         }
         throw new IOException("Gave up waiting for approval");
+    }
+
+    /** A key attestation challenge (valid 10 minutes), to create the Keystore key with. */
+    public static String attestationChallenge(String origin) throws IOException {
+        Map<String, Object> body = asMap(send("POST", origin.replaceAll("/+$", "") + "/api/v1/enrollments/attestation-challenge", map(), null));
+        return (String) body.get("challenge");
     }
 
     /** Call an API with the credential: Authorization: DBA <credential> plus a fresh DPoP proof. */
@@ -152,7 +170,7 @@ public final class DbaClient {
         return out;
     }
 
-    private Object send(String method, String url, Object body, Map<String, String> headers) throws IOException {
+    private static Object send(String method, String url, Object body, Map<String, String> headers) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setRequestMethod(method);
         connection.setConnectTimeout(30_000);

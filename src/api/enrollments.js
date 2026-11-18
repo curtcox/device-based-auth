@@ -5,7 +5,8 @@ import { price } from '../utils/pricing.js';
 import { signToken, verifyToken } from '../auth/tokens.js';
 import { decodeJws, verifyJws, jwkThumbprint } from '../../packages/verify/src/jose.js';
 import { describeGrant, validateGrants } from '../../packages/verify/src/grants.js';
-import { cleanDevice, cleanJwk, issueCredential, LIFETIME } from '../services/credentials.js';
+import { cleanDevice, cleanJwk, issueCredential, withAttestation, LIFETIME } from '../services/credentials.js';
+import { verifyAttestation, createChallenge } from '../services/attestation.js';
 import { requireRecentSignIn, hasDbaAction } from '../auth/reverify.js';
 
 export const ENROLL_TYP = 'dba-enroll+jwt';
@@ -16,7 +17,7 @@ const POLL_INTERVAL = 3;
  * Check a device's enrollment request: a JWS (typ dba-enroll+jwt) signed by the new key, whose
  * public JWK is in the header. Returns { jwk, payload, lifetime, returnOrigin, lifetimeRequested }.
  */
-export async function readEnrollRequest(jws, { defaults } = {}) {
+export async function readEnrollRequest(jws, { defaults, env } = {}) {
   let decoded;
   try { decoded = decodeJws(jws); } catch { assert(false, 'invalid_request', 'request must be a compact JWS signed by the device key'); }
   const { header } = decoded;
@@ -37,7 +38,9 @@ export async function readEnrollRequest(jws, { defaults } = {}) {
     try { const u = new URL(payload.return_origin); assert(u.origin === payload.return_origin && (u.protocol === 'https:' || u.hostname === 'localhost'), 'x', 'x'); returnOrigin = u.origin; }
     catch { assert(false, 'invalid_return_origin', 'return_origin must be an https origin'); }
   }
-  return { jwk, payload, lifetime, returnOrigin, lifetimeRequested: payload.lifetime_seconds !== undefined };
+  // Key attestation (optional): verified here so the result can travel in the signed ticket.
+  const attestation = payload.attestation === undefined ? null : await verifyAttestation(payload.attestation, jwk, env);
+  return { jwk, payload, lifetime, returnOrigin, attestation, lifetimeRequested: payload.lifetime_seconds !== undefined };
 }
 
 /**
@@ -47,11 +50,11 @@ export async function readEnrollRequest(jws, { defaults } = {}) {
  */
 export async function startEnrollment(request, env) {
   const body = await readJson(request, 32768);
-  const { jwk, payload, lifetime, returnOrigin } = await readEnrollRequest(body.request);
+  const { jwk, payload, lifetime, returnOrigin, attestation } = await readEnrollRequest(body.request, { env });
   const now = Math.floor(Date.now() / 1000);
   const id = randomId('enr');
   const exp = now + ENROLLMENT_SECONDS;
-  const ticket = await signToken('enr_', { id, jwk, jkt: await jwkThumbprint(jwk), aud: payload.aud, grants: payload.grants, device: cleanDevice(payload.device), lifetime, return_origin: returnOrigin, exp }, env.TOKEN_SIGNING_KEY);
+  const ticket = await signToken('enr_', { id, jwk, jkt: await jwkThumbprint(jwk), aud: payload.aud, grants: payload.grants, device: cleanDevice(payload.device), attestation, lifetime, return_origin: returnOrigin, exp }, env.TOKEN_SIGNING_KEY);
   const poll = await signToken('enp_', { id, exp: exp + 3600 }, env.TOKEN_SIGNING_KEY);
   return { enrollment_id: id, approval_url: `${env.APP_ORIGIN}/approve.html#${ticket}`, request: ticket, poll_url: `${env.APP_ORIGIN}/api/v1/enrollments/${id}?poll_token=${encodeURIComponent(poll)}`, poll_token: poll, interval: POLL_INTERVAL, expires_in: ENROLLMENT_SECONDS };
 }
@@ -62,6 +65,13 @@ async function readTicket(env, ticket) {
   return data;
 }
 
+/**
+ * A challenge for Android Key Attestation: the device passes its ASCII bytes to
+ * setAttestationChallenge, then sends { format: 'android-key', challenge, x5c } as the
+ * enrollment request's `attestation`. Stateless, so anonymous calls cost no storage.
+ */
+export function attestationChallenge(env) { return createChallenge(env.TOKEN_SIGNING_KEY); }
+
 /** Describe a pending enrollment for the approval page (no storage). */
 export async function describeEnrollment(request, env) {
   const body = await readJson(request, 32768);
@@ -70,7 +80,7 @@ export async function describeEnrollment(request, env) {
   const known = audiences.error ? null : Object.values(audiences).map(a => ({ name: a.name, description: a.description, first_party: !!a.first_party, actions: a.catalog }));
   const decision = await rpc(env.ENROLLMENTS, data.id, 'get');
   return {
-    enrollment_id: data.id, device: data.device, jkt: data.jkt, aud: data.aud, audiences: known, unknown_audiences: audiences.error ? audiences.error.message : null,
+    enrollment_id: data.id, device: withAttestation(data.device, data.attestation, Math.floor(Date.now() / 1000)), jkt: data.jkt, aud: data.aud, audiences: known, unknown_audiences: audiences.error ? audiences.error.message : null,
     grants: data.grants, descriptions: data.grants.map(describeGrant), lifetime_seconds: data.lifetime, return_origin: data.return_origin, expires_at: data.exp,
     status: decision.status, price_microdollars: price('issue')
   };
@@ -86,7 +96,7 @@ export async function approveEnrollment(request, env, auth) {
   const issued = await issueCredential(env, auth.account, {
     public_jwk: data.jwk, device: { ...data.device, ...(body.device_name ? { name: body.device_name } : {}) },
     aud: body.aud ?? data.aud, grants: body.grants ?? data.grants, lifetime_seconds: body.lifetime_seconds ?? data.lifetime
-  }, { source: 'enrollment', chargeId: `enroll-${data.id}` });
+  }, { source: 'enrollment', chargeId: `enroll-${data.id}`, attestation: data.attestation });
   await rpc(env.ENROLLMENTS, data.id, 'put', { result: { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, account: auth.account } });
   return { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, return_origin: data.return_origin, enrollment_id: data.id, cost_microdollars: issued.charged };
 }

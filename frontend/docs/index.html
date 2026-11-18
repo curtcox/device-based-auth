@@ -166,12 +166,15 @@ await dba.enroll({ device: { name: &#39;Kiosk 1&#39; } }, { enrollmentToken }) /
 <section id="android">
 <h2>Quick start: Android</h2>
 <p><a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/android"><code>docs/samples/android</code></a> is two files to copy into an app (API 26+, no dependencies): <code>AndroidKeystoreKeys</code> generates a P-256 signing key inside the Android Keystore (StrongBox when the phone has one), and <code>DbaClient</code> sends the signed enrollment request, waits for approval and signs a DPoP proof for each call. The key never leaves the secure hardware; only its public half is sent. Run the calls off the main thread.</p>
-<pre class="code"><code>AndroidKeystoreKeys keys = AndroidKeystoreKeys.loadOrCreate("dba-device");
-DbaClient client = new DbaClient("https://devicebasedauth.org", keys.privateKey(), keys.publicKey());
+<pre class="code"><code>String challenge = DbaClient.attestationChallenge(origin);              // for key attestation
+AndroidKeystoreKeys keys = AndroidKeystoreKeys.create("dba-device", challenge);
+DbaClient client = new DbaClient(origin, keys.privateKey(), keys.publicKey());
 String credential = client.enroll(List.of("hashbin.org"), grants,
     DbaClient.map("name", Build.MODEL, "kind", "phone", "key_protection", keys.keyProtection()),
+    keys.attestation(challenge),                                            // the Keystore's certificate chain
     url -&gt; startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))));   // owner approves
 Object result = client.call("POST", "https://hashbin.org/api/content", credential, body);</code></pre>
+<p>Because the key was generated with devicebasedauth.org's challenge, the Keystore's certificate chain proves to the issuer that the key lives in a TEE or StrongBox and was never exported. The approval page and the credential then say <em>Android Keystore, attested by Google</em> (with the verified-boot state) instead of <em>self-reported</em>, in <code>device.attestation</code> (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>). A rejected chain fails the enrollment with <code>invalid_attestation</code>; leave out the attestation to enroll without one. On later runs use <code>AndroidKeystoreKeys.load("dba-device")</code>.</p>
 <p>The same <code>DbaClient</code> runs in CI on a plain JVM with a software key (<code>Main.java</code>, below), against a local server, and the Keystore class is type-checked against the Android API there:</p>
 <pre class="code" data-sample="android/Main.java"><code>        DbaClient client = new DbaClient(origin, key.getPrivate(), (ECPublicKey) key.getPublic());
 

@@ -18,6 +18,9 @@ import java.util.Map;
 public final class Main {
     public static void main(String[] args) throws Exception {
         String origin = System.getenv().getOrDefault("DBA_ORIGIN", "https://devicebasedauth.org");
+        // On a phone this challenge goes into AndroidKeystoreKeys.create(alias, challenge); a JVM
+        // key cannot be attested, so here it is only fetched.
+        System.out.println("Attestation challenge: " + DbaClient.attestationChallenge(origin));
         KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
         generator.initialize(new ECGenParameterSpec("secp256r1"));
         KeyPair key = generator.generateKeyPair();

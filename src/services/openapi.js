@@ -8,7 +8,8 @@ const SUMMARIES = {
   'status-list': 'A signed status list (IETF Token Status List). Bit idx = 1 means revoked.', 'public-config': 'Public configuration and prices.',
   quote: 'Price of an operation (op = issue, renew, decision, read, token, login, audience).', inspect: 'Decode and check a credential; optionally evaluate an action. Free.',
   'enroll-start': 'Start an enrollment with a request JWS (typ dba-enroll+jwt) signed by the new device key. Returns the approval URL and a poll URL. Free; nothing is stored.',
-  'enroll-describe': 'Describe a pending enrollment ticket for the approval page. Free.', 'enroll-poll': 'Poll an enrollment until it is approved, denied or expired.',
+  'enroll-describe': 'Describe a pending enrollment ticket for the approval page. Free.',
+  'attestation-challenge': 'A challenge for Android Key Attestation, valid 10 minutes: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:"android-key", challenge, x5c[]} to the enrollment request. Free; stateless.', 'enroll-poll': 'Poll an enrollment until it is approved, denied or expired.',
   'enroll-approve': 'Approve an enrollment (optionally narrowing grants) and issue the credential. Charges the issue price.', 'enroll-deny': 'Deny an enrollment.',
   whoami: 'Who is calling: account, credential kind and (for devices) the grants in plain English.', account: 'Balance, this month\'s spend and today\'s aggregated charges.',
   transactions: 'Ledger, newest first.', audit: 'Audit trail, newest first.', 'credentials-list': 'List credentials (filters: status, audience, device).',
@@ -31,7 +32,7 @@ const SUMMARIES = {
   'oidc-userinfo': 'OpenID Connect userinfo.', mcp: 'Model Context Protocol (Streamable HTTP, JSON-RPC).', 'clerk-webhook': 'Clerk webhook (signed).', 'stripe-webhook': 'Stripe webhook (signed).'
 };
 const BODIES = {
-  'enroll-start': { type: 'object', required: ['request'], properties: { request: { ...jws, description: 'JWS, header {typ:"dba-enroll+jwt", alg:"ES256", jwk}, payload {iat, aud[], grants[], device{name,kind,key_protection}, lifetime_seconds?, return_origin?}.' } } },
+  'enroll-start': { type: 'object', required: ['request'], properties: { request: { ...jws, description: 'JWS, header {typ:"dba-enroll+jwt", alg:"ES256", jwk}, payload {iat, aud[], grants[], device{name,kind,key_protection}, lifetime_seconds?, return_origin?, attestation?{format:"android-key", challenge, x5c[] (base64 DER, leaf first)}}.' } } },
   'enroll-describe': { type: 'object', required: ['request'], properties: { request: { type: 'string', description: 'The enr_… ticket from the approval URL fragment.' } } },
   'enroll-approve': { type: 'object', required: ['request'], properties: { request: { type: 'string' }, device_name: { type: 'string' }, aud: { type: 'array', items: { type: 'string' } }, grants: { type: 'array', items: grant }, lifetime_seconds: { type: 'integer' } } },
   'enroll-redeem': { type: 'object', required: ['request', 'enrollment_token'], properties: { request: jws, enrollment_token: { type: 'string', description: 'dbae_… token from POST /api/v1/enrollment-tokens.' } } },

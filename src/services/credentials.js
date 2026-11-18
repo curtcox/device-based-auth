@@ -22,6 +22,19 @@ export function cleanDevice(device = {}) {
   return { name, kind, key_protection };
 }
 
+/** The device claim with a verified attestation (which also settles key_protection). */
+export function withAttestation(device, attestation, at) {
+  if (!attestation) return device;
+  return { ...device, key_protection: attestation.format === 'android-key' ? 'android-keystore' : device.key_protection, attestation: { ...attestation, verified_at: at } };
+}
+
+/** The device claim without attestation, for a credential moved to a key nobody attested. */
+export function withoutAttestation(device) {
+  if (!device?.attestation) return device;
+  const { attestation: _attestation, ...rest } = device;
+  return rest;
+}
+
 /** Validate a P-256 public key. */
 export function cleanJwk(jwk) {
   try { return publicJwk(jwk); } catch { assert(false, 'invalid_key', 'public_jwk must be a P-256 public JWK'); }
@@ -69,9 +82,11 @@ export async function requireFunds(env, account, amount) {
  * Issue a credential: validate, check funds, allocate a status index, sign, then charge and store
  * atomically in the account. Returns { credential, cid, payload, charged }.
  */
-export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, parentCid, enrollmentToken, now = Date.now() }) {
+export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, parentCid, enrollmentToken, attestation, now = Date.now() }) {
   const jwk = cleanJwk(request.public_jwk);
-  const device = cleanDevice(request.device);
+  // `attestation` comes only from a verified key attestation (services/attestation.js), never
+  // from a request body: cleanDevice drops anything else the caller put in device.
+  const device = withAttestation(cleanDevice(request.device), attestation, Math.floor(now / 1000));
   const { aud, grants, lifetime } = await validateIssue(env, request);
   if (parentGrants) assert(grantsNarrow(grants, parentGrants), 'not_narrower', 'A device can only issue credentials whose grants are narrower than its own (same constraints, covered actions and resources)', 403);
   const amount = price('issue');
@@ -112,7 +127,8 @@ export async function renewCredential(env, device, body, now = Date.now()) {
     assert(jkt !== record.jkt, 'invalid_key_proof', 'The new key must differ from the current key');
     deviceId = await derivedId('dev', account, jkt);
     status = await allocate(env);
-    rotation = { device: { id: deviceId, jkt, public_jwk: newJwk, ...record.device } };
+    // The attestation vouched for the old key only.
+    rotation = { device: { ...withoutAttestation(record.device), id: deviceId, jkt, public_jwk: newJwk } };
   }
   const amount = price(rotation ? 'issue' : 'renew');
   await requireFunds(env, account, amount);
@@ -121,7 +137,7 @@ export async function renewCredential(env, device, body, now = Date.now()) {
   // Delegated credentials never outlive the credential that issued them.
   const exp = Math.min(iat + record.lifetime, record.max_exp ?? Infinity);
   assert(exp > iat + 60, 'parent_expiring', 'This credential cannot be renewed past the expiry of the credential that delegated it', 409);
-  const next = { ...payload, sub: deviceId, jti: `${payload.cid}.${version}`, iat, nbf: iat, exp, cnf: { jkt }, status: { status_list: { idx: status.idx, uri: status.uri } } };
+  const next = { ...payload, ...(rotation && payload.device ? { device: withoutAttestation(payload.device) } : {}), sub: deviceId, jti: `${payload.cid}.${version}`, iat, nbf: iat, exp, cnf: { jkt }, status: { status_list: { idx: status.idx, uri: status.uri } } };
   const credential = await signCredential(next, await activeSigner(env));
   const update = { jti: next.jti, version, iat, exp: next.exp, jws: credential, ...(rotation ? { jkt, device_id: deviceId, status } : {}) };
   const result = await rpc(env.ACCOUNTS, account, 'renew', { cid: payload.cid, from_jti: payload.jti, update, price: amount, charge_id: `renew-${next.jti}`, rotation, now });

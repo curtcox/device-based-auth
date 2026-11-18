@@ -175,7 +175,8 @@ Location is the weakest constraint and the plan says so in the docs:
 - **`both`**: both must pass.
 
 Platform attestation (Apple App Attest, Android Play Integrity, TPM) to raise trust in
-device-reported values is backlog (B5).
+device-reported values is backlog (B5); Android Key Attestation of the device key itself is done
+(`device.attestation`, spec/credential.md §3a).
 
 ---
 

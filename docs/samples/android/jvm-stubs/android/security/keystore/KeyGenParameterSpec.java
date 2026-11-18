@@ -13,6 +13,8 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec {
 
         public Builder setIsStrongBoxBacked(boolean isStrongBoxBacked) { return this; }
 
+        public Builder setAttestationChallenge(byte[] attestationChallenge) { return this; }
+
         public KeyGenParameterSpec build() { return new KeyGenParameterSpec(); }
     }
 }

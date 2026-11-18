@@ -4,7 +4,7 @@
  * The pasted credential is untrusted: everything is rendered as text.
  */
 import { api } from '../api.js';
-import { h, $, replace, date, relative, badge, notice, dl, jsonBlock } from '../html.js';
+import { h, $, replace, date, relative, badge, notice, dl, jsonBlock, describeKey } from '../html.js';
 import { inspectCredential, describeGrant, validateCredentialPayload } from '/lib/verify/index.js';
 
 const form = $('#inspect-form');
@@ -43,7 +43,7 @@ function decode() {
       ['Signed by', [h('code', {}, String(header.kid)), ` (${header.alg})`]],
       ['Issuer', String(payload.iss ?? '—')],
       ['Account', h('span', { class: 'mono' }, String(payload.acct ?? '—'))],
-      ['Device', payload.device ? `${payload.device.name} · ${payload.device.kind} · key: ${payload.device.key_protection}` : '—'],
+      ['Device', payload.device ? `${payload.device.name} · ${payload.device.kind} · key: ${describeKey(payload.device)}` : '—'],
       ['Device id', h('span', { class: 'mono' }, String(payload.sub ?? '—'))],
       ['Audiences', Array.isArray(payload.aud) ? payload.aud.join(', ') : '—'],
       ['Credential id', h('span', { class: 'mono' }, `${payload.cid ?? '—'} (${payload.jti ?? '—'})`)],

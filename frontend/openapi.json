@@ -630,7 +630,7 @@
                 "properties": {
                   "request": {
                     "type": "string",
-                    "description": "JWS, header {typ:\"dba-enroll+jwt\", alg:\"ES256\", jwk}, payload {iat, aud[], grants[], device{name,kind,key_protection}, lifetime_seconds?, return_origin?}."
+                    "description": "JWS, header {typ:\"dba-enroll+jwt\", alg:\"ES256\", jwk}, payload {iat, aud[], grants[], device{name,kind,key_protection}, lifetime_seconds?, return_origin?, attestation?{format:\"android-key\", challenge, x5c[] (base64 DER, leaf first)}}."
                   }
                 }
               }
@@ -722,6 +722,74 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/enrollments/attestation-challenge": {
+      "post": {
+        "operationId": "post_api_v1_enrollments_attestation_challenge",
+        "summary": "A challenge for Android Key Attestation, valid 10 minutes: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:\"android-key\", challenge, x5c[]} to the enrollment request. Free; stateless.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
           }
         }
       }

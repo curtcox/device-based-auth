@@ -5,7 +5,7 @@
  */
 import { api } from './api.js';
 import { initAuth, renderSignIn, signOut, reauthenticate, authMode, signedInLabel, enrollDashboardDevice, preloadSdk, currentDevice } from './auth.js';
-import { h, $, replace, usd, money, num, date, relative, duration, pretty, jsonBlock, copyButton, badge, notice, table, dl, field, splitList } from './html.js';
+import { h, $, replace, usd, money, num, date, relative, duration, pretty, jsonBlock, copyButton, badge, notice, table, dl, field, splitList, describeKey } from './html.js';
 import { inspectCredential, validateGrants, evaluateGrants } from '/lib/verify/index.js';
 import { credentialsCsv, credentialsJson } from './export.js';
 
@@ -258,7 +258,7 @@ async function credential(cid) {
     dl([
       ['Credential id', h('span', { class: 'mono' }, cred.cid)],
       ['Version', `${cred.version ?? 1} (${cred.jti})`],
-      ['Device', [cred.device?.name || '—', h('span', { class: 'muted small' }, ` · ${cred.device?.kind || 'other'} · key: ${cred.device?.key_protection || 'unknown'}`)]],
+      ['Device', [cred.device?.name || '—', h('span', { class: 'muted small' }, ` · ${cred.device?.kind || 'other'} · key: ${describeKey(cred.device)}`)]],
       ['Device id', h('a', { href: '#devices', class: 'mono' }, cred.device_id)],
       ['Key thumbprint', h('span', { class: 'mono small' }, cred.jkt)],
       ['Audiences', cred.aud.join(', ')],
@@ -298,7 +298,7 @@ async function devices() {
   const rows = data.items.map(d => {
     const active = d.credentials.filter(c => c.state === 'active').length;
     return [
-      [h('strong', {}, d.name || 'Unnamed device'), h('div', { class: 'muted small' }, `${d.kind || 'other'} · ${d.key_protection || 'software'}`)],
+      [h('strong', {}, d.name || 'Unnamed device'), h('div', { class: 'muted small' }, `${d.kind || 'other'} · ${describeKey(d)}`)],
       [h('div', { class: 'mono small' }, d.id), h('div', { class: 'mono small muted', title: 'Key thumbprint' }, d.jkt)],
       [`${active} active of ${d.credentials.length}`, h('div', { class: 'small' }, d.credentials.map((c, i) => [i ? ', ' : '', h('a', { href: `#credential/${enc(c.cid)}` }, c.cid)]))],
       date(d.created_at),

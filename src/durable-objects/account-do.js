@@ -210,7 +210,7 @@ export class AccountDO {
       assert((today.counts?.issue || 0) < settings.max_issues_per_day, 'issuance_limit', `This account may issue ${settings.max_issues_per_day} credentials a day (UTC); the owner can raise the limit in the dashboard`, 429, { limit: settings.max_issues_per_day });
       await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid } }, now);
       const existing = await tx.get(`device:${device.id}`);
-      const stored = existing ? { ...existing, name: device.name || existing.name, last_issued_at: now } : { ...device, created_at: now, last_issued_at: now };
+      const stored = existing ? { ...existing, name: device.name || existing.name, ...(device.attestation ? { attestation: device.attestation, key_protection: device.key_protection } : {}), last_issued_at: now } : { ...device, created_at: now, last_issued_at: now };
       if (stored.revoked_at) { delete stored.revoked_at; stored.reinstated_at = now; }
       await tx.put(`device:${device.id}`, stored);
       const cred = { ...record, created_at: now, events: [{ at: now, type: 'issued', jti: record.jti, source }] };

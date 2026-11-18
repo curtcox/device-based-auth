@@ -5,42 +5,10 @@
 // mTLS cannot see revocation, so certificates live at most 24 hours (default 1 hour).
 import { unb64u } from '../../packages/verify/src/jose.js';
 
+import { concat, tlv, seq, set, octets, bits, utf8, bool, explicit, integer, oid, time } from './der.js';
+
+export { seq, integer, oid };
 const enc = new TextEncoder();
-const concat = (...parts) => { const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
-
-function length(n) {
-  if (n < 0x80) return Uint8Array.of(n);
-  const bytes = []; while (n > 0) { bytes.unshift(n & 0xff); n >>= 8; }
-  return Uint8Array.of(0x80 | bytes.length, ...bytes);
-}
-const tlv = (tag, ...content) => { const body = concat(...content); return concat(Uint8Array.of(tag), length(body.length), body); };
-export const seq = (...items) => tlv(0x30, ...items);
-const set = (...items) => tlv(0x31, ...items);
-const octets = bytes => tlv(0x04, bytes);
-const bits = bytes => tlv(0x03, Uint8Array.of(0), bytes);
-const utf8 = text => tlv(0x0c, enc.encode(text));
-const bool = value => tlv(0x01, Uint8Array.of(value ? 0xff : 0));
-const explicit = (n, ...items) => tlv(0xa0 | n, ...items);
-
-/** A non-negative DER INTEGER from big-endian bytes. */
-export function integer(bytes) {
-  let i = 0; while (i < bytes.length - 1 && bytes[i] === 0) i++;
-  const trimmed = bytes.slice(i);
-  return tlv(0x02, trimmed[0] & 0x80 ? concat(Uint8Array.of(0), trimmed) : trimmed);
-}
-
-export function oid(dotted) {
-  const [a, b, ...rest] = dotted.split('.').map(Number);
-  const out = [40 * a + b];
-  for (let n of rest) { const chunk = [n & 0x7f]; while ((n >>= 7) > 0) chunk.unshift(0x80 | (n & 0x7f)); out.push(...chunk); }
-  return tlv(0x06, Uint8Array.from(out));
-}
-
-/** UTCTime before 2050, GeneralizedTime after (RFC 5280 §4.1.2.5). */
-function time(ms) {
-  const d = new Date(Math.floor(ms / 1000) * 1000).toISOString().replace(/[-:T]/g, '').replace('.000', '');
-  return d.startsWith('20') && Number(d.slice(0, 4)) < 2050 ? tlv(0x17, enc.encode(d.slice(2))) : tlv(0x18, enc.encode(d));
-}
 
 const OID = {
   ecPublicKey: '1.2.840.10045.2.1', p256: '1.2.840.10045.3.1.7', ecdsaSha256: '1.2.840.10045.4.3.2',

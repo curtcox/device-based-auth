@@ -45,6 +45,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - Browser: `import { DBA } from 'https://devicebasedauth.org/sdk/dba.js'; const dba = new DBA(); await dba.enroll({ aud: ['example.com'], grants: [{ actions: ['example:write'] }] }); await dba.fetch(url)`.
 - CLI / agent: `dba enroll --aud example.com --action example:write` prints an approval URL for the human owner, then polls. `dba curl …`, `dba token --aud example.com`, `dba renew`, `dba revoke`. The CLI renews automatically at 2/3 of the lifetime when it uses the credential (`--no-renew` or `DBA_AUTO_RENEW=0` to stop); `dba renew --if-due` suits cron.
 - HTTP: `POST /api/v1/enrollments {request}` where request is a JWS (typ `dba-enroll+jwt`, the new public key in the header `jwk`) over `{iat, aud, grants, device, lifetime_seconds?}`. Response: `approval_url` (give it to the human), `poll_url`. Poll `GET poll_url` until `status` is `approved` (then `credential` is included), `denied` or `expired`.
+- Android key attestation (optional): `POST /api/v1/enrollments/attestation-challenge` → `challenge`; generate the Keystore key with `setAttestationChallenge(challenge ASCII bytes)`; add `attestation: {format: "android-key", challenge, x5c: [base64 DER, leaf first]}` to the enrollment request payload. Verified chains put `device.attestation {format, security_level: tee|strongbox, verified_boot, device_locked, verified_at}` in the credential; a rejected chain is `400 invalid_attestation`. Sample: docs/samples/android.
 - Fleets: the owner creates an enrollment token (`POST /api/v1/enrollment-tokens {name, aud, grants, lifetime_seconds, max_uses, expires_in_days}` → `token: dbae_…`, shown once). Each device signs its usual enrollment request (aud/grants optional; may only narrow the token's) and sends `POST /api/v1/enrollments/redeem {request, enrollment_token}` — issued at once, issue price charged to the token's account. CLI: `DBA_ENROLLMENT_TOKEN=dbae_… dba enroll`; SDK: `dba.enroll({}, { enrollmentToken })`.
 - mTLS: `POST /api/v1/certificate {lifetime_seconds?}` (device credential + DPoP; 300–86400 s, default 3600; token price) returns a PEM X.509 client certificate for the device's own key, signed by the CA in `/.well-known/dba-ca.pem`; CN = device id, SAN URIs `urn:devicebasedauth:{device,credential,account}:…`; no grants, no revocation. CLI: `dba certificate` then `curl --cert client.crt --key client.key`.
 - Pre-approved issuance: `POST /api/v1/credentials {public_jwk, aud, grants, device, lifetime_seconds}` with an API key holding `credentials:issue` (or a device credential holding `dba:credentials:issue`, which can only delegate narrower grants).
@@ -85,6 +86,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `POST /api/v1/inspect` (public): Decode and check a credential; optionally evaluate an action. Free.
 - `POST /api/v1/enrollments` (public): Start an enrollment with a request JWS (typ dba-enroll+jwt) signed by the new device key. Returns the approval URL and a poll URL. Free; nothing is stored.
 - `POST /api/v1/enrollments/describe` (public): Describe a pending enrollment ticket for the approval page. Free.
+- `POST /api/v1/enrollments/attestation-challenge` (public): A challenge for Android Key Attestation, valid 10 minutes: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:"android-key", challenge, x5c[]} to the enrollment request. Free; stateless.
 - `GET /api/v1/enrollments/{id}` (public): Poll an enrollment until it is approved, denied or expired.
 - `POST /api/v1/enrollments/approve` (session): Approve an enrollment (optionally narrowing grants) and issue the credential. Charges the issue price.
 - `POST /api/v1/enrollments/deny` (session): Deny an enrollment.
@@ -176,7 +178,7 @@ base64url-decoding its middle segment.
 | `jti` | yes | Unique id of this version, `<cid>.<version>`. |
 | `iat`, `nbf`, `exp` | yes | NumericDate seconds. `exp > nbf`. Verifiers allow 60 s clock skew. |
 | `cnf.jkt` | yes (device) | RFC 7638 SHA-256 thumbprint of the device public key. Absent on access tokens. |
-| `device` | no | `{ name, kind, key_protection }` for display. `kind` ∈ `browser`, `phone`, `desktop`, `server`, `cli`, `agent`, `iot`, `other`. `key_protection` ∈ `webcrypto-nonextractable`, `secure-enclave`, `android-keystore`, `tpm`, `os-keychain`, `software`. Self-reported unless attested. |
+| `device` | no | `{ name, kind, key_protection }` for display. `kind` ∈ `browser`, `phone`, `desktop`, `server`, `cli`, `agent`, `iot`, `other`. `key_protection` ∈ `webcrypto-nonextractable`, `secure-enclave`, `android-keystore`, `tpm`, `os-keychain`, `software`. Self-reported unless `device.attestation` is present (§3a). |
 | `grants` | yes | 1–32 grants; see [evaluation.md](https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md). |
 | `status.status_list` | yes | `{ idx, uri }` — the credential's bit in an IETF OAuth Token Status List. |
 | `ver` | yes | Grant vocabulary version, `1`. |
@@ -206,6 +208,47 @@ Unknown top-level claims MUST be ignored. Unknown **grant** members MUST make th
   "ver": 1
 }
 ```
+
+## 3a. Device key attestation
+
+`device.attestation` is present only when the issuer verified platform evidence, at enrollment,
+that the device key was generated inside secure hardware. Devices cannot set it: the issuer drops
+any `attestation` a device or API caller puts in `device`. Verifiers may rely on it as far as they
+trust the issuer; it says nothing about the device after `verified_at`, and it is removed when a
+credential rotates to a new key.
+
+| Member | Meaning |
+|--------|---------|
+| `format` | `android-key` (Android Key Attestation). Apple App Attest and TPM are not supported yet. |
+| `security_level` | `tee` or `strongbox`: where the key lives. Software keys are never attested. |
+| `verified_boot` | `verified`, `self_signed`, `unverified`, `failed` or `unknown` (Android root of trust), when reported. |
+| `device_locked` | Whether the bootloader was locked, when reported. |
+| `attestation_version` | The Keymaster/KeyMint attestation version. |
+| `verified_at` | NumericDate the issuer checked the evidence. |
+
+With an attestation, `key_protection` is set by the issuer (`android-keystore`).
+
+**Android.** The device asks `POST /api/v1/enrollments/attestation-challenge` for a challenge (a
+43-character string, valid 10 minutes), generates its P-256 signing key in the Android Keystore
+with `setAttestationChallenge(<the challenge's ASCII bytes>)`, and adds
+`attestation: { format: "android-key", challenge, x5c }` to its enrollment request, `x5c` being the
+key's certificate chain (base64 DER, leaf first). The issuer accepts it only when:
+
+1. the chain has 2–8 certificates, each signed by the next, the last by itself, and its public key
+   is a pinned Google hardware attestation root;
+2. no certificate is expired (the leaf's `notBefore` is set by the device clock and not checked)
+   or on Google's attestation revocation list (if the list cannot be fetched, enrollment fails
+   with `503 attestation_unavailable` rather than continuing unattested);
+3. the KeyDescription extension (OID 1.3.6.1.4.1.11129.2.1.17) is in the leaf **only** — otherwise
+   an attested signing key could sign a forged leaf;
+4. the leaf's public key is the enrolled key, and the hardware-enforced list says it was generated
+   on the device (`origin` GENERATED), as an EC P-256 key with purpose SIGN, at TEE or StrongBox
+   level for both attestation and KeyMint;
+5. the challenge in the extension equals the request's `challenge`, which the issuer made and has
+   not expired.
+
+Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
+without attestation omits the member.
 
 ## 4. Presenting a credential
 
@@ -434,11 +477,19 @@ handler adds a Durable Object call or a storage write.
 | Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 1 row | 2 | 4 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 4 rows | 6 | 10 | **10** |
 | Register or change an audience | Audience owner | 1 Worker req, 3 DO req, 5 rows, 4 KB × 13 months | 17 | 28 | **100** |
-| Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
+| Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
 
 Decision and login prices sit exactly at their floors (the thinnest margin the rule allows), and
 issue is 1 µ$ above its floor since it prepays revocation webhooks and enrollment-token redemption.
 Any upward correction found in an audit must raise those prices.
+
+### Key attestation adds nothing to the issue price
+
+Android key attestation (B5) is checked when the enrollment starts, which is free and behind the
+cost brake: one HMAC for the challenge, then parsing and verifying a 3–5 certificate chain (one
+RSA or ECDSA verification per certificate, a few ms of CPU, about 0.1 µ$) and Google's revocation
+list, fetched at most once an hour per isolate and cached at the edge. The verified result travels
+inside the signed approval ticket, so approval and issuance do no extra work.
 
 ### Why aggregate small charges
 
