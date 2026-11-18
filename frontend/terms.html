@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms of Service (draft) — devicebasedauth.org</title>
+<meta name="description" content="Draft terms of service for devicebasedauth.org.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/">Docs</a><a href="/tools/">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<div class="legal">
+<h1>Terms of Service — draft</h1>
+<div class="draft-banner" role="note">DRAFT — not in effect. These terms need owner and legal review before launch. Bracketed fields must be completed.</div>
+<p>Operator: <span data-operator-field="operator.legal_name">[LEGAL ENTITY NAME]</span>, the same operating entity as hashbin.org and cronly.org. Effective date: [OWNER APPROVAL DATE]. Contact: <span data-operator-field="app.support_email">support@devicebasedauth.org</span>.</p>
+<p>Postal address: <span data-operator-field="operator.postal_address">[POSTAL ADDRESS]</span>. Governing jurisdiction: <span data-operator-field="operator.governing_jurisdiction">[JURISDICTION]</span>. Dispute venue: <span data-operator-field="operator.dispute_venue">[VENUE]</span>.</p>
+<h2>The service</h2>
+<p>devicebasedauth.org issues signed, revocable credentials that bind a device's public key to a list of permissions (grants) for one or more websites or APIs, publishes revocation status, and answers optional online authorization and sign-in requests. Devices generate and keep their own private keys; we never receive them. You decide which devices to approve and what they may do. Sites that accept credentials decide for themselves whether to rely on them.</p>
+<p>Location and time constraints are evidence, not proof: network location can be changed with a VPN or proxy, and device-reported location is only as honest as the device. Do not rely on a credential's location constraints where being wrong would cause serious harm.</p>
+<h2>Accounts and acceptable use</h2>
+<p>Keep your sign-in, API keys and devices secure, and revoke anything you no longer trust. You are responsible for what your devices and API keys do with credentials you approve.</p>
+<p><strong>No covert tracking of people.</strong> You may not use the service to monitor, locate or track a person without their informed consent — for example by enrolling a device someone else carries, or by using location constraints, online authorization logs or sign-in records to follow someone's movements or activity without their knowledge. Location constraints exist to limit what a device may do, not to find the people who use it.</p>
+<p>You also may not use the service for unlawful activity; to impersonate others or misrepresent a site in an audience registration or action catalog; to register a domain you do not control; to evade another service's security, rate or payment limits; or to attack, overload or probe the service beyond its published limits. We may suspend devices, credentials, API keys, audiences or accounts to prevent abuse, control costs, comply with law or investigate a reported violation.</p>
+<h2>Credit, charges and refunds</h2>
+<p>Credit is prepaid, with no subscription, and does not expire while your account exists. The minimum deposit is $5. Card processing costs are itemized on top, so your account receives the full credit selected. Every billable operation is priced before it runs and never charged above that price; with an insufficient balance it is refused. Revocation is prepaid when a credential is issued. Online decisions and sign-ins are charged to the account that owns the site asking for them.</p>
+<p>Unused balance may be refunded on request, less the non-refundable card payment cost. [LEGAL REVIEW: refund timing, statutory rights, taxes, disputes, dormant-account closure after 12 months with notice (STATUS D8), and balances following suspension.] Prices may change for future operations.</p>
+<h2>Availability and responsibility</h2>
+<p>The service is provided as available. Offline verification keeps working while we are unavailable, but revocations reach offline verifiers only within the status-list publication and cache windows described in the docs. [LEGAL REVIEW REQUIRED: age requirement, warranties, liability cap, indemnity, governing law and jurisdiction, dispute procedure, termination, notice and mandatory consumer rights.]</p>
+<p>We will publish reviewed terms and an effective date before accepting production payments.</p>
+</div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — devicebasedauth.org</title>
+<meta name="description" content="Prepaid, pay-as-you-go prices in micro-dollars, the cost behind each one, and a cost calculator.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/pricing.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/">Docs</a><a href="/tools/">Tools</a><a href="/pricing.html" aria-current="page">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<h1>Pricing</h1>
+<p class="lead">Prepaid, pay as you go, no subscription. You pay a few micro-dollars when something costs us money — issuing, renewing, online decisions — and nothing for offline verification.</p>
+<div class="grid">
+<div class="card"><h3>Prepaid credit</h3><p>Add at least <span id="min-deposit">$5.00</span> by card. The card processor's fee is itemized on top, so you receive the full credit. Unused credit never expires while your account exists.</p></div>
+<div class="card"><h3>Integer micro-dollars</h3><p>Balances and prices are whole micro-dollars (µ$): $1 = 1,000,000 µ$. Every billable call reserves its price first and never charges more; a zero balance gets a <code>402</code>, never a debt.</p></div>
+<div class="card"><h3>Free where it should be</h3><p>Offline verification, revocation (prepaid at issue), JWKS, status lists, the SDK, the developer tools and dashboard reads are free.</p></div>
+</div>
+
+<h2>Prices</h2>
+<p class="muted">Live from the service. Each price must pass the price-floor rule: <code>price × 0.92 ≥ 1.5 × worst-case cost</code> (0.92 is what is kept after refunds and disputes; 1.5 is the minimum margin), checked by a test over every price.</p>
+<div id="price-table"><p class="muted">Loading live prices…</p></div>
+<h3>Free</h3>
+<div id="free-table"></div>
+
+<h2>Card fee example</h2>
+<p>The fee is <code>ceil((credit¢ + 30) / 0.971) − credit¢</code>: a <span id="fee-credit">$5.00</span> credit is charged <span id="fee-total">$5.46</span>. New accounts may add at most $20 per payment during their first week.</p>
+
+<h2 id="calculator">Cost calculator</h2>
+<p class="muted">Estimate a month from the same live prices. Devices using the SDK or CLI renew automatically at two thirds of their credential's lifetime.</p>
+<div class="grid-2">
+<form id="calculator-form" class="panel stack">
+<div class="row">
+<label>Devices<input type="number" name="devices" min="0" step="1" value="5"></label>
+<label>Credential lifetime (days)<input type="number" name="lifetime" min="0.01" max="400" step="any" value="30"></label>
+</div>
+<div class="row">
+<label>New enrollments this month<input type="number" name="issues" min="0" step="1" value="5"></label>
+<label>Online decisions / month<input type="number" name="decisions" min="0" step="1" value="0"></label>
+</div>
+<div class="row">
+<label>Access-token exchanges / month<input type="number" name="tokens" min="0" step="1" value="0"></label>
+<label>API-key reads / month<input type="number" name="reads" min="0" step="1" value="0"></label>
+</div>
+<div class="row">
+<label>Sign-ins with devicebasedauth.org / month<input type="number" name="logins" min="0" step="1" value="0"></label>
+</div>
+</form>
+<div class="panel" id="calculator-result" aria-live="polite"></div>
+</div>
+
+<h2>Who pays</h2>
+<ul>
+<li><strong>The issuing account</strong> pays to issue and renew its devices' credentials.</li>
+<li><strong>The site (audience) that asks</strong> pays for online decisions and Sign in with devicebasedauth.org.</li>
+<li><strong>The caller</strong> pays for reads made with an API key or a device that is not signed in to the dashboard.</li>
+</ul>
+<p>Offline verification never reaches us, so it is free no matter how much you use it. See the <a href="/docs/#pricing">docs</a> for how each operation is metered.</p>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>

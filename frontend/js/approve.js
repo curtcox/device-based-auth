@@ -6,7 +6,7 @@
  */
 import { api } from './api.js';
 import { initAuth, renderSignIn, signedInLabel } from './auth.js';
-import { h, $, replace, usd, money, date, relative, duration, pretty, badge, notice, dl, field } from './html.js';
+import { h, $, replace, usd, money, date, relative, pretty, badge, notice, dl, field } from './html.js';
 import { validateGrants, describeGrant } from '/lib/verify/index.js';
 
 const ticket = location.hash.slice(1);

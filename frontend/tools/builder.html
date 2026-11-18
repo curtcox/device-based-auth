@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grant builder — devicebasedauth.org</title>
+<meta name="description" content="Build a devicebasedauth.org grant from a form and copy the JSON, a dba enroll command or a browser SDK snippet.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/tools/builder.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/">Docs</a><a href="/tools/" aria-current="page">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<p><a href="/tools/">← Developer tools</a></p>
+<h1>Grant builder</h1>
+<p class="lead">Fill in what a device may do. The JSON updates as you type, is checked with <code>validateGrant</code>, and is described in plain English the way approval pages will show it.</p>
+<div class="grid-2">
+<form id="builder-form" class="stack">
+<fieldset><legend>Site and actions</legend>
+<label>Audience<select name="audience" id="audience"><option value="">Loading…</option></select></label>
+<p class="hint" id="audience-description"></p>
+<div id="catalog" class="stack"></div>
+<label>Other actions<span class="hint"> — comma-separated, e.g. <code>hashbin:content:*</code></span><input name="extra_actions" spellcheck="false"></label>
+</fieldset>
+<fieldset><legend>Resources</legend>
+<label>Resource patterns<span class="hint"> — one per line; <code>prefix*</code> matches a prefix; empty means any resource</span><textarea name="resources" rows="2" spellcheck="false"></textarea></label>
+</fieldset>
+<fieldset><legend>When</legend>
+<label>Time zone<select name="tz" id="tz"></select></label>
+<label class="check"><input type="checkbox" name="use_windows" id="use-windows"> Only during these times (the verifier's clock, in this time zone)</label>
+<div id="windows"></div>
+<button type="button" class="secondary small" id="add-window">Add a time window</button>
+<div class="row">
+<label>Not before<input type="datetime-local" name="not_before"></label>
+<label>Not after<input type="datetime-local" name="not_after"></label>
+</div>
+</fieldset>
+<fieldset><legend>Where</legend>
+<label>Location source<select name="source">
+<option value="">Anywhere (no location constraint)</option>
+<option value="network">Network: where the request appears to come from</option>
+<option value="device">Device: what the device reports in its signed proof</option>
+<option value="both">Both must pass</option>
+</select></label>
+<div id="where-fields" class="stack" hidden>
+<div class="row">
+<label>Countries<span class="hint"> — ISO codes, e.g. US, CA</span><input name="countries" spellcheck="false"></label>
+<label>Regions<span class="hint"> — e.g. US-MO</span><input name="regions" spellcheck="false"></label>
+</div>
+<div id="areas"></div>
+<button type="button" class="secondary small" id="add-area">Add a circular area</button>
+<label>Networks<span class="hint"> — CIDR ranges, one per line</span><textarea name="networks" rows="2" spellcheck="false" placeholder="203.0.113.0/24"></textarea></label>
+<p class="hint">Network location can be moved with a VPN; device location is only as honest as the device. Treat both as evidence, not proof.</p>
+</div>
+</fieldset>
+<fieldset><legend>Limits and approval</legend>
+<div class="row">
+<label>At most<input type="number" name="uses_count" min="1" step="1" placeholder="no limit"></label>
+<label>uses per<select name="uses_per"><option>minute</option><option>hour</option><option selected>day</option><option>month</option><option>total</option></select></label>
+<label>Spend cap (USD / month)<input type="number" name="spend" min="0" step="0.01" placeholder="none"></label>
+</div>
+<label class="check"><input type="checkbox" name="online"> Check online every time (instant revocation, decision log)</label>
+<label class="check"><input type="checkbox" name="step_up"> The owner approves each use (step-up)</label>
+<p class="hint">Usage limits, online checks and step-up need online authorization; offline verifiers deny these grants with <code>online_required</code>.</p>
+</fieldset>
+<fieldset><legend>Device</legend>
+<div class="row">
+<label>Device name<input name="device_name" value="My device"></label>
+<label>Lifetime (days)<input type="number" name="days" min="1" max="400" step="1" value="30"></label>
+</div>
+</fieldset>
+</form>
+<div>
+<div class="panel" id="output">
+<h2>Grant</h2>
+<div id="validation" aria-live="polite"></div>
+<ul class="english" id="english"></ul>
+<pre class="code" id="grant-json"></pre>
+<div class="actions" id="copy-actions"></div>
+<h3>Enroll from a terminal</h3>
+<pre class="code wrap" id="cli-command"></pre>
+<h3>Enroll a browser</h3>
+<pre class="code" id="sdk-snippet"></pre>
+<p class="small"><a href="/tools/playground.html" id="to-playground">Try it in the policy playground →</a></p>
+</div>
+</div>
+</div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>

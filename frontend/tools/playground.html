@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Policy playground — devicebasedauth.org</title>
+<meta name="description" content="Evaluate devicebasedauth.org grants against a simulated action, time and location.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/tools/playground.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/">Docs</a><a href="/tools/" aria-current="page">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<p><a href="/tools/">← Developer tools</a></p>
+<h1>Policy playground</h1>
+<p class="lead">Grants plus an action, a simulated time and a simulated place: allow or deny, with every reason, grant by grant. This is <code>evaluateGrants</code> from <code>@devicebasedauth/verify</code> — the same code verifiers run.</p>
+<div class="actions" id="presets"><span class="muted small">Examples:</span></div>
+<form id="playground-form" class="stack">
+<div class="grid-2">
+<div>
+<label for="grants">Grants (JSON) or a credential</label>
+<textarea id="grants" name="grants" rows="14" spellcheck="false"></textarea>
+<div id="grants-note" class="small muted"></div>
+</div>
+<div class="stack">
+<div class="row">
+<label>Action<input name="action" required placeholder="hashbin:content:write"></label>
+<label>Resource<input name="resource" placeholder="(none)"></label>
+</div>
+<fieldset><legend>Verifier's clock</legend>
+<div class="row">
+<label>Date and time<input type="datetime-local" name="time" required></label>
+<label>Time zone<select name="tz"></select></label>
+</div>
+<p class="hint" id="time-note"></p>
+<button type="button" class="secondary small" id="now">Now</button>
+</fieldset>
+<fieldset><legend>Network location (what the verifier sees)</legend>
+<div class="row">
+<label>Country<input name="country" placeholder="US" maxlength="2"></label>
+<label>Region<input name="region" placeholder="US-MO"></label>
+<label>IP<input name="ip" placeholder="203.0.113.7"></label>
+</div>
+<div class="row">
+<label>Latitude<input name="net_lat" type="number" step="any" placeholder="38.63"></label>
+<label>Longitude<input name="net_lon" type="number" step="any" placeholder="-90.20"></label>
+</div>
+</fieldset>
+<fieldset><legend>Device location (the proof's <code>loc</code>)</legend>
+<div class="row">
+<label>Latitude<input name="dev_lat" type="number" step="any"></label>
+<label>Longitude<input name="dev_lon" type="number" step="any"></label>
+<label>Accuracy (m)<input name="dev_acc" type="number" step="any" min="0"></label>
+<label>Age (s)<input name="dev_age" type="number" step="1" min="0" value="0"></label>
+</div>
+</fieldset>
+<label class="check"><input type="checkbox" name="online"> Evaluate online (as devicebasedauth.org would, with counters and approvals available)</label>
+</div>
+</div>
+</form>
+<div id="playground-result" aria-live="polite"></div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>

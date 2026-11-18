@@ -55,7 +55,7 @@ button.onclick = async () =&gt; {
   const response = await dba.fetch('https://example.com/api/notes', { method: 'POST', body: '…' });
 };</code></pre>
 <h3>Enroll a script, server or agent</h3>
-<pre class="code"><code>dba enroll --aud example.com --grant example:notes:write
+<pre class="code"><code>dba enroll --aud example.com --action example:notes:write
 dba curl https://example.com/api/notes
 curl -H "Authorization: Bearer $(dba token --aud example.com)" https://example.com/api/notes</code></pre>
 </div>

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Developer docs — devicebasedauth.org</title>
+<meta name="description" content="How devicebasedauth.org credentials work: the format, the browser SDK, the CLI, server verification, online authorization, OpenID Connect sign-in and MCP.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/docs.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/" aria-current="page">Docs</a><a href="/tools/">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<h1>Developer docs</h1>
+<p class="lead">Enroll devices, verify their requests, and let people sign in — with credentials that say exactly what each device may do.</p>
+<div class="docs-layout">
+<nav class="docs-toc" aria-label="On this page"><ol>
+<li><a href="#concepts">Concepts</a></li>
+<li><a href="#format">The credential format</a></li>
+<li><a href="#browser">Quick start: browser SDK</a></li>
+<li><a href="#cli">Quick start: CLI</a></li>
+<li><a href="#verify">Verify requests on your server</a></li>
+<li><a href="#workers">Cloudflare Worker middleware</a></li>
+<li><a href="#authorize">Online authorization API</a></li>
+<li><a href="#oidc">Sign in with devicebasedauth.org</a></li>
+<li><a href="#mcp">MCP for agents</a></li>
+<li><a href="#revocation">Revocation and status lists</a></li>
+<li><a href="#api">API conventions and errors</a></li>
+<li><a href="#pricing">Pricing</a></li>
+<li><a href="#reference">Machine-readable reference</a></li>
+</ol></nav>
+<div class="docs-body">
+<section id="concepts">
+<h2>Concepts</h2>
+<p>devicebasedauth.org issues <strong>device credentials</strong>: signed, readable statements of what one device may do, for which sites, when and where. The device holds the private key; we only ever see the public key.</p>
+<table><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>Account</td><td>A devicebasedauth.org customer with a prepaid balance in micro-dollars. Its id appears in credentials as <code>acct</code>.</td></tr>
+<tr><td>Device</td><td>Anything that can hold a private key: a browser profile, phone, laptop, server, CLI, CI job or AI agent. Identified by <code>dev_…</code> and its key thumbprint.</td></tr>
+<tr><td>Audience</td><td>A site or API that accepts credentials (a domain such as <code>hashbin.org</code>). It owns an action namespace and publishes an action catalog.</td></tr>
+<tr><td>Action</td><td>A namespaced verb from a catalog: <code>hashbin:content:write</code>, <code>cronly:run</code>, <code>dba:session</code>. <code>ns:*</code> matches every action in a namespace.</td></tr>
+<tr><td>Grant</td><td><code>{ actions, resources, when, where, limits, require }</code>. A credential holds 1–32 grants; a request is allowed when at least one grant passes. Nothing is allowed by default.</td></tr>
+<tr><td>Credential</td><td>A compact JWS (ES256) signed by devicebasedauth.org binding a device public key to grants for one or more audiences.</td></tr>
+<tr><td>Proof</td><td>A DPoP proof (RFC 9449): a tiny JWS signed by the device key for one request (method, URL, time, credential hash).</td></tr>
+<tr><td>Status list</td><td>A signed, compressed bitstring; bit <em>n</em> set means the credential at index <em>n</em> is revoked.</td></tr>
+<tr><td>Enrollment</td><td>The device sends its public key and the grants it wants; the account owner approves (or narrows) them on an approval page; the credential is issued.</td></tr>
+</tbody></table>
+<h3>How it fits together</h3>
+<ol>
+<li>The device makes a key pair (non-extractable where the platform allows) and asks to enroll.</li>
+<li>The account owner opens the approval link, reads the request in plain English, and approves it. The account pays the issue price.</li>
+<li>The device sends <code>Authorization: DBA &lt;credential&gt;</code> and a fresh <code>DPoP</code> proof with each request.</li>
+<li>The site verifies offline with <code>@devicebasedauth/verify</code> (free), or asks <code>POST /api/v1/authorize</code> for usage limits, step-up approval and instant revocation (metered, paid by the site).</li>
+<li>The owner can revoke the credential, the device, or everything, at any time.</li>
+</ol>
+</section>
+
+<section id="format">
+<h2>The credential format</h2>
+<p>A credential is <code>header.payload.signature</code>, each base64url. The payload is plain JSON; decode it with one base64url decode, or paste it into the <a href="/tools/inspector.html">inspector</a>. The normative description is <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec/credential.md</a>; grant evaluation is <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md">spec/evaluation.md</a>, with conformance vectors in <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/vectors">spec/vectors</a>.</p>
+<pre class="code"><code>{ &quot;typ&quot;: &quot;dba-device+jwt&quot;, &quot;alg&quot;: &quot;ES256&quot;, &quot;kid&quot;: &quot;dba-2026-11&quot; }
+.
+{
+  &quot;iss&quot;: &quot;https://devicebasedauth.org&quot;,
+  &quot;sub&quot;: &quot;dev_7Q2M9X4K1B&quot;,
+  &quot;acct&quot;: &quot;user_2abc&quot;,
+  &quot;aud&quot;: [&quot;hashbin.org&quot;],
+  &quot;cid&quot;: &quot;crd_K3J8P1W6ZQ&quot;,
+  &quot;jti&quot;: &quot;crd_K3J8P1W6ZQ.1&quot;,
+  &quot;iat&quot;: 1795017600, &quot;nbf&quot;: 1795017600, &quot;exp&quot;: 1797609600,
+  &quot;cnf&quot;: { &quot;jkt&quot;: &quot;0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I&quot; },
+  &quot;device&quot;: { &quot;name&quot;: &quot;Laptop — Firefox&quot;, &quot;kind&quot;: &quot;browser&quot;, &quot;key_protection&quot;: &quot;webcrypto-nonextractable&quot; },
+  &quot;grants&quot;: [{
+    &quot;actions&quot;: [&quot;hashbin:content:write&quot;],
+    &quot;when&quot;: { &quot;tz&quot;: &quot;America/Chicago&quot;, &quot;windows&quot;: [{ &quot;days&quot;: [&quot;mon&quot;,&quot;tue&quot;,&quot;wed&quot;,&quot;thu&quot;,&quot;fri&quot;], &quot;from&quot;: &quot;08:00&quot;, &quot;to&quot;: &quot;18:00&quot; }] },
+    &quot;where&quot;: { &quot;source&quot;: &quot;network&quot;, &quot;countries&quot;: [&quot;US&quot;] },
+    &quot;limits&quot;: { &quot;spend_usd_per_month&quot;: 5 }
+  }],
+  &quot;status&quot;: { &quot;status_list&quot;: { &quot;idx&quot;: 48213, &quot;uri&quot;: &quot;https://status.devicebasedauth.org/v1/lists/7&quot; } },
+  &quot;ver&quot;: 1
+}</code></pre>
+<p>Present it with a proof made by the device key:</p>
+<pre class="code"><code>Authorization: DBA &lt;credential&gt;
+DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES256&quot;,&quot;jwk&quot;:{…}} . {&quot;jti&quot;,&quot;htm&quot;,&quot;htu&quot;,&quot;iat&quot;,&quot;ath&quot;[,&quot;nonce&quot;][,&quot;loc&quot;]}&gt;</code></pre>
+<p>Credentials are not secret — they are useless without the private key — but every site you show one to can read its device name and places. Keep geofences coarse and device names generic where that matters. Unknown grant members make that grant deny, so new constraint types can never silently over-grant on old verifiers.</p>
+<h3 id="grants">Grant vocabulary (version 1)</h3>
+<table><thead><tr><th>Member</th><th>Meaning</th><th>Enforced by</th></tr></thead><tbody>
+<tr><td><code>actions</code></td><td>1–64 exact actions or <code>ns:prefix:*</code>.</td><td>Anyone</td></tr>
+<tr><td><code>resources</code></td><td>Audience-defined patterns: <code>*</code>, <code>prefix*</code> or exact. Default <code>["*"]</code>.</td><td>The audience</td></tr>
+<tr><td><code>when.windows</code> + <code>when.tz</code></td><td>Days and <code>HH:MM</code> ranges in an IANA zone, on the <em>verifier's</em> clock. Overnight windows belong to the day they start.</td><td>Anyone</td></tr>
+<tr><td><code>when.not_before</code> / <code>not_after</code></td><td>Absolute instants (seconds).</td><td>Anyone</td></tr>
+<tr><td><code>where.source</code></td><td><code>network</code> (what the verifier sees), <code>device</code> (the proof's <code>loc</code>) or <code>both</code>.</td><td>Verifier</td></tr>
+<tr><td><code>where.countries</code> / <code>regions</code> / <code>areas</code></td><td>ISO 3166 codes and circles <code>{lat, lon, radius_m}</code>; a union.</td><td>Verifier</td></tr>
+<tr><td><code>where.networks</code></td><td>CIDR ranges the request must come from (network source only).</td><td>Verifier</td></tr>
+<tr><td><code>limits.uses</code></td><td><code>{count, per}</code>, per minute, hour, day, month or total.</td><td>Online only</td></tr>
+<tr><td><code>limits.spend_usd_per_month</code></td><td>Returned as a caveat for the site to enforce on its own spending.</td><td>The audience</td></tr>
+<tr><td><code>require.online</code></td><td>Every use goes through online authorization.</td><td>Online only</td></tr>
+<tr><td><code>require.step_up</code></td><td>The owner approves each use in the dashboard.</td><td>Online only</td></tr>
+</tbody></table>
+<p>Build grants with the <a href="/tools/builder.html">grant builder</a> and try them in the <a href="/tools/playground.html">policy playground</a>.</p>
+</section>
+
+<section id="browser">
+<h2>Quick start: browser SDK</h2>
+<p>The SDK makes a non-extractable P-256 key with WebCrypto and keeps it in IndexedDB: scripts on your origin can sign with it, but nothing can read it out. Enrollment opens the approval page in a popup, so call it from a click handler. Pin a versioned copy with Subresource Integrity in production (<code>/sdk/v1.0.0/dba.js</code>).</p>
+<pre class="code"><code>&lt;script type=&quot;module&quot;&gt;
+  import { DBA } from &#39;https://devicebasedauth.org/sdk/dba.js&#39;;
+
+  const dba = new DBA();            // new DBA({ origin, name }) for another server or a second identity
+  document.querySelector(&#39;#connect&#39;).addEventListener(&#39;click&#39;, async () =&gt; {
+    if (!await dba.ready()) {
+      await dba.enroll({
+        aud: [&#39;hashbin.org&#39;],
+        grants: [{ actions: [&#39;hashbin:content:write&#39;], limits: { spend_usd_per_month: 5 } }],
+        device: { name: &#39;Notes app on my laptop&#39; },
+        lifetime_seconds: 30 * 86400
+      });
+    }
+    dba.autoRenew();                 // renews at 2/3 of the lifetime while the page is open
+    const response = await dba.fetch(&#39;https://hashbin.org/api/content&#39;, { method: &#39;POST&#39;, body: &#39;hello&#39; });
+    console.log(response.status, dba.describe());
+  });
+&lt;/script&gt;</code></pre>
+<table><thead><tr><th>Method</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>ready()</code></td><td>Loads the stored key and credential; true when an unexpired credential exists.</td></tr>
+<tr><td><code>enroll(request, { popup, onApprovalUrl, timeoutMs })</code></td><td>Signs an enrollment request with a new key, opens the approval page and resolves with the credential (by <code>postMessage</code>, or by polling when approved elsewhere).</td></tr>
+<tr><td><code>fetch(input, init)</code></td><td><code>fetch()</code> with the credential and a fresh proof attached.</td></tr>
+<tr><td><code>headers(method, url)</code></td><td>Just the <code>Authorization</code> and <code>DPoP</code> headers for one request.</td></tr>
+<tr><td><code>allows(action, { resource, location })</code></td><td>A local hint for UI (time, place and action checks only); servers still decide.</td></tr>
+<tr><td><code>payload</code>, <code>describe()</code>, <code>expiresIn()</code></td><td>The decoded credential, its grants in plain English, seconds left.</td></tr>
+<tr><td><code>renew({ rotate })</code>, <code>autoRenew()</code></td><td>Renew (or move to a new key) before expiry.</td></tr>
+<tr><td><code>token(audience)</code></td><td>A 10-minute bearer access token for code that cannot sign each request.</td></tr>
+<tr><td><code>revoke()</code>, <code>forget()</code></td><td>Revoke this credential everywhere and delete the key; or only delete it locally.</td></tr>
+</tbody></table>
+</section>
+
+<section id="cli">
+<h2>Quick start: CLI</h2>
+<p>The <code>dba</code> CLI keeps the key in a <code>0600</code> file under <code>~/.config/dba/&lt;profile&gt;/</code> and never sends it anywhere. <code>dba help</code> lists every command.</p>
+<pre class="code" data-sample="enroll-and-call.sh"><code># 1. Make a key and ask for permission to publish on hashbin.org. This prints a link; the
+#    account owner opens it, checks the grants and approves. The command waits for that.
+dba enroll --aud hashbin.org --action hashbin:content:write --name &quot;Sample laptop&quot; --wait 300
+
+# 2. What may this device do?
+dba status
+
+# 3. Headers for one request (the DPoP proof is single-use and names this method and URL).
+dba headers POST https://hashbin.org/api/content</code></pre>
+<p class="small muted">From <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/enroll-and-call.sh"><code>docs/samples/enroll-and-call.sh</code></a>, which runs in CI against a local server.</p>
+<pre class="code"><code>dba curl -sS https://hashbin.org/api/content -d &#39;hello&#39;          # curl with the headers added
+curl -H &quot;Authorization: Bearer $(dba token --aud hashbin.org)&quot; https://hashbin.org/api/content
+dba enroll --aud hashbin.org --grant &#39;{&quot;actions&quot;:[&quot;hashbin:content:*&quot;],&quot;where&quot;:{&quot;source&quot;:&quot;network&quot;,&quot;countries&quot;:[&quot;US&quot;]}}&#39;
+dba renew --rotate                                                 # renew onto a fresh key
+dba revoke                                                         # revoke and delete the key</code></pre>
+<p>Agents and other programs that cannot wait can use <code>dba enroll --print-request</code> to get a signed request, submit it (for example through the MCP <code>request_enrollment</code> tool), and finish with <code>dba import</code>.</p>
+</section>
+
+<section id="verify">
+<h2>Verify requests on your server</h2>
+<p><code>@devicebasedauth/verify</code> is a zero-dependency ES module for Workers, Node 22+, Deno, Bun and browsers. It fetches and caches the issuer's JWKS (1 hour) and status lists (at most 5 minutes) and keeps a proof-replay cache, so most requests verify without any network call. Create one verifier per process and reuse it.</p>
+<pre class="code" data-sample="verify-request.mjs"><code>const dba = createVerifier({ issuer, audience: &#39;hashbin.org&#39; });
+
+/** What a route handler does: verify, then allow or refuse with the reasons. */
+async function check(label, request, action) {
+  const result = await dba.verifyRequest(request, { action });</code></pre>
+<p class="small muted">From <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/verify-request.mjs"><code>docs/samples/verify-request.mjs</code></a>, which runs in CI against a local server.</p>
+<p><code>verifyRequest(request, { action, resource, location })</code> returns <code>{ allow, status, code, reasons, grant_index, caveats, online_required, account, device, credential_id, credential }</code>. <code>status</code> is the HTTP status to answer with: 401 for a missing, invalid, replayed or revoked credential, 403 when no grant allows the action, 503 when keys or status lists cannot be fetched (it fails closed). Map <code>account</code> to your own user once (for example with <a href="#oidc">Sign in with devicebasedauth.org</a>) and refuse unlinked accounts.</p>
+<h3>When to go online</h3>
+<p>Grants with <code>limits.uses</code>, <code>require.online</code> or <code>require.step_up</code> deny offline with <code>code: "online_required"</code>. Ask devicebasedauth.org instead — metered at the decision price and paid by your audience account — with an API key that has the <code>authorize</code> scope:</p>
+<pre class="code"><code>import { createVerifier } from &#39;@devicebasedauth/verify&#39;;
+
+const dba = createVerifier({ audience: &#39;hashbin.org&#39;, online: { apiKey: env.DBA_API_KEY } });
+
+let result = await dba.verifyRequest(request, { action: &#39;hashbin:content:delete&#39; });
+if (!result.allow &amp;&amp; result.online_required) result = await dba.verifyOnline(request, { action: &#39;hashbin:content:delete&#39; });
+if (!result.allow) return Response.json({ error: &#39;forbidden&#39;, code: result.code, reasons: result.reasons }, { status: result.status });</code></pre>
+<p>Other helpers: <code>verify(credential)</code> (signature, claims and revocation only), <code>isRevoked(payload)</code>, <code>decide(payload, check)</code>, and the lower-level <code>verifyCredential</code>, <code>verifyProof</code>, <code>evaluateGrants</code>, <code>describeGrant</code> and <code>inspectCredential</code>. Python and Go examples are in <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples">docs/samples</a>.</p>
+</section>
+
+<section id="workers">
+<h2>Cloudflare Worker middleware</h2>
+<p>A complete Worker that guards routes by action. Requests from Cloudflare carry <code>request.cf</code>, so network-location constraints (countries, regions, areas) work without configuration.</p>
+<pre class="code" data-sample="worker-middleware.mjs"><code>import { createVerifier } from &#39;@devicebasedauth/verify&#39;;
+
+// Module scope: the verifier, its key and status-list caches, and its proof-replay cache live
+// as long as the isolate, so most requests verify without any fetch.
+let verifier;
+
+const ROUTES = [
+  { method: &#39;POST&#39;, pattern: /^\/api\/content$/, action: &#39;hashbin:content:write&#39;, handle: () =&gt; ({ published: true }) },
+  { method: &#39;DELETE&#39;, pattern: /^\/api\/content\/([^/]+)$/, action: &#39;hashbin:content:delete&#39;, handle: ([, id]) =&gt; ({ deleted: id }) }
+];
+
+export default {
+  async fetch(request, env = {}) {
+    verifier ??= createVerifier({ issuer: env.DBA_ISSUER || &#39;https://devicebasedauth.org&#39;, audience: env.DBA_AUDIENCE || &#39;hashbin.org&#39; });
+    const { pathname } = new URL(request.url);
+    for (const route of ROUTES) {
+      const match = request.method === route.method &amp;&amp; pathname.match(route.pattern);
+      if (!match) continue;
+      // The resource lets grants limit a device to some paths (&quot;resources&quot;: [&quot;/api/content/abc*&quot;]).
+      const result = await verifier.verifyRequest(request, { action: route.action, resource: pathname });
+      if (!result.allow) {
+        const headers = result.status === 401 ? { &#39;WWW-Authenticate&#39;: &#39;DPoP algs=&quot;ES256&quot;&#39; } : {};
+        return Response.json({ error: &#39;Not allowed&#39;, code: result.code, reasons: result.reasons }, { status: result.status, headers });
+      }
+      // result.account is the devicebasedauth.org account: map it to your own user.
+      // result.caveats lists limits you enforce yourself, such as a monthly spending cap.
+      return Response.json({ ...route.handle(match), account: result.account, device: result.device, caveats: result.caveats });
+    }
+    return Response.json({ error: &#39;Not found&#39;, code: &#39;not_found&#39; }, { status: 404 });
+  }
+};</code></pre>
+<p class="small muted">From <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/worker-middleware.mjs"><code>docs/samples/worker-middleware.mjs</code></a>, which runs in CI against a local server.</p>
+</section>
+
+<section id="authorize">
+<h2>Online authorization API</h2>
+<p><code>POST /api/v1/authorize</code> decides one request with everything offline verification cannot do: instant revocation, usage counters, step-up approval and a decision log the device owner can read. Every decision — allow or deny — costs the decision price and is billed to the audience's owner, so only the owner of an audience may ask about it. Authenticate with an account API key holding the <code>authorize</code> scope.</p>
+<pre class="code"><code>POST /api/v1/authorize
+Authorization: ApiKey dbak_…
+Content-Type: application/json
+
+{
+  &quot;credential&quot;: &quot;&lt;the device credential&gt;&quot;,
+  &quot;proof&quot;: &quot;&lt;the DPoP proof the device sent&gt;&quot;,
+  &quot;request&quot;: { &quot;method&quot;: &quot;POST&quot;, &quot;url&quot;: &quot;https://hashbin.org/api/content&quot; },
+  &quot;audience&quot;: &quot;hashbin.org&quot;,
+  &quot;action&quot;: &quot;hashbin:content:write&quot;,
+  &quot;resource&quot;: &quot;optional&quot;,
+  &quot;context&quot;: { &quot;network&quot;: { &quot;country&quot;: &quot;US&quot;, &quot;region&quot;: &quot;US-MO&quot;, &quot;ip&quot;: &quot;203.0.113.7&quot; } }
+}</code></pre>
+<pre class="code"><code>{
+  &quot;allow&quot;: true, &quot;code&quot;: &quot;ok&quot;, &quot;grant_index&quot;: 0, &quot;reasons&quot;: [],
+  &quot;per_grant_reasons&quot;: [[]], &quot;caveats&quot;: { &quot;spend_usd_per_month&quot;: 5 },
+  &quot;device_id&quot;: &quot;dev_…&quot;, &quot;account&quot;: &quot;user_…&quot;, &quot;cid&quot;: &quot;crd_…&quot;,
+  &quot;expires_in&quot;: 30, &quot;cost_microdollars&quot;: 10
+}</code></pre>
+<p>A positive answer may be cached for <code>expires_in</code> seconds (0 when counters or step-up were involved). A step-up grant answers <code>{"allow": false, "code": "step_up_required", "step_up": {"id", "expires_in", "approve_url"}}</code>; the owner approves it under <a href="/app.html#approvals">Approvals</a> and the next request (within 5 minutes) is allowed once. Replayed proofs are refused with <code>replayed_proof</code>.</p>
+</section>
+
+<section id="oidc">
+<h2>Sign in with devicebasedauth.org</h2>
+<p>devicebasedauth.org is an OpenID Connect provider (authorization code flow with PKCE S256; public clients, no client secret). Register your site as an <a href="/app.html#audiences">audience</a> with its redirect URIs; your <code>client_id</code> is the audience name. Discovery: <a href="/.well-known/openid-configuration"><code>/.well-known/openid-configuration</code></a>.</p>
+<pre class="code"><code>// 1. Send the browser to the authorization endpoint.
+const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+const challenge = base64url(new Uint8Array(await crypto.subtle.digest(&#39;SHA-256&#39;, new TextEncoder().encode(verifier))));
+const url = new URL(&#39;https://devicebasedauth.org/oauth/authorize&#39;);
+url.search = new URLSearchParams({
+  client_id: &#39;example.com&#39;, redirect_uri: &#39;https://example.com/auth/dba/callback&#39;, response_type: &#39;code&#39;,
+  scope: &#39;openid profile device&#39;, state, nonce, code_challenge: challenge, code_challenge_method: &#39;S256&#39;
+});
+location.assign(url);
+
+// 2. On your callback, exchange the code (form-encoded or JSON).
+const tokens = await fetch(&#39;https://devicebasedauth.org/oauth/token&#39;, {
+  method: &#39;POST&#39;, headers: { &#39;Content-Type&#39;: &#39;application/x-www-form-urlencoded&#39; },
+  body: new URLSearchParams({ grant_type: &#39;authorization_code&#39;, code, redirect_uri, client_id: &#39;example.com&#39;, code_verifier: verifier })
+}).then(r =&gt; r.json());
+// tokens.id_token (ES256, verify with /.well-known/jwks.json), tokens.access_token, expires_in: 600</code></pre>
+<p>The ID token's <code>sub</code> and <code>acct</code> are the devicebasedauth.org account; when the user signed in with a device credential it also carries <code>dev</code>, <code>cid</code> and <code>device_name</code>, and <code>amr</code> is <code>["dba_device"]</code> rather than <code>["session"]</code>. <code>GET /oauth/userinfo</code> with the access token returns the same identity. Each sign-in costs the login price, billed to the audience's owner. For device-bound sessions on your own site (revoking the device ends access), accept DBA credentials on your API as in <a href="#verify">server verification</a>.</p>
+</section>
+
+<section id="mcp">
+<h2>MCP for agents</h2>
+<p>An agent can manage credentials through the Model Context Protocol endpoint <code>POST /mcp</code> (stateless Streamable HTTP, JSON-RPC 2.0). Authenticate with an account API key (<code>Authorization: ApiKey dbak_…</code>) whose scopes cover what the agent should do, or with a device credential. Each tool calls the ordinary API with the caller's own credential, at the ordinary prices.</p>
+<table><thead><tr><th>Tool</th><th>Does</th></tr></thead><tbody>
+<tr><td><code>whoami</code></td><td>Describe the credential the agent is using.</td></tr>
+<tr><td><code>balance</code></td><td>Prepaid balance and this month's spend.</td></tr>
+<tr><td><code>list_credentials</code></td><td>Issued credentials (filters: status, audience, device).</td></tr>
+<tr><td><code>get_credential</code></td><td>One credential with its grants in plain English and its history.</td></tr>
+<tr><td><code>request_enrollment</code></td><td>Submit a signed enrollment request (<code>dba enroll --print-request</code> makes one); returns an <code>approval_url</code> for a human. Nothing is charged until a human approves.</td></tr>
+<tr><td><code>revoke_credential</code></td><td>Revoke a credential immediately (free).</td></tr>
+<tr><td><code>quote</code></td><td>Price of an operation in micro-dollars.</td></tr>
+<tr><td><code>inspect_credential</code></td><td>Decode and verify a credential; optionally check an action.</td></tr>
+<tr><td><code>evaluate_grants</code></td><td>Evaluate grants for an action at a time and place, offline and free.</td></tr>
+</tbody></table>
+<pre class="code"><code>curl -sS https://devicebasedauth.org/mcp \
+  -H &quot;Authorization: ApiKey $DBA_API_KEY&quot; -H &#39;Content-Type: application/json&#39; \
+  -d &#39;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/call&quot;,&quot;params&quot;:{&quot;name&quot;:&quot;evaluate_grants&quot;,&quot;arguments&quot;:{&quot;grants&quot;:&quot;[{\&quot;actions\&quot;:[\&quot;hashbin:content:write\&quot;]}]&quot;,&quot;action&quot;:&quot;hashbin:content:write&quot;}}}&#39;</code></pre>
+<p>Agent-friendly defaults: short lifetimes, a spend cap (<code>limits.spend_usd_per_month</code>), and <code>require.online</code> so the owner sees every decision. A summary for language models is at <a href="/llms.txt"><code>/llms.txt</code></a>.</p>
+</section>
+
+<section id="revocation">
+<h2>Revocation and status lists</h2>
+<ul>
+<li>Revoke one credential (<code>DELETE /api/v1/credentials/{cid}</code>), every credential of a device (<code>POST /api/v1/devices/{id}/revoke</code>), everything — optionally for one audience — (<code>POST /api/v1/revoke-all</code> with <code>{"confirm": "revoke-all"}</code>), or let a device revoke itself (<code>POST /api/v1/self/revoke</code>). Credentials a device delegated are revoked with it.</li>
+<li>Revocation is free: its cost is prepaid in the issue price, so it works at a zero balance.</li>
+<li>Online checks (<code>/api/v1/authorize</code>, and this service's own API) see a revocation immediately.</li>
+<li>Offline verifiers see it through the credential's status list, republished within about a minute and cached by verifiers for at most their TTL (we publish 60 s; verifiers should cache ≤ 5 minutes). Short credential lifetimes with automatic renewal bound the window further.</li>
+</ul>
+<p>Status lists follow the IETF OAuth Token Status List draft: a JWT (<code>typ: statuslist+jwt</code>) signed by the issuer whose <code>sub</code> is the list URL and whose <code>status_list.lst</code> is a zlib-compressed, base64url bitstring, 1 bit per credential, least significant bit first. Fetch them from the <code>uri</code> in the credential (e.g. <code>/status/v1/lists/0</code>); verifiers must fail closed when a list cannot be fetched.</p>
+<h3>Renewal, rotation and access tokens</h3>
+<p><code>POST /api/v1/credentials/{cid}/renew</code>, authenticated by the credential and a proof, issues the next version with a fresh expiry (the renew price); grants never widen. Add <code>new_key_proof</code> (a <code>dba-rotate+jwt</code> signed by the new key) to move to a new key, which revokes the old one. <code>POST /api/v1/token</code> with <code>{"audience"}</code> trades a credential for a ≤ 10-minute bearer token carrying only that audience's grants, for scripts that can only set one header; audiences may refuse them.</p>
+</section>
+
+<section id="api">
+<h2>API conventions and errors</h2>
+<ul>
+<li>REST and JSON under <code>/api/v1/</code>. The full list is <a href="/openapi.json"><code>/openapi.json</code></a>, generated from the route table.</li>
+<li>Authentication: a dashboard session, an account API key (<code>Authorization: ApiKey dbak_…</code>, scoped: <code>account:read</code>, <code>transactions:read</code>, <code>credentials:read</code>, <code>credentials:issue</code>, <code>credentials:revoke</code>, <code>audiences:read</code>, <code>audiences:write</code>, <code>authorize</code>), or a devicebasedauth.org device credential with a proof whose grants hold <code>dba:&lt;scope&gt;</code> or <code>dba:session</code> — this site is its own first audience.</li>
+<li>Money is integer micro-dollars. Every response includes <code>cost_microdollars</code> and the header <code>X-DBA-Cost-Microdollars</code>. <code>GET /api/v1/quote?op=issue</code> prices an operation; <code>?dry_run=1</code> previews a checkout.</li>
+<li>Send an <code>Idempotency-Key</code> (≤ 128 characters) on POSTs that cost money; retries with the same key are charged once.</li>
+</ul>
+<p>Errors are JSON <code>{ "error": "message", "code": "machine_code", … }</code>:</p>
+<table><thead><tr><th>Status</th><th>Codes (examples)</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>400</td><td><code>invalid_json</code>, <code>invalid_grants</code>, <code>invalid_audience</code>, <code>invalid_enrollment</code>, <code>confirm_required</code></td><td>The request is malformed or names something unknown.</td></tr>
+<tr><td>401</td><td><code>auth_required</code>, <code>invalid_auth</code>, <code>proof_required</code>, <code>stale_proof</code>, <code>key_mismatch</code>, <code>revoked</code>, <code>expired</code></td><td>Who you are could not be established. Device errors also set <code>WWW-Authenticate: DPoP</code>.</td></tr>
+<tr><td>402</td><td><code>insufficient_balance</code> (with <code>needed_microdollars</code>, <code>price_microdollars</code>)</td><td>The balance cannot cover the price. Nothing was done or charged.</td></tr>
+<tr><td>403</td><td><code>insufficient_scope</code>, <code>forbidden</code>, <code>not_narrower</code>, <code>domain_unverified</code></td><td>Authenticated, but not allowed.</td></tr>
+<tr><td>404</td><td><code>not_found</code>, <code>unknown_audience</code></td><td>No such thing in your account.</td></tr>
+<tr><td>409</td><td><code>already_decided</code>, <code>superseded</code>, <code>audience_exists</code></td><td>The state changed underneath you.</td></tr>
+<tr><td>429</td><td><code>rate_limited</code></td><td>Slow down.</td></tr>
+<tr><td>503</td><td><code>cost_brake</code>, <code>payments_unavailable</code></td><td>A free endpoint is paused by the cost-safety brake, or a dependency is not configured.</td></tr>
+</tbody></table>
+<p>Verifiers report decision reasons per grant, such as <code>action_not_granted</code>, <code>outside_time_window</code>, <code>outside_location:network</code>, <code>network_not_allowed</code>, <code>location_stale:device</code> and <code>online_required</code>; see <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md">spec/evaluation.md</a>.</p>
+</section>
+
+<section id="pricing">
+<h2>Pricing</h2>
+<p>Prepaid micro-dollars, no subscription, $5 minimum deposit with the card fee itemized, offline verification free. The issuing account pays to issue and renew; the audience pays for online decisions and sign-ins; API-key reads are paid by the caller. See <a href="/pricing.html">Pricing</a> for live prices and a calculator.</p>
+</section>
+
+<section id="reference">
+<h2>Machine-readable reference</h2>
+<ul>
+<li><a href="/openapi.json"><code>/openapi.json</code></a> — OpenAPI 3.1 for every route.</li>
+<li><a href="/llms.txt"><code>/llms.txt</code></a> — a summary for language models and agents.</li>
+<li><a href="/.well-known/jwks.json"><code>/.well-known/jwks.json</code></a> — issuer public keys.</li>
+<li><a href="/.well-known/openid-configuration"><code>/.well-known/openid-configuration</code></a> — OpenID Connect discovery.</li>
+<li><a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec/credential.md</a>, <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md">spec/evaluation.md</a> and <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/vectors">conformance vectors</a>.</li>
+</ul>
+</section>
+</div>
+</div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>
