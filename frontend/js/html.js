@@ -170,6 +170,9 @@ export function describeKey(device) {
   if (a?.format === 'apple-appattest') {
     return `Secure Enclave, reported by the app ${a.app_id} as attested by Apple (${a.environment === 'production' ? 'App Store or TestFlight build' : 'development build'})`;
   }
+  if (a?.format === 'tpm') {
+    return `TPM${a.tpm_manufacturer ? ` (${a.tpm_manufacturer})` : ''}, attested by Microsoft's TPM attestation service`;
+  }
   const kp = device?.key_protection;
   return `${KEY_PROTECTION[kp] || kp || 'unknown'} (self-reported)`;
 }

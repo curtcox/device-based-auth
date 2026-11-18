@@ -22,7 +22,7 @@ export function cleanDevice(device = {}) {
   return { name, kind, key_protection };
 }
 
-const ATTESTED_KEY_PROTECTION = { 'android-key': 'android-keystore', 'apple-appattest': 'secure-enclave' };
+const ATTESTED_KEY_PROTECTION = { 'android-key': 'android-keystore', 'apple-appattest': 'secure-enclave', tpm: 'tpm' };
 
 /** The device claim with a verified attestation (which also settles key_protection). */
 export function withAttestation(device, attestation, at) {

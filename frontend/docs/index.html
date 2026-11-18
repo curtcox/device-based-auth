@@ -23,6 +23,7 @@
 <li><a href="#cli">Quick start: CLI</a></li>
 <li><a href="#android">Quick start: Android</a></li>
 <li><a href="#ios">iOS: Apple App Attest</a></li>
+<li><a href="#tpm">Windows: TPM key attestation</a></li>
 <li><a href="#verify">Verify requests on your server</a></li>
 <li><a href="#workers">Cloudflare Worker middleware</a></li>
 <li><a href="#authorize">Online authorization API</a></li>
@@ -99,7 +100,7 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 <tr><td><code>limits.spend_usd_per_month</code></td><td>Returned as a caveat for the site to enforce on its own spending.</td><td>The audience</td></tr>
 <tr><td><code>require.online</code></td><td>Every use goes through online authorization.</td><td>Online only</td></tr>
 <tr><td><code>require.step_up</code></td><td>The owner approves each use in the dashboard.</td><td>Online only</td></tr>
-<tr><td><code>require.attestation</code></td><td><code>"hardware"</code> (TEE, StrongBox, Secure Enclave or TPM) or <code>"strongbox"</code>: the credential's <code>device.attestation</code> must show the key there (<a href="#android">Android key attestation</a>, <a href="#ios">Apple App Attest</a>); otherwise <code>attestation_required</code>. Apple App Attest counts only for production builds of apps listed in <code>require.app_ids</code>.</td><td>Verifier (offline)</td></tr>
+<tr><td><code>require.attestation</code></td><td><code>"hardware"</code> (TEE, StrongBox, Secure Enclave or TPM) or <code>"strongbox"</code>: the credential's <code>device.attestation</code> must show the key there (<a href="#android">Android key attestation</a>, <a href="#ios">Apple App Attest</a>, <a href="#tpm">TPM</a>); otherwise <code>attestation_required</code>. Apple App Attest counts only for production builds of apps listed in <code>require.app_ids</code>.</td><td>Verifier (offline)</td></tr>
 <tr><td><code>require.app_ids</code></td><td>Apple app ids (<code>TEAMID.bundle.id</code>): the credential must carry an App Attest attestation from one of them; otherwise <code>attested_app_required</code>.</td><td>Verifier (offline)</td></tr>
 <tr><td><code>require.verified_boot</code></td><td>The attestation must report verified boot and a locked bootloader; otherwise <code>verified_boot_required</code>.</td><td>Verifier (offline)</td></tr>
 </tbody></table>
@@ -206,6 +207,18 @@ Object result = client.call("POST", "https://hashbin.org/api/content", credentia
 <p>The issuer checks Apple's certificate chain, the nonce, the key id, the app id and the counter (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>) and signs <code>{ format: "apple-appattest", security_level: "secure_enclave", app_id, environment }</code> into <code>device.attestation</code>; the approval page says <em>Secure Enclave, reported by the app … as attested by Apple</em>. Because what Apple proves is the app, not the key, a grant counts it for <code>require.attestation</code> only when it also names the app in <code>require.app_ids</code>, and only for production builds:</p>
 <pre class="code"><code>{ "actions": ["hashbin:content:write"],
   "require": { "attestation": "hardware", "app_ids": ["ABCDE12345.org.example.wallet"] } }</code></pre>
+</section>
+
+<section id="tpm">
+<h2>Windows: TPM key attestation</h2>
+<p>On a PC with a TPM 2.0, keep the DBA key in the TPM and have the TPM's attestation identity key (AIK) certify it. Windows gets an AIK certificate from Microsoft after checking the TPM's endorsement certificate, so the issuer can trust it:</p>
+<ol>
+<li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>
+<li>Create a P-256 signing key in the TPM (Windows: the Microsoft Platform Crypto Provider) and compute its JWK thumbprint (RFC 7638).</li>
+<li>Certify it with the AIK (<code>TPM2_Certify</code>; on Windows <code>NCryptCreateClaim</code> with the "Windows AIK") using qualifying data = SHA-256 of the UTF-8 string <code>"&lt;challenge&gt;.&lt;thumbprint&gt;"</code>.</li>
+<li>Add <code>attestation: { format: "tpm", challenge, alg, x5c, sig, cert_info, pub_area }</code> to the signed enrollment request: <code>alg</code> <code>-257</code> (RS256) or <code>-65535</code> (RS1), <code>x5c</code> the AIK certificate and its CA (base64 DER), and the signature, <code>TPMS_ATTEST</code> and <code>TPMT_PUBLIC</code> in base64.</li>
+</ol>
+<p>The issuer checks the chain to Microsoft's TPM root, the AIK certificate, the signature, that the certified key is the enrolled key, and that it was generated in the TPM and cannot leave it (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>). It signs <code>{ format: "tpm", security_level: "tpm", tpm_manufacturer }</code> into <code>device.attestation</code>, which satisfies <code>require.attestation: "hardware"</code> (not <code>"strongbox"</code>, and not <code>require.verified_boot</code>).</p>
 </section>
 
 <section id="verify">

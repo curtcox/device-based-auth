@@ -47,6 +47,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - HTTP: `POST /api/v1/enrollments {request}` where request is a JWS (typ `dba-enroll+jwt`, the new public key in the header `jwk`) over `{iat, aud, grants, device, lifetime_seconds?}`. Response: `approval_url` (give it to the human), `poll_url`. Poll `GET poll_url` until `status` is `approved` (then `credential` is included), `denied` or `expired`.
 - Android key attestation (optional): `POST /api/v1/enrollments/attestation-challenge` → `challenge`; generate the Keystore key with `setAttestationChallenge(challenge ASCII bytes)`; add `attestation: {format: "android-key", challenge, x5c: [base64 DER, leaf first]}` to the enrollment request payload. Verified chains put `device.attestation {format, security_level: tee|strongbox, verified_boot, device_locked, verified_at}` in the credential; a rejected chain is `400 invalid_attestation`. Sample: docs/samples/android.
 - Apple App Attest (optional): same challenge; make the key in the Secure Enclave, then `attestKey(keyId, clientDataHash: SHA-256("<challenge>.<JWK thumbprint>"))` and add `attestation: {format: "apple-appattest", challenge, app_id: "TEAMID.bundle.id", key_id, object}` (base64). Gives `device.attestation {format, security_level: secure_enclave, app_id, environment}`; it satisfies `require.attestation` only for production builds of apps listed in `require.app_ids` (Apple attests the app, not the key).
+- TPM 2.0 attestation (optional, Windows): same challenge; create the P-256 key in the TPM, `TPM2_Certify` it with the AIK using qualifyingData `SHA-256("<challenge>.<JWK thumbprint>")`, and add `attestation: {format: "tpm", challenge, alg: -257|-65535, x5c: [AIK cert, CA certs], sig, cert_info, pub_area}` (base64). The AIK chain must end at the Microsoft TPM Root CA 2014. Gives `device.attestation {format, security_level: tpm, tpm_manufacturer}`, which satisfies `require.attestation: "hardware"`.
 - Fleets: the owner creates an enrollment token (`POST /api/v1/enrollment-tokens {name, aud, grants, lifetime_seconds, max_uses, expires_in_days}` → `token: dbae_…`, shown once). Each device signs its usual enrollment request (aud/grants optional; may only narrow the token's) and sends `POST /api/v1/enrollments/redeem {request, enrollment_token}` — issued at once, issue price charged to the token's account. CLI: `DBA_ENROLLMENT_TOKEN=dbae_… dba enroll`; SDK: `dba.enroll({}, { enrollmentToken })`.
 - mTLS: `POST /api/v1/certificate {lifetime_seconds?}` (device credential + DPoP; 300–86400 s, default 3600; token price) returns a PEM X.509 client certificate for the device's own key, signed by the CA in `/.well-known/dba-ca.pem`; CN = device id, SAN URIs `urn:devicebasedauth:{device,credential,account}:…`; no grants, no revocation. CLI: `dba certificate` then `curl --cert client.crt --key client.key`.
 - Pre-approved issuance: `POST /api/v1/credentials {public_jwk, aud, grants, device, lifetime_seconds}` with an API key holding `credentials:issue` (or a device credential holding `dba:credentials:issue`, which can only delegate narrower grants).
@@ -87,7 +88,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `POST /api/v1/inspect` (public): Decode and check a credential; optionally evaluate an action. Free.
 - `POST /api/v1/enrollments` (public): Start an enrollment with a request JWS (typ dba-enroll+jwt) signed by the new device key. Returns the approval URL and a poll URL. Free; nothing is stored.
 - `POST /api/v1/enrollments/describe` (public): Describe a pending enrollment ticket for the approval page. Free.
-- `POST /api/v1/enrollments/attestation-challenge` (public): A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:"android-key", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256("<challenge>.<JWK thumbprint of the enrolled key>") and add {format:"apple-appattest", challenge, app_id, key_id, object}. Free; stateless.
+- `POST /api/v1/enrollments/attestation-challenge` (public): A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:"android-key", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256("<challenge>.<JWK thumbprint of the enrolled key>") and add {format:"apple-appattest", challenge, app_id, key_id, object}. TPM 2.0 (Windows): TPM2_Certify the TPM-resident P-256 key with the AIK and qualifyingData SHA-256("<challenge>.<JWK thumbprint>"), and add {format:"tpm", challenge, alg, x5c[], sig, cert_info, pub_area}. Free; stateless.
 - `GET /api/v1/enrollments/{id}` (public): Poll an enrollment until it is approved, denied or expired.
 - `POST /api/v1/enrollments/approve` (session): Approve an enrollment (optionally narrowing grants) and issue the credential. Charges the issue price.
 - `POST /api/v1/enrollments/deny` (session): Deny an enrollment.
@@ -225,8 +226,9 @@ credential rotates to a new key.
 
 | Member | Meaning |
 |--------|---------|
-| `format` | `android-key` (Android Key Attestation) or `apple-appattest` (Apple App Attest). TPM is not supported yet. |
-| `security_level` | `tee`, `strongbox` or `secure_enclave`: where the key lives. Software keys are never attested. |
+| `format` | `android-key` (Android Key Attestation), `apple-appattest` (Apple App Attest) or `tpm` (TPM 2.0). |
+| `security_level` | `tee`, `strongbox`, `secure_enclave` or `tpm`: where the key lives. Software keys are never attested. |
+| `tpm_manufacturer` | `tpm` only: the TPM vendor id from the attestation key's certificate (e.g. `NTC`, `IFX`, `INTC`, `AMD`). |
 | `app_id` | `apple-appattest` only: the app (`TEAMID.bundle.id`) that Apple attested and that reported the key. |
 | `environment` | `apple-appattest` only: `production` (App Store, TestFlight, enterprise) or `development`. |
 | `verified_boot` | `verified`, `self_signed`, `unverified`, `failed` or `unknown` (Android root of trust), when reported. |
@@ -234,7 +236,7 @@ credential rotates to a new key.
 | `attestation_version` | The Keymaster/KeyMint attestation version. |
 | `verified_at` | NumericDate the issuer checked the evidence. |
 
-With an attestation, `key_protection` is set by the issuer (`android-keystore` or `secure-enclave`).
+With an attestation, `key_protection` is set by the issuer (`android-keystore`, `secure-enclave` or `tpm`).
 
 **Android.** The device asks `POST /api/v1/enrollments/attestation-challenge` for a challenge (a
 43-character string, valid 10 minutes), generates its P-256 signing key in the Android Keystore
@@ -278,6 +280,33 @@ The app's receipt (for Apple's fraud-metric service) is not used. What this prov
 genuine copy of `app_id` reported the key, so it is only as good as that app: the
 `secure_enclave` level counts for `require.attestation` only in grants that also name the app
 (`require.app_ids`, evaluation.md §3.6).
+
+**TPM 2.0.** The device creates its P-256 signing key inside the TPM (on Windows, the Platform
+Crypto Provider) and has the TPM's attestation identity key (AIK) certify it with `TPM2_Certify`,
+passing `qualifyingData = SHA-256("<challenge>.<JWK thumbprint of the key>")` (on Windows, the
+`NCryptCreateClaim` nonce with the "Windows AIK" as authority). It adds
+`attestation: { format: "tpm", challenge, alg, x5c, sig, cert_info, pub_area }`: `alg` is the
+COSE algorithm of the AIK's signature (`-257` RS256 or `-65535` RS1), `x5c` the AIK certificate
+then its CA certificates (base64 DER, root left out), and `sig`, `cert_info` (the `TPMS_ATTEST`)
+and `pub_area` (the key's `TPMT_PUBLIC`) base64. The issuer follows the WebAuthn `tpm`
+attestation format (§8.3) and accepts it only when:
+
+1. the chain has 1–5 certificates, each signed by the next and the last by the pinned Microsoft
+   TPM Root Certificate Authority 2014, none outside its validity period; Microsoft issues AIK
+   certificates only to TPMs whose endorsement certificate it has checked;
+2. the AIK certificate has extended key usage 2.23.133.8.3, is not a CA, and names the TPM
+   manufacturer in its subject alternative name;
+3. the AIK certificate's key signed `cert_info` (RS1 is accepted: the AIK is a restricted key, so
+   the TPM signs only structures it built itself, with at most 64 caller-chosen bytes);
+4. `cert_info` is a TPM-generated `TPM_ST_ATTEST_CERTIFY` whose `extraData` is the qualifying data
+   above, for a challenge the issuer made and has not expired, and whose certified name is the
+   name of `pub_area` (SHA-256, SHA-384 or SHA-512);
+5. `pub_area` is an ECC NIST P-256 key equal to the enrolled key, with `fixedTPM`, `fixedParent`,
+   `sensitiveDataOrigin` and `sign` set: generated in this TPM and unable to leave it.
+
+Revocation of Microsoft's AIK CAs is not checked. A TPM whose AIK has no certificate from
+Microsoft (most Linux machines) cannot attest yet: that needs endorsement-key credential
+activation against the manufacturers' roots.
 
 Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
 without attestation omits the member.

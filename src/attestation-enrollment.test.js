@@ -6,12 +6,14 @@ import { attestationAuthority, attestationChain } from '../test-utils/android-at
 import { appleAuthority, appleAttestation } from '../test-utils/apple-attestation.js';
 import { resetRevocationCache, createChallenge, verifyAttestation } from './services/attestation.js';
 import { appleClientData } from './services/apple-attestation.js';
+import { tpmAuthority, tpmAttestation } from '../test-utils/tpm-attestation.js';
+import { tpmQualifyingData } from './services/tpm-attestation.js';
 import { jwkThumbprint } from '../packages/verify/src/jose.js';
 
-let authority; let apple; let env;
-beforeAll(async () => { authority = await attestationAuthority(); apple = await appleAuthority(); });
+let authority; let apple; let tpm; let env;
+beforeAll(async () => { authority = await attestationAuthority(); apple = await appleAuthority(); tpm = await tpmAuthority(); });
 beforeEach(async () => {
-  env = await testEnv({ ANDROID_ATTESTATION_TEST_ROOT: authority.rootPin, APPLE_ATTESTATION_TEST_ROOT: apple.rootSpkiB64u });
+  env = await testEnv({ ANDROID_ATTESTATION_TEST_ROOT: authority.rootPin, APPLE_ATTESTATION_TEST_ROOT: apple.rootSpkiB64u, TPM_ATTESTATION_TEST_ROOT: tpm.rootSpkiB64u });
   await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
   resetRevocationCache();
   // Google's revocation list, as the Worker would fetch it.
@@ -178,5 +180,48 @@ describe('attested enrollment (B5, Apple App Attest)', () => {
     const local = { ENVIRONMENT: 'local', TOKEN_SIGNING_KEY: 'test-token-key', APPLE_ATTESTATION_TEST_ROOT: apple.rootSpkiB64u };
     await expect(verifyAttestation(attestation, device.publicJwk, local)).resolves.toMatchObject({ app_id: APP });
     await expect(verifyAttestation(attestation, device.publicJwk, { ...local, ENVIRONMENT: 'production' })).rejects.toThrow(/Apple App Attestation Root CA/);
+  });
+});
+
+/** A PC's enrollment: the TPM's attestation key certifies the TPM-resident device key. */
+async function tpmStart(device, { grants = [{ actions: ['hashbin:content:write'] }], bindTo, overrides } = {}) {
+  const { body: { challenge } } = await call(env, 'POST', '/api/v1/enrollments/attestation-challenge');
+  const qualifying = await tpmQualifyingData(challenge, await jwkThumbprint((bindTo ?? device).publicJwk));
+  const members = await tpmAttestation(tpm, device.publicJwk, qualifying, overrides);
+  const request = await device.enrollRequest({ aud: ['hashbin.org'], grants, device: { name: 'Work laptop', kind: 'desktop', key_protection: 'software' }, attestation: { format: 'tpm', challenge, ...members } });
+  return call(env, 'POST', '/api/v1/enrollments', { body: { request } });
+}
+
+describe('attested enrollment (B5, TPM 2.0)', () => {
+  it('signs the TPM attestation into the credential, and hardware grants accept it', async () => {
+    const device = await newDevice();
+    const start = await tpmStart(device, { grants: [{ actions: ['hashbin:content:write'], require: { attestation: 'hardware' } }] });
+    expect(start.status, JSON.stringify(start.body)).toBe(200);
+    const described = await call(env, 'POST', '/api/v1/enrollments/describe', { body: { request: start.body.request } });
+    expect(described.body.device).toMatchObject({ key_protection: 'tpm', attestation: { format: 'tpm', security_level: 'tpm', tpm_manufacturer: 'NTC' } });
+    const credential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: start.body.request } })).body.credential;
+    expect(inspectCredential(credential).payload.device).toMatchObject({ key_protection: 'tpm', attestation: { format: 'tpm', tpm_manufacturer: 'NTC' } });
+
+    const verifier = createVerifier({ issuer: ORIGIN, audience: 'hashbin.org', fetch: (url, init) => worker.fetch(new Request(url, init), env) });
+    const proof = await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url: 'https://hashbin.org/api/content', credential });
+    const decision = await verifier.verifyRequest(new Request('https://hashbin.org/api/content', { method: 'POST', headers: { Authorization: `DBA ${credential}`, DPoP: proof } }), { action: 'hashbin:content:write' });
+    expect(decision.allow).toBe(true);
+  });
+
+  it('refuses an attestation for another key or an exportable key', async () => {
+    const device = await newDevice();
+    expect((await tpmStart(device, { bindTo: await newDevice() })).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('qualifying data does not match') });
+    expect((await tpmStart(device, { overrides: { attributes: 0x00040070 } })).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('fixedTPM') });
+  });
+
+  it('trusts the test root only on a local server', async () => {
+    const device = await newDevice();
+    const { challenge } = await createChallenge('test-token-key');
+    const members = await tpmAttestation(tpm, device.publicJwk, await tpmQualifyingData(challenge, await jwkThumbprint(device.publicJwk)));
+    const attestation = { format: 'tpm', challenge, ...members };
+    const local = { ENVIRONMENT: 'local', TOKEN_SIGNING_KEY: 'test-token-key', TPM_ATTESTATION_TEST_ROOT: tpm.rootSpkiB64u };
+    await expect(verifyAttestation(attestation, device.publicJwk, local)).resolves.toMatchObject({ format: 'tpm' });
+    await expect(verifyAttestation(attestation, device.publicJwk, { ...local, ENVIRONMENT: 'production' })).rejects.toThrow(/Microsoft TPM Root/);
+    await expect(verifyAttestation({ ...attestation, cert_info: undefined }, device.publicJwk, local)).rejects.toThrow(/cert_info is required/);
   });
 });

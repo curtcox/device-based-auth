@@ -9,6 +9,8 @@ it('says where a device key lives, and whether anyone checked', () => {
     .toBe('Android Keystore, attested by Google (trusted execution environment, unverified boot, bootloader unlocked)');
   expect(describeKey({ key_protection: 'secure-enclave', attestation: { format: 'apple-appattest', security_level: 'secure_enclave', app_id: 'ABCDE12345.org.example.wallet', environment: 'production' } }))
     .toBe('Secure Enclave, reported by the app ABCDE12345.org.example.wallet as attested by Apple (App Store or TestFlight build)');
+  expect(describeKey({ key_protection: 'tpm', attestation: { format: 'tpm', security_level: 'tpm', tpm_manufacturer: 'NTC' } }))
+    .toBe("TPM (NTC), attested by Microsoft's TPM attestation service");
   expect(describeKey({ key_protection: 'nonsense' })).toBe('nonsense (self-reported)');
   expect(describeKey(undefined)).toBe('unknown (self-reported)');
 });

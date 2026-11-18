@@ -1,5 +1,6 @@
 // Device key attestation (STATUS B5): evidence from the platform that a device key was generated
-// inside secure hardware. Android Key Attestation here; Apple App Attest in apple-attestation.js. A verified attestation becomes
+// inside secure hardware. Android Key Attestation here; Apple App Attest in apple-attestation.js,
+// TPM 2.0 in tpm-attestation.js. A verified attestation becomes
 // `device.attestation` in the credential, set only by the issuer (spec/credential.md §3a).
 //
 // Android: the device generates its key in the Keystore with setAttestationChallenge(challenge)
@@ -12,6 +13,7 @@ import { b64u, unb64u, jwkThumbprint } from '../../packages/verify/src/jose.js';
 import { assert, ApiError } from '../utils/errors.js';
 import { children, parseOne, expectTag, decodeOid, decodeSmallInt, integerHex, decodeTime, concat } from './der.js';
 import { verifyAppleAttestation, appleClientData, appleRootSpki } from './apple-attestation.js';
+import { verifyTpmAttestation, tpmQualifyingData, microsoftTpmRootSpki } from './tpm-attestation.js';
 
 /**
  * SHA-256 of the SubjectPublicKeyInfo of each Google hardware attestation root, from
@@ -245,14 +247,19 @@ export async function checkChallenge(challenge, secret, now = Date.now()) {
 
 /**
  * Verify the `attestation` member of an enrollment request for `jwk`. Returns the claim to put in
- * `device.attestation`. Formats: android-key and apple-appattest (TPM is still backlog).
+ * `device.attestation`. Formats: android-key, apple-appattest and tpm.
  */
 export async function verifyAttestation(attestation, jwk, env, { now = Date.now(), fetcher = fetch } = {}) {
   assert(attestation && typeof attestation === 'object' && !Array.isArray(attestation), 'invalid_attestation', 'attestation must be an object');
-  assert(attestation.format === 'android-key' || attestation.format === 'apple-appattest', 'invalid_attestation', 'attestation.format must be android-key or apple-appattest');
+  assert(['android-key', 'apple-appattest', 'tpm'].includes(attestation.format), 'invalid_attestation', 'attestation.format must be android-key, apple-appattest or tpm');
   await checkChallenge(attestation.challenge, env.TOKEN_SIGNING_KEY, now);
   // A local server (only) may trust one extra root per platform, so tests can attest with their own chain.
   const local = env.ENVIRONMENT === 'local';
+  if (attestation.format === 'tpm') {
+    for (const member of ['sig', 'cert_info', 'pub_area']) assert(typeof attestation[member] === 'string', 'invalid_attestation', `attestation.${member} is required for tpm`);
+    const roots = [microsoftTpmRootSpki(), ...(local && env.TPM_ATTESTATION_TEST_ROOT ? [unb64u(env.TPM_ATTESTATION_TEST_ROOT)] : [])];
+    return verifyTpmAttestation({ alg: attestation.alg, x5c: attestation.x5c, sig: attestation.sig, certInfo: attestation.cert_info, pubArea: attestation.pub_area, jwk, extraData: await tpmQualifyingData(attestation.challenge, await jwkThumbprint(jwk)), now, roots });
+  }
   if (attestation.format === 'apple-appattest') {
     for (const member of ['object', 'key_id', 'app_id']) assert(typeof attestation[member] === 'string', 'invalid_attestation', `attestation.${member} is required for apple-appattest`);
     const roots = [appleRootSpki(), ...(local && env.APPLE_ATTESTATION_TEST_ROOT ? [unb64u(env.APPLE_ATTESTATION_TEST_ROOT)] : [])];

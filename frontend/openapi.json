@@ -729,7 +729,7 @@
     "/api/v1/enrollments/attestation-challenge": {
       "post": {
         "operationId": "post_api_v1_enrollments_attestation_challenge",
-        "summary": "A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:\"android-key\", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256(\"<challenge>.<JWK thumbprint of the enrolled key>\") and add {format:\"apple-appattest\", challenge, app_id, key_id, object}. Free; stateless.",
+        "summary": "A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:\"android-key\", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256(\"<challenge>.<JWK thumbprint of the enrolled key>\") and add {format:\"apple-appattest\", challenge, app_id, key_id, object}. TPM 2.0 (Windows): TPM2_Certify the TPM-resident P-256 key with the AIK and qualifyingData SHA-256(\"<challenge>.<JWK thumbprint>\"), and add {format:\"tpm\", challenge, alg, x5c[], sig, cert_info, pub_area}. Free; stateless.",
         "x-access": "public",
         "security": [],
         "parameters": [

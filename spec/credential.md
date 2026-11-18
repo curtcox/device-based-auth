@@ -79,8 +79,9 @@ credential rotates to a new key.
 
 | Member | Meaning |
 |--------|---------|
-| `format` | `android-key` (Android Key Attestation) or `apple-appattest` (Apple App Attest). TPM is not supported yet. |
-| `security_level` | `tee`, `strongbox` or `secure_enclave`: where the key lives. Software keys are never attested. |
+| `format` | `android-key` (Android Key Attestation), `apple-appattest` (Apple App Attest) or `tpm` (TPM 2.0). |
+| `security_level` | `tee`, `strongbox`, `secure_enclave` or `tpm`: where the key lives. Software keys are never attested. |
+| `tpm_manufacturer` | `tpm` only: the TPM vendor id from the attestation key's certificate (e.g. `NTC`, `IFX`, `INTC`, `AMD`). |
 | `app_id` | `apple-appattest` only: the app (`TEAMID.bundle.id`) that Apple attested and that reported the key. |
 | `environment` | `apple-appattest` only: `production` (App Store, TestFlight, enterprise) or `development`. |
 | `verified_boot` | `verified`, `self_signed`, `unverified`, `failed` or `unknown` (Android root of trust), when reported. |
@@ -88,7 +89,7 @@ credential rotates to a new key.
 | `attestation_version` | The Keymaster/KeyMint attestation version. |
 | `verified_at` | NumericDate the issuer checked the evidence. |
 
-With an attestation, `key_protection` is set by the issuer (`android-keystore` or `secure-enclave`).
+With an attestation, `key_protection` is set by the issuer (`android-keystore`, `secure-enclave` or `tpm`).
 
 **Android.** The device asks `POST /api/v1/enrollments/attestation-challenge` for a challenge (a
 43-character string, valid 10 minutes), generates its P-256 signing key in the Android Keystore
@@ -132,6 +133,33 @@ The app's receipt (for Apple's fraud-metric service) is not used. What this prov
 genuine copy of `app_id` reported the key, so it is only as good as that app: the
 `secure_enclave` level counts for `require.attestation` only in grants that also name the app
 (`require.app_ids`, evaluation.md §3.6).
+
+**TPM 2.0.** The device creates its P-256 signing key inside the TPM (on Windows, the Platform
+Crypto Provider) and has the TPM's attestation identity key (AIK) certify it with `TPM2_Certify`,
+passing `qualifyingData = SHA-256("<challenge>.<JWK thumbprint of the key>")` (on Windows, the
+`NCryptCreateClaim` nonce with the "Windows AIK" as authority). It adds
+`attestation: { format: "tpm", challenge, alg, x5c, sig, cert_info, pub_area }`: `alg` is the
+COSE algorithm of the AIK's signature (`-257` RS256 or `-65535` RS1), `x5c` the AIK certificate
+then its CA certificates (base64 DER, root left out), and `sig`, `cert_info` (the `TPMS_ATTEST`)
+and `pub_area` (the key's `TPMT_PUBLIC`) base64. The issuer follows the WebAuthn `tpm`
+attestation format (§8.3) and accepts it only when:
+
+1. the chain has 1–5 certificates, each signed by the next and the last by the pinned Microsoft
+   TPM Root Certificate Authority 2014, none outside its validity period; Microsoft issues AIK
+   certificates only to TPMs whose endorsement certificate it has checked;
+2. the AIK certificate has extended key usage 2.23.133.8.3, is not a CA, and names the TPM
+   manufacturer in its subject alternative name;
+3. the AIK certificate's key signed `cert_info` (RS1 is accepted: the AIK is a restricted key, so
+   the TPM signs only structures it built itself, with at most 64 caller-chosen bytes);
+4. `cert_info` is a TPM-generated `TPM_ST_ATTEST_CERTIFY` whose `extraData` is the qualifying data
+   above, for a challenge the issuer made and has not expired, and whose certified name is the
+   name of `pub_area` (SHA-256, SHA-384 or SHA-512);
+5. `pub_area` is an ECC NIST P-256 key equal to the enrolled key, with `fixedTPM`, `fixedParent`,
+   `sensitiveDataOrigin` and `sign` set: generated in this TPM and unable to leave it.
+
+Revocation of Microsoft's AIK CAs is not checked. A TPM whose AIK has no certificate from
+Microsoft (most Linux machines) cannot attest yet: that needs endorsement-key credential
+activation against the manufacturers' roots.
 
 Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
 without attestation omits the member.
