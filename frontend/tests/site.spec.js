@@ -74,5 +74,5 @@ test('docs code taken from docs/samples matches the tested samples', async ({ pa
     const lines = source.split('\n').map(line => line.trimEnd());
     for (const line of text.split('\n').map(l => l.trimEnd()).filter(Boolean)) expect(lines, `${sample}: ${line}`).toContain(line);
   }
-  for (const id of ['concepts', 'format', 'browser', 'cli', 'verify', 'workers', 'authorize', 'oidc', 'mcp', 'revocation', 'api']) await expect(page.locator(`section#${id} h2`)).toBeVisible();
+  for (const id of ['concepts', 'format', 'browser', 'cli', 'android', 'verify', 'workers', 'authorize', 'oidc', 'mcp', 'revocation', 'api']) await expect(page.locator(`section#${id} h2`)).toBeVisible();
 });

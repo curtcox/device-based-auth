@@ -5,7 +5,7 @@
 // would open; this harness approves it as sample-owner (LocalDev auth, local mode only), so the
 // samples themselves contain no test hooks. Each sample must exit 0 and print what it promises.
 //
-// A sample whose toolchain is missing (python3 with cryptography + requests, go) is skipped,
+// A sample whose toolchain is missing (python3 with cryptography + requests, go, a JDK) is skipped,
 // unless DBA_SAMPLES_STRICT=1, when it fails.
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -43,6 +43,11 @@ const SAMPLES = [
     name: 'python_device.py', command: ['python3', 'docs/samples/python_device.py'],
     needs: () => has('python3', ['-c', 'import cryptography, requests']) || 'python3 with cryptography and requests',
     expect: [/^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m]
+  },
+  {
+    name: 'android', command: ['bash', 'docs/samples/android/run.sh'],
+    needs: () => has('javac', ['--version']) || 'a JDK (javac 17+)',
+    expect: [/^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m, /^Renewed: crd_\w+\.2$/m]
   },
   {
     name: 'go_verify', command: ['go', 'run', '.'], cwd: 'docs/samples/go_verify', credential: true,
