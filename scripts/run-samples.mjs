@@ -62,7 +62,7 @@ const SAMPLES = [
   {
     name: 'ios', command: ['bash', 'docs/samples/ios/run.sh'], platform: 'darwin',
     needs: () => has('swift', ['--version']) || 'Swift 5.9+ (Xcode 15+)',
-    expect: [/^Attestation challenge: [\w-]{43}$/m, /^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m, /^Renewed: crd_\w+\.2$/m]
+    expect: [/^DbaClient type-checks for iOS \(iPhoneOS[\d.]*\.sdk\)$/m, /^Attestation challenge: [\w-]{43}$/m, /^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m, /^Renewed: crd_\w+\.2$/m]
   },
   {
     name: 'tpm', command: ['bash', 'docs/samples/tpm/swtpm.sh'], env: () => ({ DBA_SAMPLE_TPM_CA: tpmCaDir }),

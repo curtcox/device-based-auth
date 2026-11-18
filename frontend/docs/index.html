@@ -22,7 +22,7 @@
 <li><a href="#browser">Quick start: browser SDK</a></li>
 <li><a href="#cli">Quick start: CLI</a></li>
 <li><a href="#android">Quick start: Android</a></li>
-<li><a href="#ios">iOS: Apple App Attest</a></li>
+<li><a href="#ios">Quick start: iOS and App Attest</a></li>
 <li><a href="#tpm">PCs: TPM key attestation</a></li>
 <li><a href="#verify">Verify requests on your server</a></li>
 <li><a href="#workers">Cloudflare Worker middleware</a></li>
@@ -192,11 +192,31 @@ Object result = client.call("POST", "https://hashbin.org/api/content", credentia
             System.out.flush();
         });
         String payload = new String(Base64.getUrlDecoder().decode(credential.split(&quot;\\.&quot;)[1]), java.nio.charset.StandardCharsets.UTF_8);</code></pre>
-<p class="small muted">Store the credential next to the key alias (it is not secret) and renew it at about two thirds of its lifetime with <code>client.call("POST", origin + "/api/v1/credentials/" + cid + "/renew", credential, DbaClient.map())</code>, as <code>Main.java</code> does. An iOS sample (Secure Enclave) is still to come; until then the same steps apply with <code>SecureEnclave.P256.Signing.PrivateKey</code>.</p>
+<p class="small muted">Store the credential next to the key alias (it is not secret) and renew it at about two thirds of its lifetime with <code>client.call("POST", origin + "/api/v1/credentials/" + cid + "/renew", credential, DbaClient.map())</code>, as <code>Main.java</code> does. For iPhone and iPad see <a href="#ios">iOS</a>.</p>
 </section>
 
 <section id="ios">
-<h2>iOS: Apple App Attest</h2>
+<h2>Quick start: iOS and Apple App Attest</h2>
+<p><a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/ios"><code>docs/samples/ios</code></a> is a Swift package (iOS 15+, Foundation, CryptoKit and DeviceCheck only) to copy into an app or depend on: <code>SecureEnclaveKeys</code> generates the P-256 signing key inside the Secure Enclave and keeps only its encrypted handle in the Keychain (this device only), <code>AppAttest</code> has App Attest vouch for it, and <code>DbaClient</code> sends the signed enrollment request, waits for approval and signs a DPoP proof for each call.</p>
+<pre class="code"><code>let key = try SecureEnclaveKeys.loadOrCreate(name: "dba-device")
+let client = DbaClient(origin: "https://devicebasedauth.org", key: key)
+let challenge = try await client.attestationChallenge()
+let attestation = try await AppAttest.attestation(for: key, challenge: challenge, appId: "ABCDE12345.org.example.wallet")
+let credential = try await client.enroll(audiences: ["hashbin.org"], grants: grants,
+    device: ["name": UIDevice.current.name, "kind": "phone", "key_protection": "secure-enclave"],
+    attestation: attestation) { url in UIApplication.shared.open(URL(string: url)!) }   // owner approves
+let result = try await client.call("POST", "https://hashbin.org/api/content", credential: credential, body: body)</code></pre>
+<p>CI builds the package on macOS, type-checks it for iOS, and runs the same <code>DbaClient</code> against a local server with a software key (<code>Sources/dba-sample/main.swift</code>; CI machines have no Secure Enclave):</p>
+<pre class="code" data-sample="ios/Sources/dba-sample/main.swift"><code>    var credential = try await client.enroll(
+        audiences: [&quot;hashbin.org&quot;],
+        grants: [[&quot;actions&quot;: [&quot;hashbin:content:write&quot;]]],
+        device: [&quot;name&quot;: &quot;iOS sample&quot;, &quot;kind&quot;: &quot;phone&quot;, &quot;key_protection&quot;: &quot;software&quot;]
+    ) { url in
+        print(&quot;Ask the account owner to approve this device:&quot;)
+        print(url)
+        fflush(stdout)
+    }</code></pre>
+<p>What the attestation proves:</p>
 <p>App Attest cannot vouch for an arbitrary key: Apple attests a key of its own and says which app, on a genuine iPhone or iPad, holds it. So an iOS app makes its DBA key in the Secure Enclave as usual and then has App Attest vouch for that key:</p>
 <ol>
 <li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>
