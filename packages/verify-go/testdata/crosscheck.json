@@ -1,0 +1,1028 @@
+{
+ "cases": [
+  {
+   "name": "multi unknown order",
+   "grants": [
+    {
+     "1": 0,
+     "2": 1,
+     "10": 1,
+     "zeta": 1,
+     "actions": [
+      "hashbin:*"
+     ],
+     "alpha": 1,
+     "when": {
+      "q": 1,
+      "tz": "UTC"
+     },
+     "limits": {
+      "x": 1
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "unknown_constraint:1",
+      "unknown_constraint:2",
+      "unknown_constraint:10",
+      "unknown_constraint:zeta",
+      "unknown_constraint:alpha",
+      "unknown_constraint:when.q",
+      "unknown_constraint:limits.x"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "array from",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": {
+      "tz": "UTC",
+      "windows": [
+       {
+        "from": [
+         "08:00"
+        ],
+        "to": "09:00"
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "outside_time_window"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "array from yesterday",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": {
+      "tz": "UTC",
+      "windows": [
+       {
+        "from": [
+         "08:00"
+        ],
+        "to": "23:00"
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "lowercase tz",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": {
+      "tz": "america/chicago",
+      "windows": [
+       {
+        "from": "08:00",
+        "to": "18:00"
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "offset tz",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": {
+      "tz": "+05:30",
+      "windows": [
+       {
+        "from": "08:00",
+        "to": "18:00"
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "outside_time_window"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "nested unknown uses",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "limits": {
+      "uses": {
+       "count": 1,
+       "per": "day",
+       "x": 1
+      }
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "null when",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": null
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "grant not object",
+   "grants": [
+    5,
+    "x",
+    null,
+    [
+     1
+    ]
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "unknown_constraint:grant"
+     ],
+     [
+      "unknown_constraint:grant"
+     ],
+     [
+      "unknown_constraint:grant"
+     ],
+     [
+      "unknown_constraint:grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "online required mix",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "online": true
+     }
+    },
+    {
+     "actions": [
+      "x:y"
+     ]
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "online_required"
+     ],
+     [
+      "action_not_granted"
+     ]
+    ],
+    "online_required": true,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "online required + other reason",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "online": true
+     },
+     "resources": [
+      "a"
+     ]
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "resource": "b"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "resource_not_granted"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "spend caveat",
+   "grants": [
+    {
+     "actions": [
+      "x:y"
+     ]
+    },
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "limits": {
+      "spend_usd_per_month": 2.5
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 1,
+    "reasons": [
+     [
+      "action_not_granted"
+     ],
+     []
+    ],
+    "online_required": false,
+    "caveats": {
+     "spend_usd_per_month": 2.5
+    }
+   }
+  },
+  {
+   "name": "v4 leading zeros",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "network",
+      "networks": [
+       "010.0.0.0/8"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "network": {
+      "ip": "10.1.2.3"
+     }
+    }
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "v4 mapped no cross",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "network",
+      "networks": [
+       "10.0.0.0/8"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "network": {
+      "ip": "::ffff:10.1.2.3"
+     }
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "network_not_allowed"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "mapped range",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "network",
+      "networks": [
+       "::ffff:10.0.0.0/104"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "network": {
+      "ip": "::ffff:10.1.2.3"
+     }
+    }
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "weird v4 suffix",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "network",
+      "networks": [
+       "::1ea:0/112"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "network": {
+      "ip": "::1234.1.2.3"
+     }
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "network_not_allowed"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "ipv6 zone",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "network",
+      "networks": [
+       "fe80::/10"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "network": {
+      "ip": "fe80::1%eth0"
+     }
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "network_not_allowed"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "prefix 0",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "network",
+      "networks": [
+       "0.0.0.0/0"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "network": {
+      "ip": "1.2.3.4"
+     }
+    }
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "bad prefix 33",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "network",
+      "networks": [
+       "1.2.3.4/33"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "network": {
+      "ip": "1.2.3.4"
+     }
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "device both stale",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "both",
+      "countries": [
+       "US"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "network": {
+      "country": "US"
+     },
+     "device": {
+      "t": 1
+     }
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "location_stale:device"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "device bad loc string",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "device",
+      "areas": [
+       {
+        "lat": 1,
+        "lon": 1,
+        "radius_m": 100
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "location": {
+     "device": "x"
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "location_stale:device"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "window overnight sunday wrap",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": {
+      "tz": "Asia/Tokyo",
+      "windows": [
+       {
+        "days": [
+         "sat"
+        ],
+        "from": "20:00",
+        "to": "04:00"
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "outside_time_window"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "days empty invalid",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": {
+      "tz": "UTC",
+      "windows": [
+       {
+        "days": [],
+        "from": "01:00",
+        "to": "02:00"
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "resource long",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "resources": [
+      "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+     ]
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "resource": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "resource emoji too long",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "resources": [
+      "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+     ]
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "to 24:00 from 23:00",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": {
+      "tz": "UTC",
+      "windows": [
+       {
+        "from": "23:00",
+        "to": "24:00"
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795042799,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "outside_time_window"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "not_before >= not_after",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "when": {
+      "not_before": 5,
+      "not_after": 5
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "where device with countries",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "where": {
+      "source": "device",
+      "countries": [
+       "US"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "fractional count",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "limits": {
+      "uses": {
+       "count": 1.5,
+       "per": "day"
+      }
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "step_up false online true",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "step_up": false,
+      "online": false
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "invalid grants",
+   "grants": "nope",
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grants"
+     ]
+    ],
+    "online_required": false
+   }
+  }
+ ],
+ "htus": [
+  [
+   "https://Example.COM:443/a/./b/../c?x#y",
+   "https://example.com/a/c"
+  ],
+  [
+   "http://h:80",
+   "http://h/"
+  ],
+  [
+   "http://h:8080/",
+   "http://h:8080/"
+  ],
+  [
+   "https://[2001:DB8:0::1]/p",
+   "https://[2001:db8::1]/p"
+  ],
+  [
+   "https://h/a%2fb",
+   "https://h/a%2fb"
+  ],
+  [
+   "https://h/a b",
+   "https://h/a%20b"
+  ]
+ ]
+}

@@ -46,6 +46,7 @@ func (o *Object) Get(key string) (any, bool) {
 func (o *Object) Has(key string) bool { _, ok := o.Get(key); return ok }
 
 // Set adds or replaces a member. Like JavaScript, replacing keeps the original position.
+// Go integers, []string and map[string]any values are stored as ParseJSON would produce them.
 func (o *Object) Set(key string, value any) {
 	if o.values == nil {
 		o.values = map[string]any{}
@@ -53,7 +54,7 @@ func (o *Object) Set(key string, value any) {
 	if _, ok := o.values[key]; !ok {
 		o.order = append(o.order, key)
 	}
-	o.values[key] = value
+	o.values[key] = normalizeGo(value)
 }
 
 // Len is the number of members.
@@ -382,7 +383,7 @@ func asObject(v any) (*Object, bool) {
 		sort.Strings(keys)
 		o := &Object{values: map[string]any{}}
 		for _, k := range keys {
-			o.Set(k, normalizeGo(t[k]))
+			o.Set(k, t[k])
 		}
 		return o, true
 	}

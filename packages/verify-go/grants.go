@@ -96,12 +96,78 @@ func loadZone(tz any) (*time.Location, bool) {
 	if loc, ok := zoneCache.Load(name); ok {
 		return loc.(*time.Location), true
 	}
-	loc, err := time.LoadLocation(name)
-	if err != nil {
+	loc := resolveZone(name)
+	if loc == nil {
 		return nil, false
 	}
 	zoneCache.Store(name, loc)
 	return loc, true
+}
+
+// offsetZone matches the UTC offsets Intl.DateTimeFormat accepts as time zones: ±HH, ±HHMM, ±HH:MM.
+var offsetZone = regexp.MustCompile(`^([+-])([01]\d|2[0-3])(?::?([0-5]\d))?$`)
+
+// resolveZone loads a zone the way Intl.DateTimeFormat accepts it. Intl matches IANA names
+// case-insensitively and accepts fixed offsets; time.LoadLocation does neither, so offsets are
+// built directly and a few capitalizations of each name segment are tried ("america/chicago",
+// "etc/gmt+5", "us/central"). Names with irregular capitals (e.g. "port-au-prince") still fail,
+// which denies the grant: never wider than the JavaScript.
+func resolveZone(name string) *time.Location {
+	if m := offsetZone.FindStringSubmatch(name); m != nil {
+		h, _ := strconv.Atoi(m[2])
+		mins, _ := strconv.Atoi(m[3])
+		offset := h*3600 + mins*60
+		if m[1] == "-" {
+			offset = -offset
+		}
+		return time.FixedZone(name, offset)
+	}
+	if strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
+		return nil
+	}
+	if loc, err := time.LoadLocation(name); err == nil {
+		return loc
+	}
+	candidates := []string{""}
+	for i, segment := range strings.Split(name, "/") {
+		var next []string
+		for _, prefix := range candidates {
+			if i > 0 {
+				prefix += "/"
+			}
+			next = append(next, prefix+titleCase(segment), prefix+strings.ToUpper(segment))
+		}
+		candidates = next
+		if len(candidates) > 16 {
+			return nil
+		}
+	}
+	for _, candidate := range candidates {
+		if candidate == name || candidate == "Local" {
+			continue
+		}
+		if loc, err := time.LoadLocation(candidate); err == nil {
+			return loc
+		}
+	}
+	return nil
+}
+
+// titleCase capitalizes each run of letters ("new_york" -> "New_York").
+func titleCase(s string) string {
+	b := []byte(strings.ToLower(s))
+	start := true
+	for i, c := range b {
+		if c >= 'a' && c <= 'z' {
+			if start {
+				b[i] = c - 'a' + 'A'
+			}
+			start = false
+		} else {
+			start = true
+		}
+	}
+	return string(b)
 }
 
 // ValidTimeZone reports whether the IANA zone is known (embedded tzdata is always available).
@@ -376,7 +442,7 @@ func validateWhen(when any, path string, errs *[]string) {
 	}
 }
 
-// nullishString is `value ?? ''` followed by the String() coercion RegExp.test applies.
+// nullishString is `value ?? ""` (an empty string) followed by the String() coercion RegExp.test applies.
 func nullishString(v any) string {
 	if v == nil {
 		return ""
