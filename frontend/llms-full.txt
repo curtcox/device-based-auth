@@ -52,7 +52,7 @@ Offline verification fetches `https://devicebasedauth.org/.well-known/jwks.json`
 - `POST /api/v1/credentials/{cid}/renew` (device credential + DPoP; `new_key_proof` to rotate keys), `POST /api/v1/token {audience}` (≤10-minute bearer token), `POST /api/v1/self/revoke`.
 - `POST /api/v1/authorize {credential, proof, request:{method,url}, audience, action, resource, context:{network}}` — online decision for an audience you own.
 - `POST /api/v1/inspect {credential, check?}` — decode, verify, check revocation, evaluate. Free.
-- `GET|POST /api/v1/audiences` — relying parties and their action catalogs; register your domain (prove it with `https://<domain>/.well-known/devicebasedauth.json` = `{"account":"<your account>"}`).
+- `GET|POST /api/v1/audiences` — relying parties and their action catalogs (`GET /api/v1/audiences/{name}/usage`: your audience's online decisions, sign-ins and spend per month); register your domain (prove it with `https://<domain>/.well-known/devicebasedauth.json` = `{"account":"<your account>"}`).
 - `GET /api/v1/account`, `GET /api/v1/transactions`, `GET /api/v1/audit`.
 - OpenID Connect: `/.well-known/openid-configuration` (authorization code + PKCE S256; client_id = audience name).
 
@@ -106,6 +106,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `POST /api/v1/audiences` (audiences:write): Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.
 - `GET /api/v1/audiences/{name}` (public): Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.
 - `PATCH /api/v1/audiences/{name}` (audiences:write): Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.
+- `GET /api/v1/audiences/{name}/usage` (audiences:read): Online decisions, sign-ins and spend per month for an audience you own (this month and up to 11 before it).
 - `GET /api/v1/keys` (session): Account API keys (dbak_…). The secret is shown once.
 - `POST /api/v1/keys` (session): Account API keys (dbak_…). The secret is shown once.
 - `DELETE /api/v1/keys/{id}` (session): Account API keys (dbak_…). The secret is shown once.

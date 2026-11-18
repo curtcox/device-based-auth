@@ -4,7 +4,7 @@ import { separateVisitors, signIn, uniqueName, usd } from './helpers.js';
 
 separateVisitors();
 
-const PAGES = ['/', '/app.html', '/approve.html', '/authorize.html', '/pricing.html', '/docs/', '/tools/', '/tools/inspector.html', '/tools/playground.html', '/tools/builder.html', '/tools/signer.html', '/terms.html', '/privacy.html', '/sitemap.html'];
+const PAGES = ['/', '/app.html', '/approve.html', '/authorize.html', '/pricing.html', '/docs/', '/tools/', '/tools/inspector.html', '/tools/playground.html', '/tools/builder.html', '/tools/signer.html', '/tools/explorer.html', '/terms.html', '/privacy.html', '/sitemap.html'];
 
 test('serves every page with security headers', async ({ request }) => {
   for (const path of PAGES) {

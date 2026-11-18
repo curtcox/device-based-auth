@@ -52,7 +52,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | L3 | Issuer keys, JWKS, `@devicebasedauth/verify`, inspector + playground | code | ✅ | Plus grant builder and request signer |
 | L4 | Enrollment (browser SDK, CLI, API), credential registry, dashboard | code | ✅ | Browser enrollment tested end to end in Playwright |
 | L5 | Revocation, status lists on R2, renewal, rotation, delegation limits | code | ✅ | Revoking a credential revokes what it delegated |
-| L6 | Online authorize, usage counters, step-up, audience registry | code | ✅ | |
+| L6 | Online authorize, usage counters, step-up, audience registry | code | ✅ | Audience console shows online decisions, sign-ins and spend per month (`GET /api/v1/audiences/{name}/usage`) |
 | L7 | Docs with CI-executed samples, OpenAPI, CLI, llms.txt, MCP | code | ✅ | Docs code blocks marked data-sample are checked against the tested samples; `/llms-full.txt` generated from llms.txt, the route table, spec and pricing (drift-tested) |
 | L8 | OIDC provider; DBA dashboard signs in with DBA credentials | code | ✅ | Consent page and "use this browser as a device" tested in Playwright |
 | L9 | Cloudflare zone, R2 bucket + `status.` custom domain, Clerk app, Stripe products, secrets, `DBA_DEPLOY_ENABLED` | ops | ⬜ | [docs/ops/deployment.md](docs/ops/deployment.md) |

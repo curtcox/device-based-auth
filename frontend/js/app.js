@@ -520,10 +520,22 @@ async function myAudiences(all) {
   return details.filter(a => a && a.owner === accountInfo.account);
 }
 
+/** Online decisions, sign-ins and their cost per month (GET /api/v1/audiences/:name/usage). */
+function audienceUsage(usage) {
+  if (!usage) return h('p', { class: 'muted small' }, 'Usage could not be loaded.');
+  const months = usage.items.filter((m, i) => i === 0 || m.decisions || m.logins);
+  return [
+    h('h4', {}, 'Verification and spend'),
+    table(['Month', 'Online decisions', 'Sign-ins', 'Spend'], months.map(m => [m.period, num(m.decisions), num(m.logins), usd(m.spent_microdollars)]), { class: 'audience-usage' }),
+    h('p', { class: 'muted small' }, `Online decisions cost ${usd(config.prices.decision)} each and sign-ins ${usd(config.prices.login)}, paid by you as the site's owner. Offline verification is free and never reported here.`)
+  ];
+}
+
 async function audiences() {
   const all = (await api('/api/v1/audiences', { auth: false })).items;
   const mine = await myAudiences(all);
   accountInfo ||= await api('/api/v1/account');
+  const usage = await Promise.all(mine.map(a => api(`/api/v1/audiences/${enc(a.name)}/usage`).catch(() => null)));
   const form = h('form', { class: 'stack', id: 'audience-form' },
     h('div', { class: 'row' },
       h('label', {}, 'Domain name', h('input', { name: 'name', required: true, placeholder: 'example.com', autocomplete: 'off' })),
@@ -549,9 +561,10 @@ async function audiences() {
     h('h1', {}, 'Audiences'),
     h('p', { class: 'muted' }, 'An audience is a site or API that accepts devicebasedauth.org credentials. It owns an action namespace and publishes a catalog of actions that grants can name; its OpenID Connect client id is its domain name.'),
     h('h2', {}, 'Yours'),
-    mine.length ? mine.map(a => h('div', { class: 'panel' }, h('h3', {}, a.name, ' ', h('span', { class: 'muted small' }, `${a.namespace}:*`)), h('p', {}, a.description || ''),
+    mine.length ? mine.map((a, i) => h('div', { class: 'panel', dataset: { audience: a.name } }, h('h3', {}, a.name, ' ', h('span', { class: 'muted small' }, `${a.namespace}:*`)), h('p', {}, a.description || ''),
       table(['Action', 'Allows'], (a.catalog || []).map(c => [h('code', {}, c.action), c.description])),
-      a.redirect_uris?.length ? h('p', { class: 'small' }, 'Redirect URIs: ', a.redirect_uris.join(', ')) : null)) : h('p', { class: 'muted' }, 'You have not registered an audience.'),
+      a.redirect_uris?.length ? h('p', { class: 'small' }, 'Redirect URIs: ', a.redirect_uris.join(', ')) : null,
+      audienceUsage(usage[i]))) : h('p', { class: 'muted' }, 'You have not registered an audience.'),
     h('h2', {}, 'Register an audience'),
     notice('info', h('p', {}, h('strong', {}, 'Prove you control the domain. '), 'Before registering, publish this JSON at ', h('code', {}, 'https://<your domain>/.well-known/devicebasedauth.json'), ':'),
       h('pre', { class: 'code' }, JSON.stringify({ account: accountInfo.account })),

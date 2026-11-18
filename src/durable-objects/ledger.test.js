@@ -50,3 +50,14 @@ it('refuses to allocate past the end of a status-list shard', async () => {
   expect(await shard.allocate(3)).toEqual({ shard: 3, idx: SHARD_SIZE - 1 });
   await expect(shard.allocate(3)).rejects.toMatchObject({ code: 'shard_full' });
 });
+
+it('counts charges per audience in the month summary and keeps them at month rollover', async () => {
+  const storage = new MemoryStorage();
+  await storage.transaction(tx => deposit(tx, { id: 'd', amount: 1000 }, day('2026-10-30T00:00:00Z')));
+  await storage.transaction(tx => charge(tx, { kind: 'decision', amount: 10, aggregate: true, detail: { audience: 'a.example' } }, day('2026-10-30T01:00:00Z')));
+  await storage.transaction(tx => charge(tx, { kind: 'login', amount: 10, aggregate: true, detail: { audience: 'a.example' } }, day('2026-10-31T01:00:00Z')));
+  await storage.transaction(tx => charge(tx, { kind: 'read', amount: 5, aggregate: true }, day('2026-10-31T02:00:00Z')));
+  await storage.transaction(tx => charge(tx, { kind: 'decision', amount: 10, aggregate: true, detail: { audience: 'a.example' } }, day('2026-11-01T01:00:00Z')));
+  expect((await storage.get('month:2026-10')).by_audience).toEqual({ 'a.example': { counts: { decision: 1, login: 1 }, spent_microdollars: 20 } });
+  expect((await storage.get('balance')).month.by_audience).toEqual({ 'a.example': { counts: { decision: 1 }, spent_microdollars: 10 } });
+});

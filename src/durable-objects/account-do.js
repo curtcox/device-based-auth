@@ -57,6 +57,23 @@ export class AccountDO {
     });
   }
 
+  /**
+   * One audience's online decisions, sign-ins and spend per month, newest first (this month plus
+   * up to `months - 1` earlier ones). The caller checks that the account owns the audience.
+   */
+  async op_audience_usage({ audience, months = 12 }, now) {
+    return this.tx(async tx => {
+      const state = await readBalance(tx, now);
+      const older = Math.min(months, 24) - 1;
+      const earlier = older > 0 ? [...(await tx.list({ prefix: 'month:', reverse: true, limit: older })).values()] : [];
+      const items = [state.month, ...earlier].map(m => {
+        const usage = m.by_audience?.[audience] || { counts: {}, spent_microdollars: 0 };
+        return { period: m.period, decisions: usage.counts.decision || 0, logins: usage.counts.login || 0, spent_microdollars: usage.spent_microdollars };
+      });
+      return { audience, items };
+    });
+  }
+
   async op_deposit({ id, amount, kind }, now) { return this.tx(tx => deposit(tx, { id, amount, kind }, now)); }
 
   async op_charge({ id, kind, amount, aggregate, detail }, now) { return this.tx(tx => charge(tx, { id, kind, amount, aggregate, detail }, now)); }

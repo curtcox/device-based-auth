@@ -75,7 +75,7 @@ export async function oidcToken(request, env) {
   if (code.client_id !== params.client_id || code.redirect_uri !== params.redirect_uri) return oauthError('invalid_grant', 'client_id or redirect_uri does not match');
   if (typeof params.code_verifier !== 'string' || await sha256b64u(params.code_verifier) !== code.code_challenge) return oauthError('invalid_grant', 'PKCE verification failed');
   const audience = await rpc(env.REGISTRY, 'global', 'get', { name: code.client_id });
-  try { await rpc(env.ACCOUNTS, audience.owner, 'charge', { kind: 'login', amount: price('login'), aggregate: true, detail: { client: code.client_id } }); }
+  try { await rpc(env.ACCOUNTS, audience.owner, 'charge', { kind: 'login', amount: price('login'), aggregate: true, detail: { audience: code.client_id } }); }
   catch (error) { if (error instanceof ApiError && error.status === 402) return oauthError('temporarily_unavailable', 'The site\'s devicebasedauth.org balance is empty', 503); throw error; }
   const signer = await activeSigner(env); const now = Math.floor(Date.now() / 1000);
   const identity = { acct: codeData.account, ...(code.dev ? { dev: code.dev, cid: code.cid, device_name: code.device_name } : {}) };

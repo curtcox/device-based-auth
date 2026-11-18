@@ -48,6 +48,8 @@ test('devices, API keys, audiences and the panic button', async ({ page, request
   await page.getByRole('button', { name: /^Register for/ }).click();
   await expect(page.locator('#flash')).toContainText(`Registered ${owner}.localhost`);
   await expect(page.locator('#view')).toContainText('Read notes');
+  await expect(page.locator('.audience-usage')).toContainText('Online decisions');
+  await expect(page.locator('.audience-usage tbody tr')).toHaveCount(1);
 
   await page.getByRole('link', { name: 'Revoke everything' }).click();
   const button = page.locator('#panic-button');

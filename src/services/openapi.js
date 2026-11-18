@@ -19,6 +19,7 @@ const SUMMARIES = {
   'revoke-self': 'A device revokes the credential it presents.', token: 'Exchange the presented device credential for a ≤10-minute bearer access token for one audience. Charges the token price.',
   authorize: 'Online authorization decision for an audience you own: revocation, usage limits, step-up, decision log. Charges the decision price.',
   'step-ups': 'Pending step-up approval requests.', 'step-up-decide': 'Approve or deny a step-up request.', audiences: 'Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.',
+  'audience-usage': 'Online decisions, sign-ins and spend per month for an audience you own (this month and up to 11 before it).',
   keys: 'Account API keys (dbak_…). The secret is shown once.', checkout: 'Start a Stripe Checkout for prepaid credit. ?dry_run=1 shows the card fee.', 'dev-deposit': 'Local development only: add credit.',
   'oidc-authorize-page': 'OpenID Connect authorization endpoint (redirects to the consent page).', 'oidc-authorize': 'Consent page submission.', 'oidc-token': 'OpenID Connect token endpoint (authorization_code + PKCE S256).',
   'oidc-userinfo': 'OpenID Connect userinfo.', mcp: 'Model Context Protocol (Streamable HTTP, JSON-RPC).', 'clerk-webhook': 'Clerk webhook (signed).', 'stripe-webhook': 'Stripe webhook (signed).'

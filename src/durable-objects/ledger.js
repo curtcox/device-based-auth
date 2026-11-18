@@ -45,6 +45,14 @@ export async function charge(tx, { id, kind, amount, aggregate = false, detail }
   state.month.spent_microdollars += amount;
   state.month.by_kind[kind] = (state.month.by_kind[kind] || 0) + amount;
   state.month.counts[kind] = (state.month.counts[kind] || 0) + 1;
+  // Per-audience counts for the audience console: online decisions and sign-ins are billed to the
+  // audience's owner, who wants to see them by site. Kept in the month row already being written,
+  // so it costs no extra storage operation.
+  if (typeof detail?.audience === 'string') {
+    const usage = (state.month.by_audience ||= {})[detail.audience] ||= { counts: {}, spent_microdollars: 0 };
+    usage.counts[kind] = (usage.counts[kind] || 0) + 1;
+    usage.spent_microdollars += amount;
+  }
   if (aggregate) {
     const agg = state.day.aggregates[kind] ||= { count: 0, amount: 0 };
     agg.count += 1; agg.amount += amount;

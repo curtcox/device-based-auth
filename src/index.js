@@ -6,7 +6,7 @@ import { keys } from './api/keys.js';
 import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment } from './api/enrollments.js';
 import { createCredential, listCredentials, getCredential, credentialDecisions, revoke, revokeSelf, renew, token, whoami } from './api/credentials.js';
 import { authorize } from './api/authorize.js';
-import { audiences } from './api/audiences.js';
+import { audiences, audienceUsage } from './api/audiences.js';
 import { statusList, republishStatusLists } from './api/status.js';
 import { inspect } from './api/inspect.js';
 import { oidcConfiguration, oidcAuthorize, oidcToken, oidcUserinfo } from './api/oidc.js';
@@ -61,6 +61,7 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/step-ups/:id/deny`, access: SESSION, handler: 'step-up-decide' },
   { method: 'GET', path: `${V1}/audiences`, access: PUBLIC, handler: 'audiences' },
   { method: 'GET', path: `${V1}/audiences/:name`, access: PUBLIC, handler: 'audiences' },
+  { method: 'GET', path: `${V1}/audiences/:name/usage`, access: 'audiences:read', handler: 'audience-usage' },
   { method: 'POST', path: `${V1}/audiences`, access: 'audiences:write', handler: 'audiences' },
   { method: 'PATCH', path: `${V1}/audiences/:name`, access: 'audiences:write', handler: 'audiences' },
   { method: 'GET', path: `${V1}/keys`, access: SESSION, handler: 'keys' },
@@ -131,6 +132,7 @@ async function handle(route, request, env, auth) {
     case 'step-ups': return rpc(env.ACCOUNTS, auth.account, 'list-step-ups');
     case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve') });
     case 'audiences': return audiences(route, request, env, auth);
+    case 'audience-usage': return audienceUsage(route, request, env, auth);
     case 'keys': return keys(route, request, env, auth);
     case 'checkout': return checkout(request, env, auth, dryRun);
     case 'dev-deposit': {

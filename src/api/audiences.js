@@ -43,6 +43,13 @@ async function verifyDomain(env, name, account) {
   return true;
 }
 
+/** Online decisions, sign-ins and spend per month for an audience the caller owns. */
+export async function audienceUsage(route, request, env, auth) {
+  const current = await rpc(env.REGISTRY, 'global', 'get', { name: route.params.name });
+  assert(current.owner === auth.account, 'forbidden', 'You do not own this audience', 403);
+  return rpc(env.ACCOUNTS, auth.account, 'audience-usage', { audience: current.name });
+}
+
 export async function audiences(route, request, env, auth) {
   if (request.method === 'GET' && route.params.name) return rpc(env.REGISTRY, 'global', 'get', { name: route.params.name });
   if (request.method === 'GET') {
