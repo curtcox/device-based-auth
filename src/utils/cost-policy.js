@@ -38,8 +38,11 @@ export const OPERATIONS = Object.freeze({
   // the first of a kind on an account each day flushes yesterday's aggregate as a ledger row,
   // which is kept for good (a few bytes; the monthly summary row is shared by all charges).
   // Rate limit, charge on the audience's balance row, registry (normally cached), issuer check
-  // with usage counter + decision row + its pruning delete; decision rows are kept 90 days.
-  decision: { workerRequests: 1, doRequests: 4, rowWrites: 5, cpuMs: 5, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
+  // with decision row + its pruning delete (decision rows are kept 90 days), plus, worst case,
+  // two more rows: a usage counter row and its pruning delete (one decision per usage window),
+  // or a new step-up request and its later delete (an approval's use deletes the request it
+  // answers). A new step-up request also pushes a notice to up to 5 browsers (10 ms).
+  decision: { workerRequests: 1, doRequests: 4, rowWrites: 6, cpuMs: 15, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
   // Rate limit, charge (aggregated on the balance row), the read itself.
   read: { workerRequests: 1, doRequests: 3, rowWrites: 2, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 },
   // Rate limit, credential status (auth), registry, charge. An X.509 certificate (B3) costs the

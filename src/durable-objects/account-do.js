@@ -612,7 +612,9 @@ export class AccountDO {
   async op_authorize({ cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country }, now) {
     const nowSeconds = Math.floor(now / 1000);
     for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
-    return this.tx(async tx => {
+    let asked = null;
+    const decision = await this.tx(async tx => {
+      asked = null;
       const cred = await tx.get(`cred:${cid}`);
       let decision;
       if (!cred) decision = { allow: false, code: 'unknown_credential', reasons: ['unknown_credential'] };
@@ -639,16 +641,26 @@ export class AccountDO {
           if (candidate.step_up) {
             const approval = await findApproval(tx, { cid, action, resource, audience }, now);
             if (!approval) { stepUpNeeded ||= candidate; reasons.push('step_up_required'); continue; }
-            approval.used_at = now; await tx.put(`stepup:${approval.id}`, approval);
+            // Spent: deleting it is the same single write as marking it used, and leaves the
+            // pruning pass nothing to delete later.
+            await tx.delete(`stepup:${approval.id}`);
           }
           if (usage) await tx.put(usage.key, usage.used + 1);
           chosen = candidate; break;
         }
         if (chosen) decision = { allow: true, code: 'ok', grant_index: chosen.index, reasons: [] };
         else if (stepUpNeeded) {
-          const id = randomId('stp', 12);
-          await tx.put(`stepup:${id}`, { id, cid, device_id: cred.device_id, device_name: cred.device?.name, action, resource: resource ?? null, audience, requested_at: now, expires_at: now + STEP_UP_TTL_MS });
-          decision = { allow: false, code: 'step_up_required', reasons, step_up: { id, expires_in: STEP_UP_TTL_MS / 1000 } };
+          // Asking again while a request is still waiting reuses it: one request (and one notice)
+          // per thing to approve, however often the site retries. A denial stands until the
+          // request would have expired.
+          let pending = await findPending(tx, { cid, action, resource, audience }, now);
+          if (pending?.denied_at) decision = { allow: false, code: 'step_up_denied', reasons: reasons.map(r => r === 'step_up_required' ? 'step_up_denied' : r) };
+          else if (!pending) {
+            pending = { id: randomId('stp', 12), cid, device_id: cred.device_id, device_name: cred.device?.name, action, resource: resource ?? null, audience, requested_at: now, expires_at: now + STEP_UP_TTL_MS };
+            await tx.put(`stepup:${pending.id}`, pending);
+            asked = pending;
+          }
+          if (!decision) decision = { allow: false, code: 'step_up_required', reasons, step_up: { id: pending.id, expires_in: Math.max(1, Math.ceil((pending.expires_at - now) / 1000)) } };
         } else decision = { allow: false, code: candidates.length ? 'forbidden' : 'forbidden', reasons: reasons.length ? reasons : ['no_grant_matched'] };
       }
       if (cred) await tx.put(`decision:${cid}:${pad(now)}:${randomId('d', 6)}`, { at: now, audience, action, resource: resource ?? null, country: country ?? null, allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, caller, jti });
@@ -656,6 +668,8 @@ export class AccountDO {
       if (!alarm) await tx.setAlarm(now + 86400000);
       return decision;
     });
+    if (asked) this.notify({ title: 'Approval needed', body: `${noticeText(asked.device_name) || 'A device'} asks to ${noticeText(asked.action, 120)}${asked.resource ? ` on ${noticeText(asked.resource, 120)}` : ''} at ${noticeText(asked.audience)}. Approve or deny within ${STEP_UP_TTL_MS / 60000} minutes.`, path: '#approvals', tag: `stepup-${asked.id}` }, now);
+    return decision;
   }
 
   async op_decisions({ cid, limit = PAGE }) {
@@ -665,13 +679,13 @@ export class AccountDO {
 
   async op_list_step_ups(_args, now) {
     const rows = await this.storage.list({ prefix: 'stepup:' });
-    return { items: [...rows.values()].filter(s => !s.used_at && !s.denied_at && (s.approved_at ? s.approved_until > now : s.expires_at > now)) };
+    return { items: [...rows.values()].filter(s => !s.denied_at && (s.approved_at ? s.approved_until > now : s.expires_at > now)) };
   }
 
   async op_decide_step_up({ id, approve }, now) {
     return this.tx(async tx => {
       const item = await tx.get(`stepup:${id}`);
-      assert(item && !item.used_at && item.expires_at > now, 'not_found', 'Approval request not found or expired', 404);
+      assert(item && !item.approved_at && !item.denied_at && item.expires_at > now, 'not_found', 'Approval request not found or expired', 404);
       if (approve) { item.approved_at = now; item.approved_until = now + STEP_UP_APPROVED_TTL_MS; } else item.denied_at = now;
       await tx.put(`stepup:${id}`, item);
       await this.audit(tx, now, approve ? 'step_up.approved' : 'step_up.denied', { id, cid: item.cid, action: item.action });
@@ -822,7 +836,15 @@ export function credentialState(cred, now = Date.now()) {
 
 async function findApproval(tx, { cid, action, resource, audience }, now) {
   for (const item of (await tx.list({ prefix: 'stepup:' })).values()) {
-    if (item.cid === cid && item.action === action && (item.resource ?? null) === (resource ?? null) && item.audience === audience && item.approved_at && !item.used_at && item.approved_until > now) return item;
+    if (item.cid === cid && item.action === action && (item.resource ?? null) === (resource ?? null) && item.audience === audience && item.approved_at && item.approved_until > now) return item;
+  }
+  return null;
+}
+
+/** An unexpired step-up request for the same thing that was not approved: waiting, or denied. */
+async function findPending(tx, { cid, action, resource, audience }, now) {
+  for (const item of (await tx.list({ prefix: 'stepup:' })).values()) {
+    if (item.cid === cid && item.action === action && (item.resource ?? null) === (resource ?? null) && item.audience === audience && !item.approved_at && item.expires_at > now) return item;
   }
   return null;
 }

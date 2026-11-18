@@ -381,7 +381,7 @@ only. Prices and the cost derivation are in
 |-----------|-------|----------|
 | Issue or rotate a credential (includes prepaid revocation, 13 months of record storage and their later deletion) | 85 µ$ | Issuing account |
 | Renew (same key) | 25 µ$ | Issuing account |
-| Online authorization decision | 12 µ$ ($12 per million) | Audience account |
+| Online authorization decision | 14 µ$ ($14 per million; 12 approved, 14 pending D11) | Audience account |
 | OpenID Connect sign-in | 12 µ$ | Audience account |
 | Metered API reads (API keys, non-dashboard devices), token exchange, X.509 certificate | 5 µ$ | Caller / issuing account |
 | Register or change an audience | 100 µ$ | Audience account |

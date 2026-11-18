@@ -247,6 +247,24 @@ describe('online authorization', () => {
     expect((await ask('hashbin:content:delete')).body.code).toBe('step_up_required');
   });
 
+  it('asks once per thing to approve, deletes an approval when spent, and lets a denial stand', async () => {
+    const { ask } = await setup([{ actions: ['hashbin:content:delete', 'hashbin:content:write'], require: { step_up: true } }]);
+    const first = (await ask('hashbin:content:delete')).body;
+    // Retrying while the request waits reuses it (no new row, no new notice).
+    expect((await ask('hashbin:content:delete')).body.step_up.id).toBe(first.step_up.id);
+    const other = (await ask('hashbin:content:write')).body;
+    expect(other.step_up.id).not.toBe(first.step_up.id);
+    expect((await call(env, 'GET', '/api/v1/step-ups', { auth: 'alice' })).body.items).toHaveLength(2);
+    await call(env, 'POST', `/api/v1/step-ups/${first.step_up.id}/approve`, { auth: 'alice', body: {} });
+    expect((await call(env, 'POST', `/api/v1/step-ups/${first.step_up.id}/deny`, { auth: 'alice', body: {} })).status).toBe(404);
+    expect((await ask('hashbin:content:delete')).body.allow).toBe(true);
+    const account = [...env.ACCOUNTS.objects.values()].find(o => o.storage.rows.has(`stepup:${other.step_up.id}`));
+    expect(account.storage.rows.has(`stepup:${first.step_up.id}`)).toBe(false);
+    await call(env, 'POST', `/api/v1/step-ups/${other.step_up.id}/deny`, { auth: 'alice', body: {} });
+    expect((await ask('hashbin:content:write')).body).toMatchObject({ allow: false, code: 'step_up_denied', reasons: ['step_up_denied'] });
+    expect((await call(env, 'GET', '/api/v1/step-ups', { auth: 'alice' })).body.items).toHaveLength(0);
+  });
+
   it('only lets an audience owner ask, and needs funds', async () => {
     const { credential } = await setup([{ actions: ['hashbin:content:write'] }]);
     const mallory = await call(env, 'POST', '/api/v1/keys', { auth: 'mallory', body: { name: 'k', scopes: ['authorize'] } });

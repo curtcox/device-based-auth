@@ -13,7 +13,7 @@ MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorizati
 ## Key facts
 
 - Money is integer micro-dollars (µ$; $1 = 1,000,000 µ$). Every JSON response includes `cost_microdollars`. `GET /api/v1/quote?op=<op>` prices an operation before you do it; `?dry_run=1` on a billable call quotes it (and, with `account:read`, says whether the balance covers it) without doing it. Billable responses carry `balance_microdollars` / `X-DBA-Balance-Microdollars` for callers with `account:read`.
-- Prices (µ$): issue 85, renew 25, online decision 12, metered API read 5, token exchange 5, OIDC login 12 (paid by the site), audience registration/change 100. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
+- Prices (µ$): issue 85, renew 25, online decision 14, metered API read 5, token exchange 5, OIDC login 12 (paid by the site), audience registration/change 100. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
 - Errors: `{ "error": "...", "code": "..." }` with HTTP status; 402 = insufficient balance.
 - Private keys never leave the device. The service only ever sees public keys.
 
@@ -601,7 +601,7 @@ handler adds a Durable Object call or a storage write.
 | Issue a credential (enrollment approval or API) | Issuing account | 3 Worker req, 20 DO req, 26 rows, 81 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries, an enrollment token's check and use counter, and the **deletion of its records** after 13 months | 52 | 85 | **85** |
 | Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 52 | 85 | **85** |
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 10 ms, 1 KB × 13 months | 12 | 20 | **25** |
-| Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 5 rows (balance, usage counter, decision row and its later deletion, daily aggregate row), 0.5 KB × 3 months | 7 | 12 | **12** |
+| Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 6 rows (balance, daily aggregate row, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 8 | 14 | **14** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 3 DO req, 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
 | Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
@@ -611,7 +611,11 @@ handler adds a Durable Object call or a storage write.
 Decision, login, read, token and issue prices sit exactly at their floors (the thinnest margin the
 rule allows). The owner approved these prices on 2026-11-18 (D6). That day issue went from 75 to
 85 µ$, when record compaction (below) added the deletes it prepays, and decision and login from 10
-to 12 µ$, when counting the daily aggregate ledger row (below) raised their floors.
+to 12 µ$, when counting the daily aggregate ledger row (below) raised their floors. Later that day
+an audit of online decisions found two more rows in the worst case (a usage window holding a
+single decision is written and later deleted; so is a step-up request), so decision went to its
+new floor of 14 µ$, pending the owner's approval (D11). Step-up requests are now reused while
+they wait and deleted when their approval is used, which keeps it at two rows rather than three.
 
 ### Why records are deleted after 13 months
 
@@ -679,20 +683,20 @@ The webhook test button (`POST /api/v1/audiences/{name}/webhook-test`) is charge
 | Developer: 5 devices, 30-day credentials renewed monthly | 5 × 25 µ$ = **$0.000125** |
 | Small team: 200 devices, 7-day credentials | 200 × 4.3 × 25 µ$ ≈ **$0.02** |
 | Agent fleet: 1,000 agents, 1-hour credentials, 24/7 | 1,000 × 720 × 25 µ$ = **$18.00** |
-| Site doing 10 M online decisions | 10 M × 12 µ$ = **$120** |
+| Site doing 10 M online decisions | 10 M × 14 µ$ = **$140** |
 | Script polling the API 1 M times | 1 M × 5 µ$ = **$5** |
 
-A $5 deposit covers about 58,000 issuances, 200,000 renewals, or about 416,000 online decisions.
+A $5 deposit covers about 58,000 issuances, 200,000 renewals, or about 357,000 online decisions.
 
 ## Margin and break-even
 
-Margin per operation (`price × 0.92 − cost`): issue ≈ 26 µ$, renew ≈ 11 µ$, decision ≈ 4.7 µ$,
+Margin per operation (`price × 0.92 − cost`): issue ≈ 26 µ$, renew ≈ 11 µ$, decision ≈ 5.4 µ$,
 read ≈ 1.8 µ$, token ≈ 1.6 µ$, login ≈ 4.2 µ$. Profit = Σ margins − fixed costs, so it rises with every
 operation (master plan principle 6).
 
 Fixed costs specific to devicebasedauth.org, assuming the shared Cloudflare account and LLC (as for
 cronly): the domain (~$11/year ≈ $0.92/month) plus Clerk if it ever exceeds 50,000 monthly retained
-users. Break-even on $1/month is roughly 38,000 issuances, 90,000 renewals, or 210,000 online
+users. Break-even on $1/month is roughly 38,000 issuances, 90,000 renewals, or 186,000 online
 decisions per month.
 
 ## Free paths and the cost brake

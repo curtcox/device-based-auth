@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { testEnv, call, newDevice, enroll, settle } from '../test-utils/env.js';
 import { pushBrowser, pushService } from '../test-utils/push.js';
-import { inspectCredential, signJws } from '../packages/verify/src/index.js';
+import { inspectCredential, signJws, createProof } from '../packages/verify/src/index.js';
 import { NOTICE_INTERVAL_MS, MAX_SUBSCRIPTIONS } from './services/push.js';
 
 // Master plan §10: account takeover means control of every device, so the owner's browsers are
@@ -108,6 +108,20 @@ describe('security notices', () => {
     expect((await call(env, 'POST', path, { headers: await next.headers('POST', path, renewed), body: {} })).status).toBe(200);
     await settle(env);
     expect(service.sent.length).toBe(before);
+  });
+
+  it('tells the owner at once when a device asks for a step-up approval, once per request', async () => {
+    await subscribe();
+    await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'operator', body: { amount_microdollars: 1_000_000 } });
+    const key = await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'verifier', scopes: ['authorize'] } });
+    const device = await newDevice();
+    const credential = (await enroll(env, 'alice', device, { name: 'Deploy bot', grants: [{ actions: ['hashbin:content:delete'], require: { step_up: true } }] })).approve.body.credential;
+    const url = 'https://hashbin.org/api/content';
+    const ask = async () => call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${key.body.secret}`, body: { credential, proof: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url, credential }), request: { method: 'POST', url }, audience: 'hashbin.org', action: 'hashbin:content:delete', resource: 'abc' } });
+    const first = await ask();
+    await ask();
+    const asks = (await notices()).filter(n => n.title === 'Approval needed');
+    expect(asks).toEqual([{ title: 'Approval needed', body: 'Deploy bot asks to hashbin:content:delete on abc at hashbin.org. Approve or deny within 10 minutes.', url: 'http://localhost:8787/app.html#approvals', tag: `stepup-${first.body.step_up.id}` }]);
   });
 
   it('drops a browser whose push service says it is gone', async () => {
