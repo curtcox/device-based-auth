@@ -614,7 +614,7 @@ rule allows). The owner approved these prices on 2026-11-18 (D6). That day issue
 to 12 µ$, when counting the daily aggregate ledger row (below) raised their floors. Later that day
 an audit of online decisions found two more rows in the worst case (a usage window holding a
 single decision is written and later deleted; so is a step-up request), so decision went to its
-new floor of 14 µ$, pending the owner's approval (D11). Step-up requests are now reused while
+new floor of 14 µ$, also approved by the owner (D11). Step-up requests are now reused while
 they wait and deleted when their approval is used, which keeps it at two rows rather than three.
 
 ### Why records are deleted after 13 months
