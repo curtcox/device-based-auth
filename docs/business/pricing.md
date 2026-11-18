@@ -56,7 +56,8 @@ audit rows). Kept longer, those rows would cost money every month with nothing p
 the account's Durable Object compacts them (`compact()` in `src/durable-objects/account-do.js`):
 an expired credential goes 13 months after it was issued (and no sooner than 30 days after it
 expired), a device once it has no credential left and nothing was issued to it for 13 months, and
-audit, charge ledger and receipt rows once they are 13 months old. Deleting a row is billed like
+audit, charge ledger and receipt rows once they are 13 months old, and revoked API keys and ended
+enrollment tokens 13 months after they stopped working (free to make, capped only while active). Deleting a row is billed like
 writing one, so issue now counts 6 more rows plus a share of the compaction alarm (1 DO request,
 1 row); renewals and audience changes count the deletes of their own rows. Compaction runs at most
 weekly, so one wake-up serves everything that fell due in between, and stops waking an account

@@ -117,4 +117,21 @@ describe('record compaction', () => {
     await account.compact(t);
     expect(account.storage.rows.has(`cred:${cid}`)).toBe(true);
   });
+
+  it('drops revoked API keys and ended enrollment tokens 13 months after they stopped working', async () => {
+    const start = t;
+    const revoked = await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'old', scopes: ['credentials:read'] } });
+    const live = await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'live', scopes: ['credentials:read'] } });
+    await call(env, 'DELETE', `/api/v1/keys/${revoked.body.id}`, { auth: 'alice' });
+    const token = await call(env, 'POST', '/api/v1/enrollment-tokens', { auth: 'alice', body: { name: 'Fleet', aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], lifetime_seconds: 3600, max_uses: 5, expires_in_days: 1 } });
+    const account = [...env.ACCOUNTS.objects.values()].find(o => o.storage.rows.has(`key:${revoked.body.id}`));
+    expect(account.storage.rows.get('compaction').next_at).toBe(start + RECORD_RETENTION_MS);
+    await alarmAt(account, start + RECORD_RETENTION_MS + 1000);
+    expect(account.storage.rows.has(`key:${revoked.body.id}`)).toBe(false);
+    expect(account.storage.rows.has(`key:${live.body.id}`)).toBe(true);
+    // The token expired a day after it was made, so it has a day to go.
+    expect(account.storage.rows.has(`etok:${token.body.id}`)).toBe(true);
+    await alarmAt(account, start + RECORD_RETENTION_MS + 1000 + COMPACTION_INTERVAL_MS);
+    expect(account.storage.rows.has(`etok:${token.body.id}`)).toBe(false);
+  });
 });

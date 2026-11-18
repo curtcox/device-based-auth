@@ -176,6 +176,7 @@ export class AccountDO {
       if (key.hash !== hash) {
         key.revoked_at = now; key.revoked_reason = 'refresh token reused';
         await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.revoked', { key_id: id, reason: key.revoked_reason });
+        await scheduleCompaction(tx, now);
         return { refused: true };
       }
       key.hash = new_hash; key.refreshed_at = now;
@@ -189,7 +190,7 @@ export class AccountDO {
   async op_revoke_key({ id }, now) {
     return this.tx(async tx => {
       const key = await tx.get(`key:${id}`); assert(key, 'not_found', 'API key not found', 404);
-      if (!key.revoked_at) { key.revoked_at = now; await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.revoked', { key_id: id }); }
+      if (!key.revoked_at) { key.revoked_at = now; await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.revoked', { key_id: id }); await scheduleCompaction(tx, now); }
       return visibleKey(key);
     });
   }
@@ -212,6 +213,7 @@ export class AccountDO {
       const token = { id, name, hash, template, max_uses, uses: 0, expires_at, created_at: now };
       await tx.put(`etok:${id}`, token);
       await this.audit(tx, now, 'enrollment_token.created', { token_id: id, name, aud: template.aud, max_uses });
+      await scheduleCompaction(tx, now);
       return visibleToken(token, now);
     });
   }
@@ -604,7 +606,7 @@ export class AccountDO {
    * Drop records whose prepaid 13 months are over (master plan §8.3): expired credentials issued
    * more than RECORD_RETENTION_MS ago (and expired at least EXPIRED_VISIBLE_MS ago), devices with no
    * credential left and nothing issued to them in that time, and audit, ledger and receipt rows
-   * older than that. Kept: revoked devices (so a revoked key never comes back without a recent
+   * older than that, and revoked API keys and ended enrollment tokens. Kept: revoked devices (so a revoked key never comes back without a recent
    * sign-in), deposits, the daily aggregate ledger rows and monthly summaries (one per day or month,
    * not per operation), and anything with a revocation still in the outbox. Each issue, renewal
    * and audience change prepays the deletes of the rows it wrote (cost-policy.js).
@@ -646,6 +648,17 @@ export class AccountDO {
     if (firstAudit) soonest(firstAudit[1].at + RECORD_RETENTION_MS);
     for (const [key, receipt] of await this.storage.list({ prefix: 'receipt:' })) {
       if (receipt.created_at <= cutoff) due.push(key); else soonest(receipt.created_at + RECORD_RETENTION_MS);
+    }
+    // Revoked API keys and connected apps, and enrollment tokens that ended, go 13 months after
+    // they stopped working (they are free to make, and capped only while active).
+    for (const [key, apiKey] of await this.storage.list({ prefix: 'key:' })) {
+      if (!apiKey.revoked_at) continue;
+      if (apiKey.revoked_at <= cutoff) due.push(key); else soonest(apiKey.revoked_at + RECORD_RETENTION_MS);
+    }
+    for (const [key, token] of await this.storage.list({ prefix: 'etok:' })) {
+      const state = enrollmentTokenState(token, now);
+      const ended = state === 'active' ? token.expires_at : state === 'revoked' ? token.revoked_at : state === 'expired' ? token.expires_at : (token.last_used_at ?? token.created_at);
+      if (state !== 'active' && ended <= cutoff) due.push(key); else soonest(ended + RECORD_RETENTION_MS);
     }
     for (let i = 0; i < due.length; i += 128) await this.storage.delete(due.slice(i, i + 128));
     const nextAt = more ? now + 60000 : nextDue === Infinity ? null : Math.max(nextDue, now + COMPACTION_INTERVAL_MS);
