@@ -19,13 +19,14 @@
 //
 // EK certificates' validity periods are not checked: an EK identifies the TPM for its whole life
 // (the TCG profile suggests notAfter 9999-12-31), and many genuine TPMs carry certificates from
-// intermediates that have since expired. Manufacturers' EK revocation lists are not checked yet.
+// intermediates that have since expired. Revocation is checked: the EK certificate and any CA the
+// device sends against their issuer's CRL distribution points (checkEkRevocation).
 // Only RSA-2048 EKs (TCG template L-1: SHA-256, AES-128-CFB) are supported; every TPM 2.0 has one.
 import { ApiError } from '../utils/errors.js';
 import { children, parseOne, expectTag, decodeOid, concat, seq, oid, tlv, bits } from './der.js';
 import { b64u, jwkThumbprint } from '../../packages/verify/src/jose.js';
 import { parseCertificate, signedBy } from './attestation.js';
-import { reader, parseTpmPublic, parseCertInfo, tpmManufacturer, tpmObjectName, REQUIRED_ATTRIBUTES } from './tpm-attestation.js';
+import { reader, parseTpmPublic, parseCertInfo, tpmManufacturer, tpmObjectName, REQUIRED_ATTRIBUTES, parseTpmCrl } from './tpm-attestation.js';
 import { TPM_EK_ANCHORS } from './tpm-ek-anchors.js';
 
 const RSA_ENCRYPTION = '1.2.840.113549.1.1.1';
@@ -186,14 +187,16 @@ export async function verifyEkCertificate(ekCertificate, chain = [], anchors = t
   }
   for (const [i, cert] of intermediates.entries()) if (!isCa(cert)) throw invalid(`ek_chain[${i}] is not a CA certificate`);
   // Walk up by issuer name, trying the anchors first at each step.
-  let current = ek;
+  // `path` pairs each certificate with the key that signed it, for the revocation check.
+  let current = ek; const path = [];
   for (let depth = 0; depth <= intermediates.length; depth++) {
     for (const anchor of anchors) {
       if (equalBytes(anchor.subject, current.issuer) && await signedBy(current, anchor.spki).catch(() => false)) {
         let manufacturer = null;
         try { const san = ek.extensions.get('2.5.29.17'); manufacturer = san ? tpmManufacturer(san) : null; } catch { manufacturer = null; }
         if (!manufacturer) throw invalid('the EK certificate names no TPM manufacturer');
-        return { spki: ek.spki, manufacturer };
+        path.push({ cert: current, issuerSpki: anchor.spki, issuerNotAfter: anchor.notAfter });
+        return { spki: ek.spki, manufacturer, path };
       }
     }
     let next = null;
@@ -201,9 +204,74 @@ export async function verifyEkCertificate(ekCertificate, chain = [], anchors = t
       if (cert !== current && equalBytes(cert.subject, current.issuer) && await signedBy(current, cert.spki).catch(() => false)) { next = cert; break; }
     }
     if (!next) break;
+    path.push({ cert: current, issuerSpki: next.spki, issuerNotAfter: next.notAfter });
     current = next;
   }
   throw invalid('the EK certificate does not chain to a known TPM manufacturer CA');
+}
+
+// ---- Revocation ----
+
+const CRL_DISTRIBUTION_POINTS = '2.5.29.31';
+const MAX_CRL_BYTES = 1 << 20;
+const MAX_CRL_URLS = 3;
+const CRL_CACHE_MS = 3600_000;
+const CRL_CACHE_ENTRIES = 64;
+const crlCache = new Map(); // `${url} ${issuer key}` → { serials, until }
+
+/** The http(s) URLs in a certificate's CRL distribution points extension (fullName URIs). */
+export function crlDistributionPoints(cert) {
+  const value = cert.extensions.get(CRL_DISTRIBUTION_POINTS);
+  if (!value) return [];
+  const urls = [];
+  for (const point of children(expectTag(parseOne(value), 16, 'CRLDistributionPoints'))) {
+    const name = children(point).find(e => e.cls === 2 && e.tag === 0); // distributionPoint
+    const full = name && children(name).find(e => e.cls === 2 && e.tag === 0); // fullName
+    for (const general of full ? children(full) : []) {
+      if (general.cls !== 2 || general.tag !== 6) continue; // uniformResourceIdentifier
+      const url = new TextDecoder().decode(general.content);
+      if (/^https?:\/\/[\x21-\x7e]+$/.test(url)) urls.push(url);
+    }
+  }
+  return urls;
+}
+
+/** Serials on the CRL at `url`, which must be signed by `issuerSpki` and current. Cached for an hour. */
+async function crlSerials(url, issuerSpki, fetcher, now) {
+  const key = `${url} ${b64u(issuerSpki)}`;
+  const cached = crlCache.get(key);
+  if (cached && cached.until > now) return cached.serials;
+  const response = await fetcher(url, { cf: { cacheTtl: 3600, cacheEverything: true } });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (Number(response.headers.get('content-length')) > MAX_CRL_BYTES) throw new Error('CRL too large');
+  const der = new Uint8Array(await response.arrayBuffer());
+  if (der.length > MAX_CRL_BYTES) throw new Error('CRL too large');
+  const serials = await parseTpmCrl(der, [issuerSpki], now);
+  if (crlCache.size >= CRL_CACHE_ENTRIES) crlCache.delete(crlCache.keys().next().value);
+  crlCache.set(key, { serials, until: now + CRL_CACHE_MS });
+  return serials;
+}
+export function resetEkCrlCache() { crlCache.clear(); }
+
+/**
+ * Check the EK certificate, and each CA certificate the device sent, against the revocation list
+ * its issuer publishes (CRL distribution points). Certificates naming none are not checked; most
+ * TPM manufacturers name one. A list that cannot be fetched, is not signed by the issuer or is out
+ * of date fails closed with 503, as Google's and Microsoft's lists do. Not checked: certificates
+ * whose issuing CA has itself expired (it no longer publishes fresh lists, and many genuine TPMs
+ * chain through such CAs; see the top of this file), and the pinned anchors.
+ */
+export async function checkEkRevocation(path, { fetcher = fetch, now = Date.now() } = {}) {
+  for (const [i, { cert, issuerSpki, issuerNotAfter }] of path.entries()) {
+    const urls = crlDistributionPoints(cert).slice(0, MAX_CRL_URLS);
+    if (!urls.length || (issuerNotAfter && issuerNotAfter < now)) continue;
+    let serials = null;
+    for (const url of urls) {
+      try { serials = await crlSerials(url, issuerSpki, fetcher, now); break; } catch { serials = null; }
+    }
+    if (!serials) throw new ApiError(503, 'attestation_unavailable', `The TPM manufacturer's revocation list (${urls[0]}) is unavailable; try again shortly`);
+    if (serials.has(cert.serial)) throw invalid(i === 0 ? 'the TPM manufacturer has revoked this EK certificate' : 'the TPM manufacturer has revoked a CA certificate in ek_chain');
+  }
 }
 
 // ---- The two steps ----
@@ -213,8 +281,8 @@ export async function verifyEkCertificate(ekCertificate, chain = [], anchors = t
  * for the TPM. options: { ekCertificate, ekChain, akPubArea, pubArea, certInfo, sig (base64),
  * anchors }. Returns { jwk, jkt, manufacturer, secret, idObject, encryptedSecret }.
  */
-export async function startTpmActivation({ ekCertificate, ekChain = [], akPubArea, pubArea, certInfo, sig, anchors }) {
-  const { spki, manufacturer } = await verifyEkCertificate(ekCertificate, ekChain, anchors);
+export async function startTpmActivation({ ekCertificate, ekChain = [], akPubArea, pubArea, certInfo, sig, anchors, fetcher = fetch, now = Date.now() }) {
+  const { spki, manufacturer, path } = await verifyEkCertificate(ekCertificate, ekChain, anchors);
   const ekKey = await ekEncryptionKey(spki);
 
   const akBytes = unsized(part(akPubArea, 'ak_pub_area'));
@@ -246,6 +314,8 @@ export async function startTpmActivation({ ekCertificate, ekChain = [], akPubAre
   let jwk;
   try { jwk = { kty: 'EC', crv: 'P-256', x: b64u(fixed(key.x, 32)), y: b64u(fixed(key.y, 32)) }; } catch { throw invalid('the device key is not a P-256 point'); }
 
+  // Last, so a request that fails the checks above costs no fetch.
+  await checkEkRevocation(path, { fetcher, now });
   const secret = crypto.getRandomValues(new Uint8Array(SECRET_BYTES));
   const wrapped = await makeCredential(ekKey, akName, secret);
   return { jwk, jkt: await jwkThumbprint(jwk), manufacturer, secret, ...wrapped };

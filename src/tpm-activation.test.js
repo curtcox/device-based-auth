@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { startTpmActivation, finishTpmActivation, makeCredential, credentialBlobFile, aesCfbEncrypt, kdfa, verifyEkCertificate, tpmEkAnchors, tpmActivationResponse } from './services/tpm-activation.js';
+import { startTpmActivation, finishTpmActivation, makeCredential, credentialBlobFile, aesCfbEncrypt, kdfa, verifyEkCertificate, tpmEkAnchors, tpmActivationResponse, crlDistributionPoints, resetEkCrlCache } from './services/tpm-activation.js';
 import { TPM_EK_ANCHORS } from './services/tpm-ek-anchors.js';
 import { parseCertificate } from './services/attestation.js';
 import { seq, bool } from './services/der.js';
 import { certificate, ext, spkiOf } from '../test-utils/android-attestation.js';
 import { ekAuthority, softwareTpm, activationRequest, activateCredential, AK_ATTRIBUTES } from '../test-utils/tpm-ek.js';
+import { tpmCrl } from '../test-utils/tpm-attestation.js';
 import { newDevice } from '../test-utils/env.js';
 import { jwkThumbprint } from '../packages/verify/src/jose.js';
 
@@ -145,5 +146,63 @@ describe('EK credential activation, software TPM', () => {
     expect((await verifyEkCertificate(ek, [b64(await build(true))], anchors)).manufacturer).toBe('IFX');
     expect(await code(verifyEkCertificate(ek, [b64(await build(false))], anchors))).toContain('not a CA certificate');
     expect(await code(verifyEkCertificate(ek, ['a', 'b', 'c', 'd'], anchors))).toContain('at most 3');
+  });
+});
+
+describe('EK certificate revocation (CRL distribution points)', () => {
+  const CRL_URL = 'http://pki.example-tpm.test/EkCA.crl';
+  let authority; let tpm; let device; let anchors;
+  beforeAll(async () => {
+    authority = await ekAuthority();
+    tpm = await softwareTpm(authority, { crlUrls: ['ldap://ignored.example/cn=x', CRL_URL] });
+    device = await newDevice();
+    anchors = [anchorOf(authority.der)];
+  });
+  const crlOf = (serials, options) => tpmCrl({ rootKey: authority.signer.privateKey }, serials, options);
+  const run = async (fetcher, { now, ekCertificate } = {}) => {
+    resetEkCrlCache();
+    const r = await activationRequest(tpm, device.publicJwk);
+    return startTpmActivation({ ekCertificate: ekCertificate ?? r.ek_certificate, akPubArea: r.ak_pub_area, pubArea: r.pub_area, certInfo: r.cert_info, sig: r.sig, anchors, fetcher, ...(now ? { now } : {}) });
+  };
+  const serving = body => { const calls = []; const fetcher = async url => { calls.push(String(url)); return body instanceof Response ? body : new Response(await body()); }; return { calls, fetcher }; };
+
+  it('reads the http(s) URLs of the CRL distribution points', () => {
+    expect(crlDistributionPoints(parseCertificate(tpm.ekCert))).toEqual([CRL_URL]);
+    expect(crlDistributionPoints(parseCertificate(authority.der))).toEqual([]);
+  });
+
+  it('accepts an EK certificate its manufacturer has not revoked, fetching the list once an hour', async () => {
+    const { calls, fetcher } = serving(() => crlOf(['01', '0abc']));
+    expect((await run(fetcher)).manufacturer).toBe('IFX');
+    expect(calls).toEqual([CRL_URL]);
+  });
+
+  it('refuses an EK certificate on its manufacturer\'s list', async () => {
+    const { fetcher } = serving(() => crlOf(['5102']));
+    expect(await code(run(fetcher))).toBe('invalid_attestation: TPM attestation rejected: the TPM manufacturer has revoked this EK certificate');
+  });
+
+  it('fails closed (503) when the list is unreachable, forged or out of date', async () => {
+    expect(await code(run(serving(new Response('down', { status: 503 })).fetcher))).toMatch(/^attestation_unavailable: .*pki\.example-tpm\.test/);
+    expect(await code(run(async () => { throw new Error('network'); }))).toMatch(/^attestation_unavailable/);
+    const other = await ekAuthority({ name: 'Someone else' });
+    expect(await code(run(serving(() => tpmCrl({ rootKey: other.signer.privateKey }, [])).fetcher))).toMatch(/^attestation_unavailable/);
+    expect(await code(run(serving(() => crlOf([], { thisUpdate: Date.UTC(2025, 0, 1), nextUpdate: Date.UTC(2025, 1, 1) })).fetcher))).toMatch(/^attestation_unavailable/);
+    const huge = new Response(new Uint8Array(10), { headers: { 'content-length': String(2 << 20) } });
+    expect(await code(run(serving(huge).fetcher))).toMatch(/^attestation_unavailable/);
+  });
+
+  it('skips the check once the issuing CA has expired (it no longer publishes lists)', async () => {
+    const { calls, fetcher } = serving(() => crlOf(['5102']));
+    expect((await run(fetcher, { now: Date.UTC(2046, 0, 1) })).manufacturer).toBe('IFX');
+    expect(calls).toEqual([]);
+  });
+
+  it('fetches nothing for a request that fails the other checks', async () => {
+    const { calls, fetcher } = serving(() => crlOf([]));
+    resetEkCrlCache();
+    const r = await activationRequest(tpm, device.publicJwk, { tamper: true });
+    expect(await code(startTpmActivation({ ekCertificate: r.ek_certificate, akPubArea: r.ak_pub_area, pubArea: r.pub_area, certInfo: r.cert_info, sig: r.sig, anchors, fetcher }))).toMatch(/^invalid_attestation/);
+    expect(calls).toEqual([]);
   });
 });

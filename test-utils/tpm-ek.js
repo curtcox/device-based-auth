@@ -25,14 +25,19 @@ export async function ekAuthority({ name = 'Test TPM EK CA' } = {}) {
 }
 
 /** A TPM: an RSA-2048 EK (with a certificate from `authority`) and a restricted ECC attestation key. */
-export async function softwareTpm(authority, { manufacturer = 'id:49465800', ekBits = 2048, issuer = authority.name } = {}) {
+export async function softwareTpm(authority, { manufacturer = 'id:49465800', ekBits = 2048, issuer = authority.name, crlUrls = [] } = {}) {
   const ek = await crypto.subtle.generateKey({ name: 'RSA-OAEP', modulusLength: ekBits, publicExponent: Uint8Array.of(1, 0, 1), hash: 'SHA-256' }, true, ['encrypt', 'decrypt']);
   const tcg = (id, value) => set(seq(oid(id), utf8(value)));
   const san = manufacturer === null ? [] : [ext('2.5.29.17', seq(tlv(0xa4, seq(tcg('2.23.133.2.1', manufacturer), tcg('2.23.133.2.2', 'SLB9670'), tcg('2.23.133.2.3', 'id:00070055')))), true)];
-  const ekCert = await certificate({ serial: Uint8Array.of(0x51, 0x02), issuer, subject: 'EK', spki: await spkiOf(ek.publicKey), signer: authority.signer, notBefore: Date.UTC(2025, 0, 1), notAfter: Date.UTC(9999, 11, 31), extensions: [ext('2.5.29.19', seq(), true), ...san] });
+  const ekCert = await certificate({ serial: Uint8Array.of(0x51, 0x02), issuer, subject: 'EK', spki: await spkiOf(ek.publicKey), signer: authority.signer, notBefore: Date.UTC(2025, 0, 1), notAfter: Date.UTC(9999, 11, 31), extensions: [ext('2.5.29.19', seq(), true), ...san, ...(crlUrls.length ? [ext('2.5.29.31', crlDistributionPoints(crlUrls))] : [])] });
   const ak = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
   const akJwk = await crypto.subtle.exportKey('jwk', ak.publicKey);
   return { ek, ekCert, ak, akJwk };
+}
+
+/** A CRLDistributionPoints extension value: one distribution point per URL (fullName URI). */
+export function crlDistributionPoints(urls) {
+  return seq(...urls.map(url => seq(tlv(0xa0, tlv(0xa0, tlv(0x86, new TextEncoder().encode(url)))))));
 }
 
 /**
