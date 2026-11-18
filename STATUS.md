@@ -66,7 +66,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 
 | ID | Item | Owner | Status | Notes |
 |----|------|-------|--------|-------|
-| S1 | cronly accepts DBA device keys and "Sign in with devicebasedauth.org" | code | 🚧 | Shared helpers ✅ (`createSiteAuth`, `createOidcClient`); cronly patch in `integrations/cronly/` |
+| S1 | cronly accepts DBA device keys and "Sign in with devicebasedauth.org" | code/owner | 🟨 | Six-patch series in [integrations/cronly/](integrations/cronly/) (device keys, access tokens, OIDC account linking, spend caps as key budgets; 1,019 cronly tests pass). This session could not push to cronly: owner applies with `git am`. Stage A/B sign-in are cronly follow-ups |
 | S2 | hashbin accepts DBA device keys and "Sign in with devicebasedauth.org" | code/owner | 🟨 | Device keys, access tokens and OIDC account linking with spend caps on hashbin branch `claude/dba-integration` (4 commits, 1,064 tests pass); not merged. Owner: review/merge, fund the operator account; Stage A Clerk provider and Stage B device sessions are hashbin S23/S24 |
 | S3 | Recalibrate prices from a month of measured costs | owner | ⬜ | |
 | S4 | Mobile sample apps (iOS Secure Enclave, Android Keystore) | code | ⬜ | |

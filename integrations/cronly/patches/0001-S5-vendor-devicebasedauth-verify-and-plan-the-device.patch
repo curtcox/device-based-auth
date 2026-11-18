@@ -1,0 +1,1158 @@
+From 9c4f02ccf2df6c919cc74e4a3cff80cdb3e2d004 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 18 Nov 2026 05:04:54 +0000
+Subject: [PATCH 1/6] S5: vendor @devicebasedauth/verify and plan the
+ devicebasedauth.org integration
+
+Copy devicebasedauth.org packages/verify/src (tests excluded) unmodified into
+src/vendor/devicebasedauth/, pinned by upstream commit and per-file SHA-256; a
+test fails if a vendored file is edited locally. Add STATUS row S5 and the
+picked-up-cold plan todo/dba_integration.md.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Kwqh8U8CPCyYKphVe92vcV
+---
+ STATUS.md                                 |   1 +
+ src/vendor/devicebasedauth.test.js        |  14 +
+ src/vendor/devicebasedauth/README.md      |  35 +++
+ src/vendor/devicebasedauth/credential.js  | 118 ++++++++
+ src/vendor/devicebasedauth/grants.js      | 339 ++++++++++++++++++++++
+ src/vendor/devicebasedauth/index.js       |   7 +
+ src/vendor/devicebasedauth/issuer.js      |  32 ++
+ src/vendor/devicebasedauth/jose.js        |  89 ++++++
+ src/vendor/devicebasedauth/site.js        |  85 ++++++
+ src/vendor/devicebasedauth/status-list.js |  42 +++
+ src/vendor/devicebasedauth/verifier.js    | 188 ++++++++++++
+ todo/dba_integration.md                   |  89 ++++++
+ 12 files changed, 1039 insertions(+)
+ create mode 100644 src/vendor/devicebasedauth.test.js
+ create mode 100644 src/vendor/devicebasedauth/README.md
+ create mode 100644 src/vendor/devicebasedauth/credential.js
+ create mode 100644 src/vendor/devicebasedauth/grants.js
+ create mode 100644 src/vendor/devicebasedauth/index.js
+ create mode 100644 src/vendor/devicebasedauth/issuer.js
+ create mode 100644 src/vendor/devicebasedauth/jose.js
+ create mode 100644 src/vendor/devicebasedauth/site.js
+ create mode 100644 src/vendor/devicebasedauth/status-list.js
+ create mode 100644 src/vendor/devicebasedauth/verifier.js
+ create mode 100644 todo/dba_integration.md
+
+diff --git a/STATUS.md b/STATUS.md
+index e011adb..fb46481 100644
+--- a/STATUS.md
++++ b/STATUS.md
+@@ -75,6 +75,7 @@ disagrees with it, this file wins and the other document is stale.
+ | S2 | Charge measured JS CPU instead of the configured limit | code | ⬜ | §3.4; needs per-invocation CPU data. |
+ | S3 | Recalibrate prices from a month of real Cloudflare and Anthropic bills | ops/code | ⬜ | `docs/business/pricing.md`. |
+ | S4 | Lower per-run row writes (merge hold + ledger, batch next-fire updates) and pass the saving into the price | code | 🚧 | Shared transactional budgets, active money summaries and ledger buffering reduce ordinary writes; unchanged alarms/runtime indexes and completion settings skip writes. Transactional reads/changes skip transient holds. Ledger pages retain legacy cursors and permanent receipts. Small durable reservations share the balance row; large/legacy snapshots stay standalone. Finalization reuses the durable staged log. Cooldowns/recent-job activity now share the reservation balance write, saving another ordinary compact-run write; evicted cooldowns remain standalone and larger legacy hold arrays migrate after draining. Repeated balance/budget refusals skip writes after one atomic pause/log/reset-wakeup transition; unchanged configuration replay skips settings writes. The 456-path audit includes activity eviction, ledger archival, compact/rollover/large-period summaries, unfunded-retry pauses, runtime-write failures and lost settlement responses: conservative 37 writes, 27 DO requests/five Worker invocations at 85 µ$/run after rounded floors. Scheduled dispatch rearms once after schedule advancement, retaining its atomic pending wakeup; advancement publication survives failures and refusal pauses skip duplicate writes. Completion runtime publication now shares settlement’s account transaction; new completed deliveries skip publication calls while legacy completions retain recovery. Deposits and cost-brake recovery use one versioned wake batch per cause (100 healthy jobs: five deposit/account writes including acknowledgement), preserving unrelated pauses and earlier holds. Terminal credential/input refusals clear retry outboxes, and input-dependent schedules pause once instead of recurring unpaid. Repeated action tests reuse their permanent history index, saving one account write after the first reservation while retaining recency and deleted-action logs. Test setup/start share one JobDO request, saving a request per action test with the same recovery steps. Completed Queue redelivery now uses one compact index read without loading full logs or settings; staged outcomes, private retries and legacy publication still recover. Further worst-case reductions remain. [Cost audit](docs/business/pricing.md). |
++| S5 | devicebasedauth.org integration: device-bound API keys (`Authorization: DBA` + DPoP, short-lived DBA access tokens) and account linking over OIDC | code/ops | 🚧 | Vendored `@devicebasedauth/verify` (unmodified, hash-checked) in `src/vendor/devicebasedauth/`. Linking, authentication, budgets and UI in progress. [Plan](todo/dba_integration.md). devicebasedauth.org master plan §9. |
+ 
+ ## Backlog
+ 
+diff --git a/src/vendor/devicebasedauth.test.js b/src/vendor/devicebasedauth.test.js
+new file mode 100644
+index 0000000..f777745
+--- /dev/null
++++ b/src/vendor/devicebasedauth.test.js
+@@ -0,0 +1,14 @@
++import { readFileSync, readdirSync } from 'node:fs';
++import { createHash } from 'node:crypto';
++import { it, expect } from 'vitest';
++
++const dir = new URL('./devicebasedauth/', import.meta.url);
++// The README records the upstream hash of every file; a local edit would fork the single
++// devicebasedauth.org evaluator, so it must fail here instead of shipping silently.
++it('keeps the vendored devicebasedauth.org verifier byte-identical to its recorded upstream copy', () => {
++  const readme = readFileSync(new URL('README.md', dir), 'utf8');
++  const recorded = Object.fromEntries([...readme.matchAll(/^\| ([a-z-]+\.js) \| `([0-9a-f]{64})` \|$/gm)].map(([, name, hash]) => [name, hash]));
++  const files = readdirSync(dir).filter(name => name.endsWith('.js')).sort();
++  expect(Object.keys(recorded).sort()).toEqual(files);
++  for (const name of files) expect(createHash('sha256').update(readFileSync(new URL(name, dir))).digest('hex'), name).toBe(recorded[name]);
++});
+diff --git a/src/vendor/devicebasedauth/README.md b/src/vendor/devicebasedauth/README.md
+new file mode 100644
+index 0000000..9376aec
+--- /dev/null
++++ b/src/vendor/devicebasedauth/README.md
+@@ -0,0 +1,35 @@
++# Vendored `@devicebasedauth/verify`
++
++These files are an unmodified copy of `packages/verify/src/*.js` (tests excluded) from the
++devicebasedauth.org repository (`device-based-auth`), at commit
++`7dbb8adf21ad409340c426f52d2b364b6ccfce26` (the package itself last changed in
++`ba0841a189ce20704811d0c652c7f360cf6e469e`, "S2: verify library fixes from the hashbin integration").
++
++**Do not edit these files here.** devicebasedauth.org requires one evaluator implementation that
++passes every vector in its `spec/vectors/`; a local fix would fork it. Fix the upstream package,
++then re-copy all files and update the commit and hashes below in the same commit.
++
++cronly uses `site.js` (`createSiteAuth`, `createOidcClient`) from `src/auth/dba.js`, and
++`issuer.js` only in tests (to act as a fake issuer). The code is zero-dependency and uses only
++WebCrypto, `CompressionStream`/`DecompressionStream` and `fetch`.
++
++| File | SHA-256 |
++|------|---------|
++| credential.js | `413edcc0c7403d3e83593555ccd971c946dba3eeb67f17a73a55d4b832eec5cd` |
++| grants.js | `be2b50bbc905e54a2829c86c7c2a09db616ebc6d0de1b585ed03b053cef5654b` |
++| index.js | `1f6085a895afe38b27e6e858759a3b5f97c093399df17b5aea560a4ba3316ab7` |
++| issuer.js | `65072ae1ffd393577327489a08d4a3453e3f7cd3893f133315c64cb8647140f2` |
++| jose.js | `1955ec8a5d20636a0c63b5060593ab993a265bbf968725c0fb20f39063af0ed2` |
++| site.js | `b99b78fd1dffa1a3d571d3275e9343a0ca9fa6954a5b8a3f9cfeb424f9d47659` |
++| status-list.js | `9bf4d124fef7e79051bbc175ef20fe6602adf8c9a4732ac6da46b858cdbb4452` |
++| verifier.js | `b97b147fe1a1e108a67a673f77f6d201000e6a0495c9ecc5b8d6c148b13c7cc5` |
++
++To refresh (from a checkout of both repositories side by side):
++
++```sh
++for f in ../device-based-auth/packages/verify/src/*.js; do
++  case "$f" in *.test.js) ;; *) cp "$f" src/vendor/devicebasedauth/ ;; esac
++done
++(cd src/vendor/devicebasedauth && sha256sum *.js)
++git -C ../device-based-auth rev-parse HEAD
++```
+diff --git a/src/vendor/devicebasedauth/credential.js b/src/vendor/devicebasedauth/credential.js
+new file mode 100644
+index 0000000..ceca0dd
+--- /dev/null
++++ b/src/vendor/devicebasedauth/credential.js
+@@ -0,0 +1,118 @@
++/**
++ * Device credentials (typ "dba-device+jwt"), short-lived access tokens (typ "dba-access+jwt")
++ * and DPoP proofs (RFC 9449, typ "dpop+jwt"). See spec/credential.md.
++ */
++import { decodeJws, verifyJws, jwkThumbprint, sha256b64u, signJws, publicJwk, b64u } from './jose.js';
++import { validateGrants, VOCABULARY_VERSION } from './grants.js';
++
++export const CREDENTIAL_TYP = 'dba-device+jwt';
++export const ACCESS_TYP = 'dba-access+jwt';
++export const PROOF_TYP = 'dpop+jwt';
++export const STATUS_LIST_TYP = 'statuslist+jwt';
++export const DEFAULT_ISSUER = 'https://devicebasedauth.org';
++export const CLOCK_SKEW = 60;
++export const PROOF_MAX_AGE = 60;
++
++/** A verification failure with a stable machine-readable code. */
++export class VerificationError extends Error {
++  constructor(code, message = code) { super(message); this.code = code; }
++}
++const fail = (code, message) => { throw new VerificationError(code, message); };
++
++/** Decode a credential or access token for display. Does NOT verify anything. */
++export function inspectCredential(jws) {
++  const { header, payload } = decodeJws(jws);
++  return { header, payload };
++}
++
++/** Structural checks shared by issuers (before signing) and verifiers (after). */
++export function validateCredentialPayload(payload, { typ = CREDENTIAL_TYP } = {}) {
++  const errors = [];
++  const str = (k, re) => { if (typeof payload[k] !== 'string' || (re && !re.test(payload[k]))) errors.push(`${k} is missing or malformed`); };
++  str('iss'); str('sub', /^dev_[A-Za-z0-9]{8,64}$/); str('acct', /^[A-Za-z0-9_-]{1,128}$/); str('jti'); str('cid', /^crd_[A-Za-z0-9]{8,64}$/);
++  for (const k of ['iat', 'nbf', 'exp']) if (!Number.isSafeInteger(payload[k])) errors.push(`${k} must be a NumericDate`);
++  if (!Array.isArray(payload.aud) || payload.aud.length === 0 || payload.aud.some(a => typeof a !== 'string')) errors.push('aud must be a list of audiences');
++  if (payload.exp <= payload.nbf) errors.push('exp must be after nbf');
++  if (payload.ver !== VOCABULARY_VERSION) errors.push(`ver must be ${VOCABULARY_VERSION}`);
++  const status = payload.status?.status_list;
++  if (!status || !Number.isSafeInteger(status.idx) || status.idx < 0 || typeof status.uri !== 'string') errors.push('status.status_list must have idx and uri');
++  if (typ === CREDENTIAL_TYP && typeof payload.cnf?.jkt !== 'string') errors.push('cnf.jkt is required');
++  errors.push(...validateGrants(payload.grants));
++  return errors;
++}
++
++/**
++ * Verify a credential or access token signature and claims.
++ * options: { jwks: {keys:[...]}, issuer, audience, now (seconds), typ: 'device'|'access'|'any' }
++ * Revocation is checked separately (status lists, or online).
++ */
++export async function verifyCredential(jws, { jwks, issuer = DEFAULT_ISSUER, audience, now = Math.floor(Date.now() / 1000), typ = 'device' } = {}) {
++  let decoded;
++  try { decoded = decodeJws(jws); } catch { fail('invalid_format', 'Not a compact JWS'); }
++  const { header, payload } = decoded;
++  const allowed = typ === 'any' ? [CREDENTIAL_TYP, ACCESS_TYP] : [typ === 'access' ? ACCESS_TYP : CREDENTIAL_TYP];
++  if (!allowed.includes(header.typ)) fail('wrong_type', `Expected typ ${allowed.join(' or ')}`);
++  const jwk = jwks?.keys?.find(k => k.kid === header.kid);
++  if (!jwk) fail('unknown_kid', `Unknown signing key ${header.kid}`);
++  if (!await verifyJws(jws, jwk)) fail('invalid_signature', 'Signature does not verify');
++  if (payload.iss !== issuer) fail('wrong_issuer', `Issuer is not ${issuer}`);
++  const problems = validateCredentialPayload(payload, { typ: header.typ });
++  if (problems.length) fail('invalid_claims', problems.join('; '));
++  if (audience !== undefined && !payload.aud.includes(audience)) fail('wrong_audience', `Not valid for ${audience}`);
++  if (now + CLOCK_SKEW < payload.nbf) fail('not_yet_valid', 'Credential is not valid yet');
++  if (now - CLOCK_SKEW >= payload.exp) fail('expired', 'Credential has expired');
++  return { header, payload };
++}
++
++/** Normalize a URL for htu: scheme, host and path only (RFC 9449 §4.3). */
++export function htu(url) { const u = new URL(url); return `${u.protocol}//${u.host}${u.pathname}`; }
++
++/**
++ * Create a DPoP proof for one request with the device key.
++ * options: { method, url, credential (to bind with ath), nonce, location: {lat, lon, acc_m, t}, now, jti }
++ */
++export async function createProof({ privateKey, publicJwk: jwk, method, url, credential, nonce, location, now = Math.floor(Date.now() / 1000), jti }) {
++  const payload = { jti: jti || b64u(crypto.getRandomValues(new Uint8Array(16))), htm: method.toUpperCase(), htu: htu(url), iat: now };
++  if (credential) payload.ath = await sha256b64u(credential);
++  if (nonce) payload.nonce = nonce;
++  if (location) payload.loc = location;
++  return signJws({ typ: PROOF_TYP, jwk: publicJwk(jwk) }, payload, privateKey);
++}
++
++/** A tiny in-memory jti replay cache, per isolate/process. */
++export class ReplayCache {
++  constructor(ttlSeconds = PROOF_MAX_AGE * 2 + CLOCK_SKEW, max = 100000) { this.ttl = ttlSeconds; this.max = max; this.seen = new Map(); }
++  /** Returns false when the jti was already used. */
++  check(jti, now) {
++    // Entries share one TTL, so insertion order is expiry order.
++    for (const [key, exp] of this.seen) { if (exp > now) break; this.seen.delete(key); }
++    if (this.seen.has(jti)) return false;
++    if (this.seen.size >= this.max) this.seen.delete(this.seen.keys().next().value);
++    this.seen.set(jti, now + this.ttl); return true;
++  }
++}
++
++/**
++ * Verify a DPoP proof for a request.
++ * options: { method, url, credential (compact string; checks ath), jkt (expected thumbprint),
++ *            now, nonce (required value, if any), replay (ReplayCache or {check}) }
++ * Returns the proof payload (including any device-reported loc).
++ */
++export async function verifyProof(proof, { method, url, credential, jkt, now = Math.floor(Date.now() / 1000), nonce, replay }) {
++  let decoded;
++  try { decoded = decodeJws(proof); } catch { fail('invalid_proof', 'DPoP proof is not a compact JWS'); }
++  const { header, payload } = decoded;
++  if (header.typ !== PROOF_TYP || header.alg !== 'ES256' || !header.jwk) fail('invalid_proof', 'DPoP proof header must have typ dpop+jwt, alg ES256 and jwk');
++  let thumbprint;
++  try { thumbprint = await jwkThumbprint(header.jwk); } catch { fail('invalid_proof', 'DPoP proof jwk is not a P-256 key'); }
++  if (jkt && thumbprint !== jkt) fail('key_mismatch', 'DPoP proof was not signed by the credential key');
++  if (!await verifyJws(proof, header.jwk)) fail('invalid_proof', 'DPoP proof signature does not verify');
++  if (payload.htm !== method.toUpperCase()) fail('invalid_proof', 'DPoP proof htm does not match the request method');
++  if (payload.htu !== htu(url)) fail('invalid_proof', 'DPoP proof htu does not match the request URL');
++  if (!Number.isSafeInteger(payload.iat) || payload.iat > now + CLOCK_SKEW || payload.iat < now - PROOF_MAX_AGE - CLOCK_SKEW) fail('stale_proof', 'DPoP proof iat is outside the allowed window');
++  if (typeof payload.jti !== 'string' || payload.jti.length < 8 || payload.jti.length > 128) fail('invalid_proof', 'DPoP proof jti is missing');
++  if (credential !== undefined && payload.ath !== await sha256b64u(credential)) fail('invalid_proof', 'DPoP proof ath does not match the credential');
++  if (nonce !== undefined && payload.nonce !== nonce) fail('use_dpop_nonce', 'DPoP nonce required');
++  if (replay && !replay.check(`${thumbprint}:${payload.jti}`, now)) fail('replayed_proof', 'DPoP proof was already used');
++  return { ...payload, jkt: thumbprint };
++}
+diff --git a/src/vendor/devicebasedauth/grants.js b/src/vendor/devicebasedauth/grants.js
+new file mode 100644
+index 0000000..5c817a1
+--- /dev/null
++++ b/src/vendor/devicebasedauth/grants.js
+@@ -0,0 +1,339 @@
++/**
++ * Grant vocabulary v1: validation, evaluation, narrowing and plain-English descriptions.
++ * The normative description is spec/evaluation.md; spec/vectors/*.json must pass.
++ */
++
++export const VOCABULARY_VERSION = 1;
++export const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
++export const USE_PERIODS = ['minute', 'hour', 'day', 'month', 'total'];
++const PERIOD_SECONDS = { minute: 60, hour: 3600, day: 86400, month: 2592000 };
++const GRANT_KEYS = new Set(['actions', 'resources', 'when', 'where', 'limits', 'require']);
++const WHEN_KEYS = new Set(['tz', 'windows', 'not_before', 'not_after']);
++const WINDOW_KEYS = new Set(['days', 'from', 'to']);
++const WHERE_KEYS = new Set(['source', 'countries', 'regions', 'areas', 'networks']);
++const AREA_KEYS = new Set(['lat', 'lon', 'radius_m']);
++const LIMIT_KEYS = new Set(['uses', 'spend_usd_per_month']);
++const USES_KEYS = new Set(['count', 'per']);
++const REQUIRE_KEYS = new Set(['online', 'step_up']);
++const ACTION = /^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$/;
++const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
++const DEVICE_LOCATION_MAX_AGE = 300;
++export const LIMITS = Object.freeze({ grants: 32, actions: 64, resources: 64, windows: 16, places: 64, networks: 64, resourceLength: 256 });
++
++const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
++const minutes = time => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
++
++/** True when the IANA zone is known to this runtime. */
++export function validTimeZone(tz) {
++  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return typeof tz === 'string' && tz.length > 0; } catch { return false; }
++}
++
++/** Parse an IPv4 or IPv6 address to a BigInt and its bit width, or null. */
++export function parseIp(ip) {
++  if (typeof ip !== 'string') return null;
++  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
++    const parts = ip.split('.').map(Number);
++    if (parts.some(p => p > 255)) return null;
++    return { bits: 32, value: parts.reduce((acc, p) => (acc << 8n) + BigInt(p), 0n) };
++  }
++  if (!/^[0-9a-fA-F:.]+$/.test(ip) || !ip.includes(':')) return null;
++  let address = ip;
++  const v4 = address.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
++  if (v4) {
++    const parsed = parseIp(v4[1]); if (!parsed) return null;
++    address = address.slice(0, -v4[1].length) + ((parsed.value >> 16n).toString(16)) + ':' + ((parsed.value & 0xffffn).toString(16));
++  }
++  const halves = address.split('::');
++  if (halves.length > 2) return null;
++  const head = halves[0] ? halves[0].split(':') : [];
++  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
++  const missing = 8 - head.length - tail.length;
++  if ((halves.length === 1 && missing !== 0) || missing < 0) return null;
++  const groups = [...head, ...Array(halves.length === 2 ? missing : 0).fill('0'), ...tail];
++  if (groups.length !== 8 || groups.some(g => !/^[0-9a-fA-F]{1,4}$/.test(g))) return null;
++  return { bits: 128, value: groups.reduce((acc, g) => (acc << 16n) + BigInt(parseInt(g, 16)), 0n) };
++}
++
++/** Parse a CIDR range, or null when invalid. */
++export function parseCidr(cidr) {
++  if (typeof cidr !== 'string') return null;
++  const [ip, prefixText, extra] = cidr.split('/');
++  if (extra !== undefined || prefixText === undefined || !/^\d{1,3}$/.test(prefixText)) return null;
++  const parsed = parseIp(ip); const prefix = Number(prefixText);
++  if (!parsed || prefix > parsed.bits) return null;
++  return { ...parsed, prefix };
++}
++
++/** True when ip is inside the CIDR range. Address families never match each other. */
++export function ipInCidr(ip, cidr) {
++  const address = parseIp(ip); const range = parseCidr(cidr);
++  if (!address || !range || address.bits !== range.bits) return false;
++  const shift = BigInt(range.bits - range.prefix);
++  return (address.value >> shift) === (range.value >> shift);
++}
++
++/** Great-circle distance in meters. */
++export function distanceMeters(a, b) {
++  const rad = d => (d * Math.PI) / 180; const R = 6371008.8;
++  const dLat = rad(b.lat - a.lat); const dLon = rad(b.lon - a.lon);
++  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
++  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
++}
++
++/** Does an action pattern (exact, or ending in ":*") match an action? */
++export function actionMatches(pattern, action) {
++  if (pattern === action) return true;
++  return pattern.endsWith(':*') && action.startsWith(pattern.slice(0, -1));
++}
++
++/** Does a resource pattern ("*", "prefix*" or exact) match a resource? */
++export function resourceMatches(pattern, resource) {
++  if (pattern === '*') return true;
++  if (typeof resource !== 'string') return false;
++  if (pattern.endsWith('*')) return resource.startsWith(pattern.slice(0, -1));
++  return pattern === resource;
++}
++
++/** The namespace of an action ("hashbin" for "hashbin:content:write"). */
++export function actionNamespace(action) { return action.split(':')[0]; }
++
++function checkKeys(value, allowed, path, errors) {
++  if (!isObject(value)) { errors.push(`${path} must be an object`); return false; }
++  for (const key of Object.keys(value)) if (!allowed.has(key)) errors.push(`${path}.${key} is not a known constraint`);
++  return true;
++}
++
++function checkStringList(value, path, errors, max, test, message) {
++  if (!Array.isArray(value) || value.length === 0 || value.length > max) { errors.push(`${path} must be a list of 1–${max} entries`); return; }
++  value.forEach((item, i) => { if (typeof item !== 'string' || !test(item)) errors.push(`${path}[${i}] ${message}`); });
++}
++
++/**
++ * Validate one grant. Returns a list of human-readable problems (empty when valid).
++ * Issuers reject anything invalid; verifiers deny grants with unknown constraints.
++ */
++export function validateGrant(grant, path = 'grant') {
++  const errors = [];
++  if (!checkKeys(grant, GRANT_KEYS, path, errors)) return errors;
++  checkStringList(grant.actions, `${path}.actions`, errors, LIMITS.actions, a => ACTION.test(a), 'must look like "namespace:verb" or "namespace:*"');
++  if (grant.resources !== undefined) checkStringList(grant.resources, `${path}.resources`, errors, LIMITS.resources, r => r.length > 0 && r.length <= LIMITS.resourceLength, `must be 1–${LIMITS.resourceLength} characters`);
++  if (grant.when !== undefined && checkKeys(grant.when, WHEN_KEYS, `${path}.when`, errors)) {
++    const { tz, windows, not_before: nb, not_after: na } = grant.when;
++    if (windows !== undefined) {
++      if (!validTimeZone(tz)) errors.push(`${path}.when.tz must be an IANA time zone when windows are given`);
++      if (!Array.isArray(windows) || windows.length === 0 || windows.length > LIMITS.windows) errors.push(`${path}.when.windows must be a list of 1–${LIMITS.windows} windows`);
++      else windows.forEach((w, i) => {
++        const wp = `${path}.when.windows[${i}]`;
++        if (!checkKeys(w, WINDOW_KEYS, wp, errors)) return;
++        if (w.days !== undefined && (!Array.isArray(w.days) || w.days.length === 0 || w.days.some(d => !DAYS.includes(d)))) errors.push(`${wp}.days must list days from ${DAYS.join(', ')}`);
++        if (!TIME.test(w.from ?? '') || w.from === '24:00') errors.push(`${wp}.from must be HH:MM (00:00–23:59)`);
++        if (!TIME.test(w.to ?? '')) errors.push(`${wp}.to must be HH:MM (00:00–24:00)`);
++        if (w.from === w.to) errors.push(`${wp} from and to must differ`);
++      });
++    } else if (tz !== undefined && !validTimeZone(tz)) errors.push(`${path}.when.tz must be an IANA time zone`);
++    for (const [k, v] of [['not_before', nb], ['not_after', na]]) if (v !== undefined && !Number.isSafeInteger(v)) errors.push(`${path}.when.${k} must be a NumericDate (seconds)`);
++    if (Number.isSafeInteger(nb) && Number.isSafeInteger(na) && nb >= na) errors.push(`${path}.when.not_before must be earlier than not_after`);
++  }
++  if (grant.where !== undefined && checkKeys(grant.where, WHERE_KEYS, `${path}.where`, errors)) {
++    const w = grant.where;
++    if (!['network', 'device', 'both'].includes(w.source)) errors.push(`${path}.where.source must be "network", "device" or "both"`);
++    if (w.countries !== undefined) checkStringList(w.countries, `${path}.where.countries`, errors, LIMITS.places, c => /^[A-Z]{2}$/.test(c), 'must be an ISO 3166-1 alpha-2 code like "US"');
++    if (w.regions !== undefined) checkStringList(w.regions, `${path}.where.regions`, errors, LIMITS.places, r => /^[A-Z]{2}-[A-Z0-9]{1,3}$/.test(r), 'must be an ISO 3166-2 code like "US-MO"');
++    if (w.areas !== undefined) {
++      if (!Array.isArray(w.areas) || w.areas.length === 0 || w.areas.length > LIMITS.places) errors.push(`${path}.where.areas must be a list of 1–${LIMITS.places} areas`);
++      else w.areas.forEach((a, i) => {
++        const ap = `${path}.where.areas[${i}]`;
++        if (!checkKeys(a, AREA_KEYS, ap, errors)) return;
++        if (!(Number.isFinite(a.lat) && a.lat >= -90 && a.lat <= 90)) errors.push(`${ap}.lat must be between -90 and 90`);
++        if (!(Number.isFinite(a.lon) && a.lon >= -180 && a.lon <= 180)) errors.push(`${ap}.lon must be between -180 and 180`);
++        if (!(Number.isFinite(a.radius_m) && a.radius_m >= 10 && a.radius_m <= 20037508)) errors.push(`${ap}.radius_m must be between 10 and 20,037,508`);
++      });
++    }
++    if (w.networks !== undefined) checkStringList(w.networks, `${path}.where.networks`, errors, LIMITS.networks, n => !!parseCidr(n), 'must be a CIDR range like "203.0.113.0/24"');
++    if (w.countries === undefined && w.regions === undefined && w.areas === undefined && w.networks === undefined) errors.push(`${path}.where needs at least one of countries, regions, areas or networks`);
++    if (w.source === 'device' && (w.countries || w.regions || w.networks)) errors.push(`${path}.where with source "device" can only use areas (a device reports coordinates, not countries or networks)`);
++  }
++  if (grant.limits !== undefined && checkKeys(grant.limits, LIMIT_KEYS, `${path}.limits`, errors)) {
++    const { uses, spend_usd_per_month: spend } = grant.limits;
++    if (uses !== undefined && checkKeys(uses, USES_KEYS, `${path}.limits.uses`, errors)) {
++      if (!Number.isSafeInteger(uses.count) || uses.count < 1 || uses.count > 1e9) errors.push(`${path}.limits.uses.count must be an integer from 1 to 1,000,000,000`);
++      if (!USE_PERIODS.includes(uses.per)) errors.push(`${path}.limits.uses.per must be one of ${USE_PERIODS.join(', ')}`);
++    }
++    if (spend !== undefined && !(Number.isFinite(spend) && spend >= 0 && spend <= 1e6)) errors.push(`${path}.limits.spend_usd_per_month must be a number from 0 to 1,000,000`);
++  }
++  if (grant.require !== undefined && checkKeys(grant.require, REQUIRE_KEYS, `${path}.require`, errors)) {
++    for (const key of ['online', 'step_up']) if (grant.require[key] !== undefined && typeof grant.require[key] !== 'boolean') errors.push(`${path}.require.${key} must be true or false`);
++  }
++  return errors;
++}
++
++/** Validate a grant list. */
++export function validateGrants(grants) {
++  if (!Array.isArray(grants) || grants.length === 0 || grants.length > LIMITS.grants) return [`grants must be a list of 1–${LIMITS.grants} grants`];
++  return grants.flatMap((grant, i) => validateGrant(grant, `grants[${i}]`));
++}
++
++/** Local weekday and minutes since midnight at an instant in a zone. */
++export function localTime(nowSeconds, tz) {
++  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
++    .formatToParts(new Date(nowSeconds * 1000)).map(p => [p.type, p.value]));
++  return { day: DAYS.indexOf(parts.weekday.toLowerCase().slice(0, 3)), minutes: Number(parts.hour) * 60 + Number(parts.minute) };
++}
++
++/** Is an instant inside a window? Overnight windows (from > to) belong to the day they start on. */
++export function inWindow(window, local) {
++  const days = window.days || DAYS;
++  const from = minutes(window.from); const to = window.to === '24:00' ? 1440 : minutes(window.to);
++  const today = DAYS[local.day]; const yesterday = DAYS[(local.day + 6) % 7];
++  if (from < to) return days.includes(today) && local.minutes >= from && local.minutes < to;
++  return (days.includes(today) && local.minutes >= from) || (days.includes(yesterday) && local.minutes < to);
++}
++
++function placeMatches(where, loc, kind) {
++  if (kind === 'network') {
++    if (where.countries?.includes(loc.country)) return true;
++    if (where.regions?.includes(loc.region)) return true;
++  }
++  if (where.areas && Number.isFinite(loc.lat) && Number.isFinite(loc.lon)) {
++    const slack = kind === 'device' ? (Number.isFinite(loc.acc_m) ? loc.acc_m : Infinity) : 0;
++    return where.areas.some(area => distanceMeters(area, loc) + slack <= area.radius_m);
++  }
++  return false;
++}
++
++function checkSource(where, loc, kind, now, reasons) {
++  if (!loc) { reasons.push(`location_unavailable:${kind}`); return; }
++  if (kind === 'device' && !(Number.isFinite(loc.t) && Math.abs(now - loc.t) <= DEVICE_LOCATION_MAX_AGE)) { reasons.push('location_stale:device'); return; }
++  const places = where.countries || where.regions || where.areas;
++  if (places && !placeMatches(where, loc, kind)) reasons.push(`outside_location:${kind}`);
++  if (kind === 'network' && where.networks && !where.networks.some(n => ipInCidr(loc.ip, n))) reasons.push('network_not_allowed');
++}
++
++/**
++ * Evaluate one grant against a request context. Returns { ok, reasons, online }.
++ * `online` lists the checks only devicebasedauth.org can make (usage counters, step-up).
++ */
++export function evaluateGrant(grant, context) {
++  const reasons = []; const online = {};
++  const unknown = !isObject(grant) ? ['grant'] : [
++    ...Object.keys(grant).filter(k => !GRANT_KEYS.has(k)),
++    ...(isObject(grant.when) ? Object.keys(grant.when).filter(k => !WHEN_KEYS.has(k)).map(k => `when.${k}`) : []),
++    ...(isObject(grant.where) ? Object.keys(grant.where).filter(k => !WHERE_KEYS.has(k)).map(k => `where.${k}`) : []),
++    ...(isObject(grant.limits) ? Object.keys(grant.limits).filter(k => !LIMIT_KEYS.has(k)).map(k => `limits.${k}`) : []),
++    ...(isObject(grant.require) ? Object.keys(grant.require).filter(k => !REQUIRE_KEYS.has(k)).map(k => `require.${k}`) : [])
++  ];
++  if (unknown.length) return { ok: false, reasons: unknown.map(k => `unknown_constraint:${k}`), online };
++  if (validateGrant(grant).length) return { ok: false, reasons: ['invalid_grant'], online };
++  const now = context.now;
++  if (!grant.actions.some(p => actionMatches(p, context.action))) reasons.push('action_not_granted');
++  if (!(grant.resources || ['*']).some(p => resourceMatches(p, context.resource))) reasons.push('resource_not_granted');
++  const when = grant.when;
++  if (when) {
++    if (when.not_before !== undefined && now < when.not_before) reasons.push('before_not_before');
++    if (when.not_after !== undefined && now >= when.not_after) reasons.push('after_not_after');
++    if (when.windows) {
++      const local = localTime(now, when.tz);
++      if (!when.windows.some(w => inWindow(w, local))) reasons.push('outside_time_window');
++    }
++  }
++  const where = grant.where;
++  if (where) {
++    const location = context.location || {};
++    if (where.source === 'network' || where.source === 'both') checkSource(where, location.network, 'network', now, reasons);
++    if (where.source === 'device' || where.source === 'both') checkSource(where, location.device, 'device', now, reasons);
++  }
++  if (grant.limits?.uses) online.uses = grant.limits.uses;
++  if (grant.require?.step_up) online.step_up = true;
++  if (grant.require?.online) online.required = true;
++  if (!reasons.length && Object.keys(online).length && !context.online) reasons.push('online_required');
++  return { ok: reasons.length === 0, reasons, online };
++}
++
++/**
++ * Evaluate every grant. Allow when any grant passes (deny by default).
++ * context: { now (seconds), action, resource, location: { network, device }, online }
++ */
++export function evaluateGrants(grants, context) {
++  if (!Array.isArray(grants)) return { allow: false, grant_index: null, reasons: [['invalid_grants']], online_required: false };
++  const results = grants.map(g => evaluateGrant(g, context));
++  const index = results.findIndex(r => r.ok);
++  const onlineRequired = index < 0 && results.some(r => r.reasons.length === 1 && r.reasons[0] === 'online_required');
++  return {
++    allow: index >= 0, grant_index: index >= 0 ? index : null,
++    grant: index >= 0 ? grants[index] : null,
++    online: index >= 0 ? results[index].online : {},
++    caveats: index >= 0 && grants[index].limits?.spend_usd_per_month !== undefined ? { spend_usd_per_month: grants[index].limits.spend_usd_per_month } : {},
++    reasons: results.map(r => r.reasons), online_required: onlineRequired, results
++  };
++}
++
++/** Length of a usage period in seconds (total = Infinity). */
++export function periodSeconds(per) { return PERIOD_SECONDS[per] ?? Infinity; }
++
++const deepEqual = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
++function canonical(value) {
++  if (Array.isArray(value)) return value.map(canonical);
++  if (isObject(value)) return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
++  return value;
++}
++const patternCovered = (child, parents, matches) => parents.some(p => {
++  if (p === child) return true;
++  if (!child.endsWith('*')) return matches(p, child);
++  return p.endsWith('*') && child.startsWith(p.slice(0, -1));
++});
++
++/**
++ * Conservative check that a child grant can never allow more than a parent grant:
++ * every action and resource is covered, and every parent constraint appears unchanged.
++ */
++export function isNarrowing(child, parent) {
++  if (!child.actions.every(a => patternCovered(a, parent.actions, actionMatches))) return false;
++  const parentResources = parent.resources || ['*'];
++  if (!(child.resources || ['*']).every(r => patternCovered(r, parentResources, resourceMatches))) return false;
++  for (const key of ['when', 'where', 'limits', 'require']) if (parent[key] !== undefined && !deepEqual(child[key], parent[key])) return false;
++  return true;
++}
++
++/** Is every child grant a narrowing of some parent grant? */
++export function grantsNarrow(childGrants, parentGrants) {
++  return childGrants.every(child => parentGrants.some(parent => isNarrowing(child, parent)));
++}
++
++const DAY_NAMES = { sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday' };
++function list(items, joiner = 'or') {
++  if (items.length <= 1) return items.join('');
++  return `${items.slice(0, -1).join(', ')} ${joiner} ${items.at(-1)}`;
++}
++function describeDays(days) {
++  if (!days || days.length === 7) return 'every day';
++  const key = DAYS.filter(d => days.includes(d)).join(',');
++  if (key === 'mon,tue,wed,thu,fri') return 'weekdays';
++  if (key === 'sun,sat') return 'weekends';
++  return list(DAYS.filter(d => days.includes(d)).map(d => DAY_NAMES[d]));
++}
++const iso = seconds => new Date(seconds * 1000).toISOString().replace('.000Z', 'Z');
++
++/** Describe a grant in plain English. */
++export function describeGrant(grant) {
++  if (!isObject(grant) || !Array.isArray(grant.actions)) return 'An invalid grant (it allows nothing).';
++  const parts = [`May ${list(grant.actions.map(a => `"${a}"`))}`];
++  const resources = grant.resources || ['*'];
++  parts.push(resources.length === 1 && resources[0] === '*' ? 'on any resource' : `on ${list(resources.map(r => r.endsWith('*') ? `resources starting with "${r.slice(0, -1)}"` : `"${r}"`))}`);
++  const when = grant.when;
++  if (when?.windows) parts.push(`${list(when.windows.map(w => `${describeDays(w.days)} ${w.from}–${w.to}`))} (${when.tz} time)`);
++  if (when?.not_before !== undefined) parts.push(`from ${iso(when.not_before)}`);
++  if (when?.not_after !== undefined) parts.push(`until ${iso(when.not_after)}`);
++  const where = grant.where;
++  if (where) {
++    const places = [...(where.countries || []), ...(where.regions || []), ...(where.areas || []).map(a => `within ${a.radius_m >= 1000 ? `${+(a.radius_m / 1000).toFixed(1)} km` : `${a.radius_m} m`} of ${a.lat},${a.lon}`)];
++    const source = { network: 'as seen from its network connection', device: 'as reported by the device', both: 'both as seen from its network and as reported by the device' }[where.source] || '';
++    if (places.length) parts.push(`only from ${list(places)} (${source})`);
++    if (where.networks) parts.push(`only from network ${list(where.networks)}`);
++  }
++  const uses = grant.limits?.uses;
++  if (uses) parts.push(uses.per === 'total' ? `at most ${uses.count} time${uses.count === 1 ? '' : 's'} in total` : `at most ${uses.count} time${uses.count === 1 ? '' : 's'} per ${uses.per}`);
++  if (grant.limits?.spend_usd_per_month !== undefined) parts.push(`spending at most $${grant.limits.spend_usd_per_month.toFixed(2)} per month`);
++  if (grant.require?.step_up) parts.push('with the owner approving each use');
++  if (grant.require?.online) parts.push('checked online with devicebasedauth.org every time');
++  return `${parts.join(', ')}.`;
++}
+diff --git a/src/vendor/devicebasedauth/index.js b/src/vendor/devicebasedauth/index.js
+new file mode 100644
+index 0000000..3ac9d23
+--- /dev/null
++++ b/src/vendor/devicebasedauth/index.js
+@@ -0,0 +1,7 @@
++export * from './jose.js';
++export * from './grants.js';
++export * from './status-list.js';
++export * from './credential.js';
++export * from './verifier.js';
++export * from './issuer.js';
++export * from './site.js';
+diff --git a/src/vendor/devicebasedauth/issuer.js b/src/vendor/devicebasedauth/issuer.js
+new file mode 100644
+index 0000000..1686515
+--- /dev/null
++++ b/src/vendor/devicebasedauth/issuer.js
+@@ -0,0 +1,32 @@
++/**
++ * Signing helpers for the issuer (the devicebasedauth.org Worker) and for tests.
++ * Verifiers do not need this module.
++ */
++import { signJws, importJwk, publicJwk } from './jose.js';
++import { CREDENTIAL_TYP, ACCESS_TYP, STATUS_LIST_TYP, validateCredentialPayload } from './credential.js';
++import { encodeStatusList } from './status-list.js';
++
++/** Import an issuer key { kid, jwk (private, with d) } for signing. */
++export async function issuerSigner({ kid, jwk }) {
++  return { kid, key: await importJwk(jwk, 'sign'), publicJwk: { ...publicJwk(jwk), kid, alg: 'ES256', use: 'sig' } };
++}
++
++/** Build a JWKS from issuer keys (public halves only). */
++export function jwksFor(keys) {
++  return { keys: keys.map(({ kid, jwk }) => ({ ...publicJwk(jwk), kid, alg: 'ES256', use: 'sig' })) };
++}
++
++/** Sign a device credential after validating its payload. */
++export async function signCredential(payload, signer, typ = CREDENTIAL_TYP) {
++  const problems = validateCredentialPayload(payload, { typ });
++  if (problems.length) throw new Error(`invalid credential: ${problems.join('; ')}`);
++  return signJws({ typ, kid: signer.kid }, payload, signer.key);
++}
++
++/** Sign a short-lived access token (bearer; carries the same grants). */
++export function signAccessToken(payload, signer) { return signCredential(payload, signer, ACCESS_TYP); }
++
++/** Sign a status list token for the bytes of one list. */
++export async function signStatusList({ uri, bytes, issuer, ttl = 60, now = Math.floor(Date.now() / 1000), lifetime = 86400 }, signer) {
++  return signJws({ typ: STATUS_LIST_TYP, kid: signer.kid }, { iss: issuer, sub: uri, iat: now, exp: now + lifetime, ttl, status_list: await encodeStatusList(bytes) }, signer.key);
++}
+diff --git a/src/vendor/devicebasedauth/jose.js b/src/vendor/devicebasedauth/jose.js
+new file mode 100644
+index 0000000..f4bbf42
+--- /dev/null
++++ b/src/vendor/devicebasedauth/jose.js
+@@ -0,0 +1,89 @@
++/**
++ * Minimal JOSE helpers (ES256 only) on WebCrypto. No dependencies, so the same code runs in
++ * Workers, Node 22+, Deno, Bun and browsers.
++ */
++const encoder = new TextEncoder();
++const decoder = new TextDecoder();
++const ES256 = { name: 'ECDSA', namedCurve: 'P-256' };
++const SIGN = { name: 'ECDSA', hash: 'SHA-256' };
++
++/** Encode bytes or a string as unpadded base64url. */
++export function b64u(input) {
++  const bytes = typeof input === 'string' ? encoder.encode(input) : input instanceof Uint8Array ? input : new Uint8Array(input);
++  let binary = '';
++  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
++  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
++}
++
++/** Decode base64url to bytes; throws on invalid input. */
++export function unb64u(value) {
++  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]*$/.test(value)) throw new Error('invalid base64url');
++  const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (value.length % 4)) % 4);
++  return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
++}
++
++/** Decode base64url JSON. */
++export function unb64uJson(value) { return JSON.parse(decoder.decode(unb64u(value))); }
++
++/** SHA-256 of a string, base64url encoded. */
++export async function sha256b64u(value) {
++  return b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', typeof value === 'string' ? encoder.encode(value) : value)));
++}
++
++/** Keep only the public members of a P-256 JWK, in a fixed order. */
++export function publicJwk(jwk) {
++  if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256' || typeof jwk.x !== 'string' || typeof jwk.y !== 'string') throw new Error('expected a P-256 public JWK');
++  return { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y };
++}
++
++/** RFC 7638 JWK thumbprint (SHA-256, base64url). */
++export async function jwkThumbprint(jwk) {
++  const { crv, kty, x, y } = publicJwk(jwk);
++  return sha256b64u(JSON.stringify({ crv, kty, x, y }));
++}
++
++/** Generate a P-256 key pair. Browsers should pass extractable=false so the private key can never be exported. */
++export async function generateKeyPair(extractable = false) {
++  return crypto.subtle.generateKey(ES256, extractable, ['sign', 'verify']);
++}
++
++/** Export the public key of a CryptoKey pair as a JWK. */
++export async function exportPublicJwk(publicKey) { return publicJwk(await crypto.subtle.exportKey('jwk', publicKey)); }
++
++/** Import a P-256 JWK as a verify (public) or sign (private, has d) key. */
++export async function importJwk(jwk, usage = jwk.d ? 'sign' : 'verify') {
++  const key = usage === 'sign' ? { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, d: jwk.d } : publicJwk(jwk);
++  return crypto.subtle.importKey('jwk', key, ES256, false, [usage]);
++}
++
++/** Sign a compact JWS with ES256. */
++export async function signJws(header, payload, privateKey) {
++  const input = `${b64u(JSON.stringify({ ...header, alg: 'ES256' }))}.${b64u(JSON.stringify(payload))}`;
++  const signature = new Uint8Array(await crypto.subtle.sign(SIGN, privateKey, encoder.encode(input)));
++  return `${input}.${b64u(signature)}`;
++}
++
++/**
++ * Split and decode a compact JWS without verifying it. Use this to read a credential;
++ * never trust what it says until verifyJws succeeds.
++ */
++export function decodeJws(jws) {
++  if (typeof jws !== 'string' || jws.length > 65536) throw new Error('invalid_format');
++  const parts = jws.split('.');
++  if (parts.length !== 3) throw new Error('invalid_format');
++  try {
++    const header = unb64uJson(parts[0]); const payload = unb64uJson(parts[1]); const signature = unb64u(parts[2]);
++    if (!header || typeof header !== 'object' || !payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid_format');
++    return { header, payload, signature, signingInput: `${parts[0]}.${parts[1]}` };
++  } catch { throw new Error('invalid_format'); }
++}
++
++/** Verify a compact JWS against a public key (CryptoKey or JWK). Returns the decoded parts or null. */
++export async function verifyJws(jws, key) {
++  let decoded;
++  try { decoded = decodeJws(jws); } catch { return null; }
++  if (decoded.header.alg !== 'ES256' || decoded.signature.length !== 64) return null;
++  const cryptoKey = key?.type ? key : await importJwk(key, 'verify');
++  const ok = await crypto.subtle.verify(SIGN, cryptoKey, decoded.signature, encoder.encode(decoded.signingInput));
++  return ok ? decoded : null;
++}
+diff --git a/src/vendor/devicebasedauth/site.js b/src/vendor/devicebasedauth/site.js
+new file mode 100644
+index 0000000..6b35a12
+--- /dev/null
++++ b/src/vendor/devicebasedauth/site.js
+@@ -0,0 +1,85 @@
++/**
++ * Helpers for a site that accepts devicebasedauth.org credentials as API keys (device-bound) and
++ * as a sign-in method. Built on createVerifier; used by hashbin.org and cronly.org.
++ */
++import { createVerifier } from './verifier.js';
++import { decodeJws, verifyJws, sha256b64u, b64u } from './jose.js';
++
++/**
++ * createSiteAuth({ audience, namespace, scopes, linkedUser, issuer, fetch, now, online })
++ *   namespace  — the site's action namespace ("hashbin")
++ *   scopes     — the site's own scope names ("content:write", …); actions are `${namespace}:${scope}`
++ *   linkedUser — async (dbaAccount, { request, payload }) => local user id, or null when not linked
++ * authenticate(request) returns null when the request carries no DBA credential (fall through to
++ * the site's other auth), or { ok: false, status, code } / { ok: true, userId, scopes, … }.
++ */
++export function createSiteAuth({ audience, namespace, scopes, linkedUser, ...verifierOptions }) {
++  if (!namespace || !Array.isArray(scopes) || typeof linkedUser !== 'function') throw new Error('createSiteAuth needs namespace, scopes and linkedUser');
++  const verifier = createVerifier({ audience, ...verifierOptions });
++  const actions = [...new Set([...scopes, 'session'])].map(scope => `${namespace}:${scope}`);
++
++  async function authenticate(request) {
++    const auth = await verifier.authenticateRequest(request);
++    if (!auth.ok) return auth.code === 'credential_required' ? null : { ok: false, status: auth.status, code: auth.code, message: auth.message };
++    const { payload, proof } = auth;
++    const userId = await linkedUser(payload.acct, { request, payload, kind: auth.kind });
++    if (!userId) return { ok: false, status: 403, code: 'account_not_linked', message: `Link devicebasedauth.org account ${payload.acct} to your ${audience} account first`, dba_account: payload.acct };
++    const allowed = verifier.allowedActions(payload, actions, { request, proof }).map(a => a.slice(namespace.length + 1));
++    // The tightest spend cap of any grant this credential holds applies to everything it does.
++    const caps = payload.grants.map(g => g.limits?.spend_usd_per_month).filter(v => v !== undefined);
++    return {
++      ok: true, userId, dbaAccount: payload.acct, deviceId: payload.sub, credentialId: payload.cid, kind: auth.kind,
++      session: allowed.includes('session'), scopes: allowed.filter(s => s !== 'session'),
++      caveats: caps.length ? { spend_usd_per_month: Math.min(...caps) } : {},
++      payload, proof
++    };
++  }
++
++  /** Decide one action for an authenticated result, including resource-scoped grants. */
++  function allows(result, action, resource) {
++    return result?.ok === true && verifier.decide(result.payload, { action: `${namespace}:${action}`, resource }, { proof: result.proof }).allow;
++  }
++
++  return { authenticate, allows, verifier };
++}
++
++/**
++ * OpenID Connect client for "Sign in with devicebasedauth.org" and account linking
++ * (authorization code + PKCE S256; no client secret).
++ *   const oidc = createOidcClient({ clientId: 'hashbin.org', redirectUri: 'https://hashbin.org/auth/dba/callback' });
++ *   const { url, state } = await oidc.begin();   // store state server-side (or signed cookie), redirect to url
++ *   const claims = await oidc.finish(callbackUrlSearchParams, state);  // { sub, acct, dev?, cid?, … }
++ */
++export function createOidcClient({ clientId, redirectUri, issuer = 'https://devicebasedauth.org', fetch: fetcher = (...a) => globalThis.fetch(...a), now = () => Math.floor(Date.now() / 1000) }) {
++  let discovery = null; let jwks = null;
++  const config = async () => discovery ||= await (await fetcher(`${issuer}/.well-known/openid-configuration`)).json();
++
++  async function begin({ scope = 'openid profile' } = {}) {
++    const c = await config();
++    const random = () => b64u(crypto.getRandomValues(new Uint8Array(32)));
++    const state = { state: random(), nonce: random(), verifier: random() };
++    const url = new URL(c.authorization_endpoint);
++    for (const [k, v] of Object.entries({ response_type: 'code', client_id: clientId, redirect_uri: redirectUri, scope, state: state.state, nonce: state.nonce, code_challenge: await sha256b64u(state.verifier), code_challenge_method: 'S256' })) url.searchParams.set(k, v);
++    return { url: url.toString(), state };
++  }
++
++  async function finish(params, saved) {
++    const p = params instanceof URLSearchParams ? params : new URLSearchParams(params);
++    if (p.get('error')) throw Object.assign(new Error(`Sign-in was not completed: ${p.get('error')}`), { code: p.get('error') });
++    if (!saved || p.get('state') !== saved.state) throw Object.assign(new Error('State mismatch'), { code: 'invalid_state' });
++    const c = await config();
++    const response = await fetcher(c.token_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', code: p.get('code') || '', redirect_uri: redirectUri, client_id: clientId, code_verifier: saved.verifier }).toString() });
++    const tokens = await response.json();
++    if (!response.ok) throw Object.assign(new Error(tokens.error_description || 'Token exchange failed'), { code: tokens.error });
++    const { header, payload } = decodeJws(tokens.id_token);
++    jwks ||= await (await fetcher(c.jwks_uri)).json();
++    let key = jwks.keys.find(k => k.kid === header.kid);
++    if (!key) { jwks = await (await fetcher(c.jwks_uri)).json(); key = jwks.keys.find(k => k.kid === header.kid); }
++    if (!key || !await verifyJws(tokens.id_token, key)) throw Object.assign(new Error('ID token signature is invalid'), { code: 'invalid_id_token' });
++    const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
++    if (payload.iss !== c.issuer || !audiences.includes(clientId) || (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== clientId) || payload.nonce !== saved.nonce || payload.exp < now() - 60) throw Object.assign(new Error('ID token claims are invalid'), { code: 'invalid_id_token' });
++    return payload;
++  }
++
++  return { begin, finish };
++}
+diff --git a/src/vendor/devicebasedauth/status-list.js b/src/vendor/devicebasedauth/status-list.js
+new file mode 100644
+index 0000000..0e9362c
+--- /dev/null
++++ b/src/vendor/devicebasedauth/status-list.js
+@@ -0,0 +1,42 @@
++/**
++ * IETF OAuth Token Status List (1 bit per credential): bit i lives in byte floor(i/8) at
++ * position i % 8, least significant bit first; the byte array is zlib-compressed and base64url.
++ */
++import { b64u, unb64u } from './jose.js';
++
++async function pipe(bytes, stream) {
++  const output = new Blob([bytes]).stream().pipeThrough(stream);
++  return new Uint8Array(await new Response(output).arrayBuffer());
++}
++
++/** zlib (RFC 1950) compress. */
++export function deflate(bytes) { return pipe(bytes, new CompressionStream('deflate')); }
++/** zlib (RFC 1950) decompress, bounded so a hostile list cannot exhaust memory. */
++export async function inflate(bytes, maxBytes = 16 * 1024 * 1024) {
++  const out = await pipe(bytes, new DecompressionStream('deflate'));
++  if (out.length > maxBytes) throw new Error('status list too large');
++  return out;
++}
++
++/** Read one status bit (1 = revoked). Indexes beyond the list are 0 (valid). */
++export function getBit(bytes, index) {
++  const byte = bytes[index >> 3];
++  return byte === undefined ? 0 : (byte >> (index & 7)) & 1;
++}
++
++/** Set one status bit in place, growing the array when needed. Returns the (possibly new) array. */
++export function setBit(bytes, index, value = 1) {
++  let out = bytes;
++  if ((index >> 3) >= out.length) { out = new Uint8Array(Math.max((index >> 3) + 1, out.length * 2)); out.set(bytes); }
++  if (value) out[index >> 3] |= 1 << (index & 7); else out[index >> 3] &= ~(1 << (index & 7));
++  return out;
++}
++
++/** Encode bytes as a status_list claim. */
++export async function encodeStatusList(bytes) { return { bits: 1, lst: b64u(await deflate(bytes)) }; }
++
++/** Decode a status_list claim to bytes. */
++export async function decodeStatusList(claim) {
++  if (!claim || claim.bits !== 1 || typeof claim.lst !== 'string') throw new Error('unsupported status list');
++  return inflate(unb64u(claim.lst));
++}
+diff --git a/src/vendor/devicebasedauth/verifier.js b/src/vendor/devicebasedauth/verifier.js
+new file mode 100644
+index 0000000..d3525e6
+--- /dev/null
++++ b/src/vendor/devicebasedauth/verifier.js
+@@ -0,0 +1,188 @@
++/**
++ * A caching verifier for relying parties. Verifies credentials offline with the issuer's
++ * JWKS and status lists (both CDN-served and cached here), and optionally online.
++ */
++import { verifyJws, decodeJws } from './jose.js';
++import { verifyCredential, verifyProof, ReplayCache, VerificationError, DEFAULT_ISSUER, STATUS_LIST_TYP, CLOCK_SKEW } from './credential.js';
++import { evaluateGrants } from './grants.js';
++import { decodeStatusList, getBit } from './status-list.js';
++
++/** Read Cloudflare's request.cf (when present) into a network location. */
++export function networkLocation(request) {
++  const cf = request.cf || {};
++  const ip = request.headers.get('CF-Connecting-IP') || undefined;
++  const lat = cf.latitude !== undefined ? Number(cf.latitude) : undefined;
++  const lon = cf.longitude !== undefined ? Number(cf.longitude) : undefined;
++  if (!cf.country && !ip && lat === undefined) return undefined;
++  return { country: cf.country, region: cf.country && cf.regionCode ? `${cf.country}-${cf.regionCode}` : undefined, lat, lon, ip };
++}
++
++/** Pull the credential and proof out of request headers. */
++export function credentialFromRequest(request) {
++  const auth = (request.headers.get('Authorization') || '').trim();
++  const space = auth.indexOf(' ');
++  const scheme = space > 0 ? auth.slice(0, space).toLowerCase() : '';
++  const value = space > 0 ? auth.slice(space + 1).trim() : '';
++  // HTTP authentication schemes are case-insensitive (RFC 9110 §11.1).
++  if (scheme === 'dba') return { kind: 'device', credential: value, proof: request.headers.get('DPoP') || undefined };
++  if (scheme === 'bearer') {
++    const token = value;
++    // Only DBA access tokens are claimed here; other bearer tokens belong to the site.
++    try { const header = JSON.parse(atob(token.split('.')[0].replaceAll('-', '+').replaceAll('_', '/'))); if (header.typ === 'dba-access+jwt') return { kind: 'access', credential: token }; } catch { /* not ours */ }
++  }
++  return null;
++}
++
++/**
++ * createVerifier({ audience, issuer, fetch, jwksTtl, statusTtl, replay, now, online })
++ *   audience  — your audience name, e.g. "hashbin.org" (required)
++ *   online    — { apiKey } to enable verifyOnline (POST {issuer}/api/v1/authorize)
++ */
++export function createVerifier(options = {}) {
++  const issuer = options.issuer || DEFAULT_ISSUER;
++  const audience = options.audience;
++  if (!audience) throw new Error('createVerifier needs an audience');
++  const fetcher = options.fetch || ((...args) => globalThis.fetch(...args));
++  const clock = options.now || (() => Math.floor(Date.now() / 1000));
++  const jwksTtl = options.jwksTtl ?? 3600; const statusTtl = options.statusTtl ?? 300;
++  const replay = options.replay === false ? null : options.replay || new ReplayCache();
++  let jwksCache = null; const statusCache = new Map();
++
++  let jwksFailure = null; const statusFailures = new Map();
++  const FAILURE_BACKOFF = options.failureBackoff ?? 30;
++
++  async function jwks(force = false) {
++    const now = clock();
++    if (!force && jwksCache && jwksCache.expires > now) return jwksCache.value;
++    // While the issuer is unreachable, fail fast instead of fetching on every request.
++    if (jwksFailure && jwksFailure.until > now) {
++      if (jwksCache) return jwksCache.value;
++      throw new VerificationError('jwks_unavailable', jwksFailure.message);
++    }
++    let response;
++    try { response = await fetcher(`${issuer}/.well-known/jwks.json`); } catch (error) { response = { ok: false, status: error.message }; }
++    if (!response.ok) {
++      jwksFailure = { until: now + FAILURE_BACKOFF, message: `JWKS fetch failed (${response.status})` };
++      if (jwksCache) return jwksCache.value;
++      throw new VerificationError('jwks_unavailable', jwksFailure.message);
++    }
++    jwksFailure = null;
++    jwksCache = { value: await response.json(), expires: now + jwksTtl };
++    return jwksCache.value;
++  }
++
++  async function statusBytes(uri) {
++    const now = clock(); const cached = statusCache.get(uri);
++    if (cached && cached.expires > now) return cached.bytes;
++    const failed = statusFailures.get(uri);
++    if (failed && failed.until > now) throw new VerificationError('status_unavailable', failed.message);
++    let response;
++    try { response = await fetcher(uri, { headers: { Accept: 'application/statuslist+jwt' } }); } catch (error) { response = { ok: false, status: error.message }; }
++    if (!response.ok) {
++      statusFailures.set(uri, { until: now + FAILURE_BACKOFF, message: `Status list fetch failed (${response.status})` });
++      throw new VerificationError('status_unavailable', `Status list fetch failed (${response.status})`);
++    }
++    statusFailures.delete(uri);
++    const jws = (await response.text()).trim();
++    const keys = await jwks();
++    let decoded = null; let kid;
++    try { kid = JSON.parse(atob(jws.split('.')[0].replaceAll('-', '+').replaceAll('_', '/'))).kid; } catch { /* handled below */ }
++    const key = keys.keys?.find(k => k.kid === kid);
++    if (key) decoded = await verifyJws(jws, key);
++    if (!decoded || decoded.header.typ !== STATUS_LIST_TYP || decoded.payload.sub !== uri || decoded.payload.iss !== issuer) throw new VerificationError('status_unavailable', 'Status list did not verify');
++    if (Number.isSafeInteger(decoded.payload.exp) && decoded.payload.exp < now - CLOCK_SKEW) throw new VerificationError('status_unavailable', 'Status list has expired');
++    const bytes = await decodeStatusList(decoded.payload.status_list);
++    const ttl = Math.min(statusTtl, Number.isSafeInteger(decoded.payload.ttl) ? decoded.payload.ttl : statusTtl);
++    statusCache.set(uri, { bytes, expires: now + ttl });
++    return bytes;
++  }
++
++  /** Is the credential revoked? (true / false; throws status_unavailable when unknown) */
++  async function isRevoked(payload) {
++    const { idx, uri } = payload.status.status_list;
++    return getBit(await statusBytes(uri), idx) === 1;
++  }
++
++  /** Verify signature, claims and revocation. */
++  async function verify(credential, { typ = 'device' } = {}) {
++    // Reject malformed input before any network fetch.
++    try { decodeJws(credential); } catch { throw new VerificationError('invalid_format', 'Not a compact JWS'); }
++    let keys = await jwks(); let result;
++    try { result = await verifyCredential(credential, { jwks: keys, issuer, audience, now: clock(), typ }); }
++    catch (error) {
++      // A new signing key may have been published since the cache was filled.
++      if (error.code !== 'unknown_kid') throw error;
++      keys = await jwks(true); result = await verifyCredential(credential, { jwks: keys, issuer, audience, now: clock(), typ });
++    }
++    if (await isRevoked(result.payload)) throw new VerificationError('revoked', 'Credential has been revoked');
++    return result;
++  }
++
++  /**
++   * Verify an incoming request's credential (and proof) without deciding an action yet.
++   * Returns { ok: true, kind, payload, proof } or { ok: false, status, code, message }.
++   */
++  async function authenticateRequest(request) {
++    const found = credentialFromRequest(request);
++    if (!found) return { ok: false, status: 401, code: 'credential_required' };
++    try {
++      if (found.kind === 'access' && options.acceptAccessTokens === false) return { ok: false, status: 401, code: 'access_tokens_not_accepted' };
++      const { payload } = await verify(found.credential, { typ: found.kind });
++      let proof = null;
++      if (found.kind === 'device') {
++        if (!found.proof) return { ok: false, status: 401, code: 'proof_required' };
++        proof = await verifyProof(found.proof, { method: request.method, url: request.url, credential: found.credential, jkt: payload.cnf.jkt, now: clock(), replay });
++      }
++      return { ok: true, kind: found.kind, payload, proof, credential: found.credential };
++    } catch (error) {
++      if (error instanceof VerificationError) return { ok: false, status: ['jwks_unavailable', 'status_unavailable'].includes(error.code) ? 503 : 401, code: error.code, message: error.message };
++      throw error;
++    }
++  }
++
++  /**
++   * Verify an incoming request end to end and decide one action.
++   * check: { action, resource, location: { network, device } }
++   * Returns { allow, status, code, reasons, credential, device, account, grant, caveats, online_required }.
++   */
++  async function verifyRequest(request, check) {
++    const auth = await authenticateRequest(request);
++    if (!auth.ok) return { allow: false, status: auth.status, code: auth.code, message: auth.message, reasons: [] };
++    return decide(auth.payload, check, { request, proof: auth.proof });
++  }
++
++  /** Which of these actions does a verified credential allow right now (offline checks only)? */
++  function allowedActions(payload, actions, { request, proof, location } = {}) {
++    return actions.filter(action => decide(payload, { action, location }, { request, proof }).allow);
++  }
++
++  /** Evaluate grants for an already-verified payload. */
++  function decide(payload, check, { request, proof } = {}) {
++    const location = { network: check.location?.network ?? (request ? networkLocation(request) : undefined), device: check.location?.device ?? proof?.loc };
++    const result = evaluateGrants(payload.grants, { now: clock(), action: check.action, resource: check.resource, location, online: false });
++    return {
++      allow: result.allow, status: result.allow ? 200 : 403, code: result.allow ? 'ok' : result.online_required ? 'online_required' : 'forbidden',
++      reasons: result.reasons, grant_index: result.grant_index, grant: result.grant, caveats: result.caveats, online_required: result.online_required,
++      credential: payload, device: payload.sub, account: payload.acct, credential_id: payload.cid
++    };
++  }
++
++  /**
++   * Ask devicebasedauth.org (metered; billed to your audience account). Needed for grants with
++   * usage limits, step-up or require.online, and for instant revocation.
++   */
++  async function verifyOnline(request, check) {
++    if (!options.online?.apiKey) throw new Error('verifyOnline needs options.online.apiKey');
++    const found = credentialFromRequest(request);
++    if (!found) return { allow: false, status: 401, code: 'credential_required', reasons: [] };
++    const response = await fetcher(`${issuer}/api/v1/authorize`, {
++      method: 'POST', headers: { Authorization: `ApiKey ${options.online.apiKey}`, 'Content-Type': 'application/json' },
++      body: JSON.stringify({ credential: found.credential, proof: found.proof, request: { method: request.method, url: request.url }, audience, action: check.action, resource: check.resource, context: { network: check.location?.network ?? networkLocation(request) } })
++    });
++    const body = await response.json();
++    if (!response.ok) return { allow: false, status: response.status === 402 ? 503 : response.status, code: body.code, message: body.error, reasons: [] };
++    return { ...body, status: body.allow ? 200 : 403 };
++  }
++
++  return { jwks, verify, isRevoked, authenticateRequest, verifyRequest, allowedActions, verifyOnline, decide, issuer, audience };
++}
+diff --git a/todo/dba_integration.md b/todo/dba_integration.md
+new file mode 100644
+index 0000000..777d32c
+--- /dev/null
++++ b/todo/dba_integration.md
+@@ -0,0 +1,89 @@
++# devicebasedauth.org integration (S5)
++
++Written to be picked up cold. Status lives in [`STATUS.md`](../STATUS.md) row S5.
++
++## Intent
++
++[devicebasedauth.org](https://devicebasedauth.org) ("DBA") issues revocable, device-bound
++credentials: an ES256 JWS listing what one device may do, for which site, when and where. Its
++master plan §9 makes cronly the first relying party after DBA itself. cronly gains:
++
++1. **Device-bound API keys.** A device enrolled at DBA for audience `cronly.org` calls the cronly
++   API with `Authorization: DBA <credential>` plus a `DPoP: <proof>` header signed by its own key
++   (the private key never leaves the device), or with a ≤ 10-minute DBA access token
++   `Authorization: Bearer <token>` whose JWS header `typ` is `dba-access+jwt`.
++2. **Account linking.** A signed-in cronly user links their DBA account once with an OpenID
++   Connect round trip. Credentials from DBA accounts that are not linked are refused.
++
++Existing Clerk sessions, `crk_` API keys and trigger tokens are unchanged.
++
++## Action mapping
++
++DBA publishes cronly's catalog from cronly's own scope list (DBA
++`src/services/first-party.js`): `cronly:read`, `cronly:run`, `cronly:change`, `cronly:prose`,
++`cronly:secrets:write`, plus `cronly:session`. A credential's allowed `cronly:<scope>` actions
++become the request's scopes and go through the same `API_ROUTES` access checks as API keys.
++
++**`cronly:session` does not grant `SESSION`** (decision recorded here; revisit with "Stage B").
++`SESSION` routes create API keys, start Checkout and link/unlink DBA accounts; letting a device
++credential do that would let one device mint broader, non-device-bound credentials or move the
++link. A DBA credential is therefore always `session: false`, like an API key (it can use MCP).
++
++Grants restricted by `resources` are evaluated without a resource and so do not grant their
++scope (fail closed). Mapping resource patterns such as `job:nightly-*` onto job names is a
++follow-up.
++
++## Design
++
++| Piece | Where | Notes |
++|-------|-------|-------|
++| Verifier | `src/vendor/devicebasedauth/` | Unmodified copy of DBA `packages/verify/src`, pinned by commit and SHA-256 (`src/vendor/devicebasedauth.test.js`). One evaluator implementation; never edit locally. |
++| Request auth | `src/auth/dba.js`, `src/auth/middleware.js` | `createSiteAuth({ audience: 'cronly.org', namespace: 'cronly', scopes: USER_SCOPES, linkedUser, issuer, fetch })`, one per issuer at module scope so JWKS, status-list and DPoP replay caches persist per isolate. The request's `env` reaches `linkedUser` through `AsyncLocalStorage`. DBA is tried before Clerk for `DBA …` and for `Bearer …` whose JWS header says `dba-access+jwt`; any other bearer stays Clerk. |
++| Link index | `DbaLinkDO` (`src/durable-objects/dba-link-do.js`), binding `DBA_LINKS` | One object per DBA account (named by it): `{ account }`. Lookup is on the hot path of every DBA request, so it must not queue on a singleton like `SafetyDO`, and a per-DBA-account object makes "one DBA account → at most one cronly account" an atomic claim. Strongly consistent, unlike KV, which cronly does not use. |
++| Reverse link | `AccountDO` row `dba-link` | `{ dba_account, subject, issuer, linked_at }` for display and unlink. **It is the confirming half**: a request is accepted only when the index names the account *and* the account's row names the same DBA account. An interrupted link/unlink therefore authorizes nothing, and a stale claim can be taken over once its holder no longer confirms it (compare-and-swap `replace`). |
++| OIDC state | `AccountDO` rows `dba-oidc:<state>` | `{ state, nonce, verifier }`, 10-minute TTL, single use, at most 10 outstanding, pruned by `maintenance`. Never sent to the browser except the `state` value inside the authorization URL. |
++| Credential rows | `AccountDO` rows `dba-key:<cid>` | Written (only when changed) on each authenticated DBA request: DBA account, device id/name, credential expiry, monthly cap. Listed in the account's DBA section; deleted on unlink or relink; pruned after expiry. At most 1,000 per account. |
++| Budgets | `keyBudget` → `dbaKeyBudget` | The DBA credential id (`crd_…`, never a cronly key id) is the request's `key_id`, so every existing per-key path applies: reads are metered like API-key reads (21 µ$ + 2 µ$/job scanned), holds and charges carry `key_id`, and the grant's `limits.spend_usd_per_month` becomes a UTC-month key budget in µ$ (`Math.round(usd × 1e6)`; the tightest cap of any grant in the credential, as `createSiteAuth` reports it). Queued retries re-check the row, so unlink or expiry refuses them. |
++| MCP | `src/index.js` | `/mcp` replays each tool as an internal request. A DPoP proof is single-use and bound to `/mcp`, so the already-verified DBA identity is forwarded on the in-process `Request` object (a `WeakMap`; nothing an outside caller can set). |
++| Routes | `API_ROUTES` | `GET /api/dba/link` (status), `POST /api/dba/link/start`, `POST /api/dba/link/finish` (`{ code, state }`), `DELETE /api/dba/link`; all `SESSION`. Free like sign-in, rate-limited to 10 link operations a minute per account; `?dry_run=1` validates and quotes 0 µ$. |
++| UI | `frontend/js/app.js` | Account page "devicebasedauth.org" panel: link status, Link/Unlink, credentials seen, `dba enroll` and browser-SDK instructions. `/auth/dba/callback` serves `app.html`; it moves `code`/`state` out of the URL at once, then posts them to `finish` after sign-in. |
++
++### Why link/unlink are free
++
++They are session-only account settings, comparable to signing in (free). Each costs a few
++Durable Object requests and two outbound fetches to DBA, bounded by the per-account limit of 10
++per minute. If the owner prefers, bill them as a change (100 µ$) through `bill-change`.
++
++## Owner steps (ops)
++
++1. Deploy: the `DBA_LINKS` binding and migration `v3` (`new_sqlite_classes = ["DbaLinkDO"]`) are
++   in both wrangler configs. Add the new namespace's ID to `COST_SAFETY_DO_NAMESPACES` (CI
++   variable) so the cost monitor counts it.
++2. `DBA_ISSUER` is a plain `[vars]` entry (`https://devicebasedauth.org`; the code defaults to the
++   same). Point it elsewhere only for staging. For local work, run DBA's `dev:local` on another
++   port (both default to 8787) and set `DBA_ISSUER` in `wrangler.local.toml`; DBA's local issuer
++   must register `http://localhost:8787/auth/dba/callback` for client `cronly.org`.
++3. Confirm the registration at devicebasedauth.org: audience `cronly.org`, namespace `cronly`,
++   redirect URI `https://cronly.org/auth/dba/callback` (already in DBA's first-party list).
++4. Fund the cronly operator account at devicebasedauth.org. cronly verifies offline (free), so
++   this only matters if online authorization (`limits.uses`, `require.online`,
++   `require.step_up`) is enabled later; those grants deny today.
++5. Optional "Stage A" sign-in: register devicebasedauth.org as a custom OIDC provider in the
++   cronly Clerk application (discovery `https://devicebasedauth.org/.well-known/openid-configuration`,
++   client `cronly.org`, PKCE, scopes `openid profile`). That gives a "devicebasedauth.org" button
++   next to Google with no cronly code, but the result is an ordinary Clerk session (revoking the
++   device stops future sign-ins, not the session). Needs the Clerk plan to support custom
++   providers (DBA decision D7). It is independent of account linking.
++6. Live acceptance: link a real DBA account, `dba enroll --aud cronly.org --action cronly:read`,
++   call `GET /api/account` with `dba curl`, check the 21 µ$ read charge, revoke the device at DBA
++   and confirm 401 within the status-list TTL (≤ 5 minutes).
++
++## Follow-ups
++
++- Mark a `dba-key:` row revoked when the verifier reports `revoked`, so queued retries stop
++  immediately rather than at credential expiry or unlink.
++- Honor resource-scoped grants (`job:<name>`) per route.
++- Stage B (device-bound web sessions): let the web UI call the API with `dba.js` instead of
++  Clerk, then decide what `cronly:session` may do.
++- Online authorization for `limits.uses` / `require.*` grants (needs the funded operator
++  account and an API key from DBA).
+-- 
+2.43.0
+

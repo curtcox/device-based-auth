@@ -1,0 +1,160 @@
+From 08f13b4ba4290a5b8895d4cafca2cef8f9bf73e3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 18 Nov 2026 05:14:10 +0000
+Subject: [PATCH 4/6] S5: devicebasedauth.org section and link callback in the
+ workspace
+
+The Account page gains a devicebasedauth.org section: link status (or a
+superseded link), Link/Unlink, the DBA credentials seen on the account with
+their monthly caps and expiry, and instructions for device-bound keys
+(`dba enroll --aud cronly.org --action cronly:run`, `dba curl`, `dba token`)
+and the browser SDK (`import { DBA } from
+'https://devicebasedauth.org/sdk/dba.js'`). All dynamic text is escaped.
+
+/auth/dba/callback serves the workspace, which moves code/state out of the
+address bar and history immediately (sessionStorage) and posts them to
+/api/dba/link/finish once signed in, so a sign-in in between still works.
+A Playwright test covers the callback, URL cleanup and escaping.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Kwqh8U8CPCyYKphVe92vcV
+---
+ STATUS.md               |  2 +-
+ frontend/js/app.js      | 50 ++++++++++++++++++++++++++++++++++++++---
+ tests/workspace.spec.js | 26 +++++++++++++++++++++
+ 3 files changed, 74 insertions(+), 4 deletions(-)
+
+diff --git a/STATUS.md b/STATUS.md
+index 5fa993d..3d3091b 100644
+--- a/STATUS.md
++++ b/STATUS.md
+@@ -75,7 +75,7 @@ disagrees with it, this file wins and the other document is stale.
+ | S2 | Charge measured JS CPU instead of the configured limit | code | ⬜ | §3.4; needs per-invocation CPU data. |
+ | S3 | Recalibrate prices from a month of real Cloudflare and Anthropic bills | ops/code | ⬜ | `docs/business/pricing.md`. |
+ | S4 | Lower per-run row writes (merge hold + ledger, batch next-fire updates) and pass the saving into the price | code | 🚧 | Shared transactional budgets, active money summaries and ledger buffering reduce ordinary writes; unchanged alarms/runtime indexes and completion settings skip writes. Transactional reads/changes skip transient holds. Ledger pages retain legacy cursors and permanent receipts. Small durable reservations share the balance row; large/legacy snapshots stay standalone. Finalization reuses the durable staged log. Cooldowns/recent-job activity now share the reservation balance write, saving another ordinary compact-run write; evicted cooldowns remain standalone and larger legacy hold arrays migrate after draining. Repeated balance/budget refusals skip writes after one atomic pause/log/reset-wakeup transition; unchanged configuration replay skips settings writes. The 456-path audit includes activity eviction, ledger archival, compact/rollover/large-period summaries, unfunded-retry pauses, runtime-write failures and lost settlement responses: conservative 37 writes, 27 DO requests/five Worker invocations at 85 µ$/run after rounded floors. Scheduled dispatch rearms once after schedule advancement, retaining its atomic pending wakeup; advancement publication survives failures and refusal pauses skip duplicate writes. Completion runtime publication now shares settlement’s account transaction; new completed deliveries skip publication calls while legacy completions retain recovery. Deposits and cost-brake recovery use one versioned wake batch per cause (100 healthy jobs: five deposit/account writes including acknowledgement), preserving unrelated pauses and earlier holds. Terminal credential/input refusals clear retry outboxes, and input-dependent schedules pause once instead of recurring unpaid. Repeated action tests reuse their permanent history index, saving one account write after the first reservation while retaining recency and deleted-action logs. Test setup/start share one JobDO request, saving a request per action test with the same recovery steps. Completed Queue redelivery now uses one compact index read without loading full logs or settings; staged outcomes, private retries and legacy publication still recover. Further worst-case reductions remain. [Cost audit](docs/business/pricing.md). |
+-| S5 | devicebasedauth.org integration: device-bound API keys (`Authorization: DBA` + DPoP, short-lived DBA access tokens) and account linking over OIDC | code/ops | 🚧 | Vendored `@devicebasedauth/verify` (unmodified, hash-checked) in `src/vendor/devicebasedauth/`. Account linking done: OIDC (PKCE) start/finish/status/unlink `SESSION` routes, server-side single-use state (10-minute TTL), new `DbaLinkDO` index (one DBA account → at most one cronly account) confirmed by the AccountDO's `dba-link` row; binding + migration v3 in both wrangler configs. Authentication done: `DBA` + DPoP credentials and `dba-access+jwt` bearer tokens verified offline by a module-level `createSiteAuth` (per-isolate JWKS/status/replay caches), linked accounts only; granted `cronly:<scope>` actions become scopes, `cronly:session` never grants `SESSION`; credential id is the key id, so reads are metered (21 µ$ + 2 µ$/job) and `spend_usd_per_month` is a UTC-month key budget in µ$; MCP tool calls reuse the verified identity. Web UI in progress. [Plan](todo/dba_integration.md). devicebasedauth.org master plan §9. |
++| S5 | devicebasedauth.org integration: device-bound API keys (`Authorization: DBA` + DPoP, short-lived DBA access tokens) and account linking over OIDC | code/ops | 🚧 | Vendored `@devicebasedauth/verify` (unmodified, hash-checked) in `src/vendor/devicebasedauth/`. Account linking done: OIDC (PKCE) start/finish/status/unlink `SESSION` routes, server-side single-use state (10-minute TTL), new `DbaLinkDO` index (one DBA account → at most one cronly account) confirmed by the AccountDO's `dba-link` row; binding + migration v3 in both wrangler configs. Authentication done: `DBA` + DPoP credentials and `dba-access+jwt` bearer tokens verified offline by a module-level `createSiteAuth` (per-isolate JWKS/status/replay caches), linked accounts only; granted `cronly:<scope>` actions become scopes, `cronly:session` never grants `SESSION`; credential id is the key id, so reads are metered (21 µ$ + 2 µ$/job) and `spend_usd_per_month` is a UTC-month key budget in µ$; MCP tool calls reuse the verified identity. Web UI done: Account page devicebasedauth.org section (status, Link/Unlink, credentials used, `dba enroll`/`dba token` and browser-SDK instructions, all escaped); `/auth/dba/callback` serves the workspace, removes `code`/`state` from the URL at once and redeems them after sign-in (Playwright). Docs in progress. [Plan](todo/dba_integration.md). devicebasedauth.org master plan §9. |
+ 
+ ## Backlog
+ 
+diff --git a/frontend/js/app.js b/frontend/js/app.js
+index 248ffe1..89cb8a1 100644
+--- a/frontend/js/app.js
++++ b/frontend/js/app.js
+@@ -9,6 +9,23 @@ let config; let account; let forecast; let deployment; let pendingApply; let edi
+ let pendingRun;
+ const date = value => value ? new Date(value).toLocaleString() : '—';
+ const json = value => e(JSON.stringify(value, null, 2));
++// devicebasedauth.org redirects back to /auth/dba/callback (which serves this page). Move the
++// one-time code out of the address bar and history at once; it is redeemed after sign-in.
++const DBA_CALLBACK = 'cronly-dba-callback';
++if (location.pathname === '/auth/dba/callback') {
++  const query = new URLSearchParams(location.search);
++  sessionStorage.setItem(DBA_CALLBACK, JSON.stringify({ code: query.get('code'), state: query.get('state'), error: query.get('error') }));
++  history.replaceState(null, '', '/app.html#account');
++}
++const DBA_SDK_SNIPPET = `import { DBA } from 'https://devicebasedauth.org/sdk/dba.js';
++
++const dba = new DBA();
++button.onclick = async () => {
++  if (!await dba.ready()) {
++    await dba.enroll({ aud: ['cronly.org'], grants: [{ actions: ['cronly:read', 'cronly:run'], limits: { spend_usd_per_month: 1 } }] });
++  }
++  const response = await dba.fetch('https://cronly.org/api/jobs/nightly/run', { method: 'POST', body: '{}' });
++};`;
+ function notify(message, error = false) { $('#notice').hidden = false; $('#notice').className = `notice${error ? ' error' : ''}`; $('#notice').textContent = message; }
+ function clearNotice() { $('#notice').hidden = true; }
+ function empty(message) { return `<p class="empty">${e(message)}</p>`; }
+@@ -259,10 +276,28 @@ async function pageTransactions(button, cursor) {
+   } catch (error) { if (history.isConnected) throw error; }
+   finally { for (const control of controls) control.disabled = false; }
+ }
++function dbaSection(link) {
++  const status = link.linked
++    ? `<p>Linked to devicebasedauth.org account <strong>${e(link.dba_account)}</strong> since ${e(date(link.linked_at))}. Device credentials it issues for <code>cronly.org</code> can use this account with the scopes their grants allow.</p><button class="secondary" id="dba-unlink">Unlink devicebasedauth.org</button>`
++    : `<p>${link.superseded ? 'This devicebasedauth.org account is now linked to another cronly account. ' : ''}Not linked. Link once to let device-bound keys from your devicebasedauth.org account call this account. One devicebasedauth.org account links to one cronly account; linking is free.</p><button id="dba-link">Link devicebasedauth.org</button>`;
++  const credentials = link.credentials.length
++    ? `<ul class="list">${link.credentials.map(c => `<li><div><strong>${e(c.device_name || c.device_id)}</strong><br><span class="small">${e(c.id)} · ${c.monthly_spend_microdollars === null ? 'no monthly cap' : `${e(usd(c.monthly_spend_microdollars))} per UTC month`} · expires ${e(date(c.expires_at))}</span></div></li>`).join('')}</ul><p class="note">Revoke a device at devicebasedauth.org; cronly refuses it within five minutes.</p>`
++    : '<p class="note">No device credentials have been used with this account yet.</p>';
++  return `<section class="section" id="dba"><h2>devicebasedauth.org</h2>${status}<h3>Device-bound keys</h3><p class="note">A device key never leaves its device and every request carries a fresh signed proof, so a copied credential is useless. Grants map to cronly scopes (<code>cronly:read</code>, <code>cronly:run</code>, <code>cronly:change</code>, <code>cronly:prose</code>, <code>cronly:secrets:write</code>); <code>spend_usd_per_month</code> becomes the credential's monthly cap. Device keys cannot manage API keys, payments or this link. API reads are metered like API keys.</p><p>From a terminal, scripts or agents:</p><pre>${e('dba enroll --aud cronly.org --action cronly:run\ndba curl -X POST https://cronly.org/api/jobs/nightly/run -d {}\ncurl -H "Authorization: Bearer $(dba token --aud cronly.org)" https://cronly.org/api/runs')}</pre><p>From a browser (the key is non-extractable WebCrypto):</p><pre>${e(DBA_SDK_SNIPPET)}</pre><h3>Credentials used here</h3>${credentials}</section>`;
++}
++async function finishDbaLink() {
++  const pending = sessionStorage.getItem(DBA_CALLBACK); if (!pending) return;
++  sessionStorage.removeItem(DBA_CALLBACK);
++  const { code, state, error } = JSON.parse(pending);
++  if (error || !code || !state) { notify(`devicebasedauth.org did not link your account${error ? ` (${error})` : ''}.`, true); return; }
++  const result = await api('/api/dba/link/finish', 'POST', { code, state });
++  if (location.hash !== '#account') location.hash = 'account'; else await render();
++  notify(`Linked devicebasedauth.org account ${result.dba_account}.`);
++}
+ async function accountPage() {
+-  const [transactions, keys] = await Promise.all([api('/api/transactions'), api('/api/keys')]);
++  const [transactions, keys, dba] = await Promise.all([api('/api/transactions'), api('/api/keys'), api('/api/dba/link')]);
+   if (currentPage() !== 'account') return;
+-  content.innerHTML = `<h1 class="app-title">Account</h1><p class="muted">${e(account.id)}</p><div class="grid"><section class="panel"><h2>Add credit</h2><p>Credit never expires while your account exists. Card payment costs are itemized on top.</p><form id="deposit-form"><label>Credit / USD<input name="amount" type="number" min="5" max="1000" step="1" value="5" required></label><button>Review deposit</button></form>${deployment.local ? '<p class="note">Local mode: this adds development credit without a payment.</p>' : ''}<h2>Account as code</h2><button id="export-config" class="secondary">Export config JSON</button><form id="config-form"><label>Import config JSON<textarea name="config" rows="6" required placeholder="Paste an exported account configuration"></textarea></label><button>Review import diff</button></form></section><section class="panel"><h2>API keys</h2><p class="note">Shown only when created. Never put an API key in a public web page; use a job trigger token.</p><ul class="list">${keys.items.map(k => `<li><div><strong>${e(k.name || k.id)}</strong><br><span class="small">${e(k.scopes.join(', '))} · ${k.revoked ? 'revoked' : `expires ${e(date(k.expires_at))}`}</span></div>${k.revoked ? '' : `<button class="secondary" data-revoke-key="${e(k.id)}">Revoke</button>`}</li>`).join('')}</ul><form id="key-form"><label>Name<input name="name" maxlength="64" required></label><label>Scopes<select name="scopes" multiple size="5">${['read', 'run', 'change', 'prose', 'secrets:write'].map(s => `<option value="${s}" ${s === 'read' ? 'selected' : ''}>${s}</option>`).join('')}</select></label><label>Daily spend cap / µ$<input name="daily_spend_microdollars" type="number" min="0" placeholder="No additional cap"></label><button>Review new key</button></form><div id="new-key-result"></div></section></div><section class="section"><h2>Transactions</h2><div id="transaction-history">${transactionHistory(transactions)}</div></section>`;
++  content.innerHTML = `<h1 class="app-title">Account</h1><p class="muted">${e(account.id)}</p><div class="grid"><section class="panel"><h2>Add credit</h2><p>Credit never expires while your account exists. Card payment costs are itemized on top.</p><form id="deposit-form"><label>Credit / USD<input name="amount" type="number" min="5" max="1000" step="1" value="5" required></label><button>Review deposit</button></form>${deployment.local ? '<p class="note">Local mode: this adds development credit without a payment.</p>' : ''}<h2>Account as code</h2><button id="export-config" class="secondary">Export config JSON</button><form id="config-form"><label>Import config JSON<textarea name="config" rows="6" required placeholder="Paste an exported account configuration"></textarea></label><button>Review import diff</button></form></section><section class="panel"><h2>API keys</h2><p class="note">Shown only when created. Never put an API key in a public web page; use a job trigger token.</p><ul class="list">${keys.items.map(k => `<li><div><strong>${e(k.name || k.id)}</strong><br><span class="small">${e(k.scopes.join(', '))} · ${k.revoked ? 'revoked' : `expires ${e(date(k.expires_at))}`}</span></div>${k.revoked ? '' : `<button class="secondary" data-revoke-key="${e(k.id)}">Revoke</button>`}</li>`).join('')}</ul><form id="key-form"><label>Name<input name="name" maxlength="64" required></label><label>Scopes<select name="scopes" multiple size="5">${['read', 'run', 'change', 'prose', 'secrets:write'].map(s => `<option value="${s}" ${s === 'read' ? 'selected' : ''}>${s}</option>`).join('')}</select></label><label>Daily spend cap / µ$<input name="daily_spend_microdollars" type="number" min="0" placeholder="No additional cap"></label><button>Review new key</button></form><div id="new-key-result"></div></section></div>${dbaSection(dba)}<section class="section"><h2>Transactions</h2><div id="transaction-history">${transactionHistory(transactions)}</div></section>`;
+ }
+ async function render() {
+   const version = ++renderVersion; content.setAttribute('aria-busy', 'true');
+@@ -322,6 +357,12 @@ content.addEventListener('click', async event => {
+     if (button.id === 'create-trigger') await reviewed(`/api/jobs/${editing}/triggers`, 'POST', {}, async result => { await render(); notify('Trigger created. Copy its URL now.'); review('Trigger URL — keep it private', 0, result.url, async () => {}, 'Close'); });
+     if (button.dataset.revokeTrigger) await reviewed(`/api/jobs/${editing}/triggers/${button.dataset.revokeTrigger}`, 'DELETE');
+     if (button.dataset.revokeKey) await reviewed(`/api/keys/${button.dataset.revokeKey}`, 'DELETE');
++    if (button.id === 'dba-link') {
++      button.disabled = true; const { url } = await api('/api/dba/link/start', 'POST');
++      const target = new URL(url); if (!['https:', 'http:'].includes(target.protocol)) throw new Error('Unexpected devicebasedauth.org address');
++      location.assign(target.href);
++    }
++    if (button.id === 'dba-unlink' && confirm('Unlink devicebasedauth.org? Device keys from that account stop working here immediately.')) { await api('/api/dba/link', 'DELETE'); await render(); notify('devicebasedauth.org unlinked.'); }
+     if (button.id === 'test-action') {
+       runInput(`/api/actions/${editing}/test`, `Test ${editing}`, 'Test');
+     }
+@@ -363,7 +404,10 @@ content.addEventListener('submit', async event => {
+ });
+ $('#workspace-nav').addEventListener('click', event => { const link = event.target.closest('a'); if (link && link.hash !== location.hash) { content.innerHTML = '<p class="muted">Loading workspace…</p>'; content.setAttribute('aria-busy', 'true'); } });
+ window.addEventListener('hashchange', () => { editing = null; render(); });
+-async function signedIn() { $('#workspace-nav').hidden = false; $('#sign-out').hidden = false; await render(); }
++async function signedIn() {
++  $('#workspace-nav').hidden = false; $('#sign-out').hidden = false; await render();
++  try { await finishDbaLink(); } catch (error) { notify(error.message, true); }
++}
+ async function boot() {
+   deployment = await settings();
+   if (deployment.local) {
+diff --git a/tests/workspace.spec.js b/tests/workspace.spec.js
+index 2a33001..5e3a42a 100644
+--- a/tests/workspace.spec.js
++++ b/tests/workspace.spec.js
+@@ -788,3 +788,29 @@ test('explains the missing action when no job run maximum can be derived', async
+   await expect(page.locator('#job-run-price-note')).toHaveText('Create an action before configuring a job.');
+   await expect(page.locator('#content')).not.toContainText('NaN');
+ });
++
++test('links devicebasedauth.org from the account page and escapes credential details (S5)', async ({ page }) => {
++  await login(page);
++  await page.goto('/app.html#account');
++  const section = page.locator('#dba');
++  await expect(section.getByRole('heading', { name: 'devicebasedauth.org' })).toBeVisible();
++  await expect(section).toContainText('Not linked');
++  await expect(section).toContainText('dba enroll --aud cronly.org --action cronly:run');
++  await expect(section).toContainText("import { DBA } from 'https://devicebasedauth.org/sdk/dba.js'");
++
++  // The callback page posts code + state once signed in, and removes them from the address bar.
++  const posted = [];
++  await page.route('**/api/dba/link/finish', async route => { posted.push(route.request().postDataJSON()); await route.fulfill({ json: { linked: true, dba_account: 'dba_<b>x</b>', linked_at: Date.parse('2026-11-18T12:00Z'), credentials: [], cost_microdollars: 0 } }); });
++  await page.route('**/api/dba/link', route => route.fulfill({ json: { linked: true, superseded: false, dba_account: 'dba_<b>x</b>', linked_at: Date.parse('2026-11-18T12:00Z'), cost_microdollars: 0,
++    credentials: [{ id: 'crd_TESTTESTTEST', device_id: 'dev_TESTTESTTEST', device_name: '<img src=x onerror="window.pwned=true">', monthly_spend_microdollars: 5000000, expires_at: Date.parse('2026-12-18T12:00Z') }] } }));
++  await page.goto('/auth/dba/callback?code=one-time-code&state=the-state');
++  await expect(page.locator('#notice')).toContainText('Linked devicebasedauth.org account dba_<b>x</b>.');
++  expect(posted).toEqual([{ code: 'one-time-code', state: 'the-state' }]);
++  expect(new URL(page.url()).pathname).toBe('/app.html');
++  expect(new URL(page.url()).search).toBe('');
++  await expect(section).toContainText('Linked to devicebasedauth.org account dba_<b>x</b>');
++  await expect(section).toContainText('<img src=x onerror="window.pwned=true">');
++  await expect(section).toContainText('$5.00 per UTC month');
++  await expect(section.getByRole('button', { name: 'Unlink devicebasedauth.org' })).toBeVisible();
++  expect(await page.evaluate(() => window.pwned)).toBeUndefined();
++});
+-- 
+2.43.0
+

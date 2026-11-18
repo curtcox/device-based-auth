@@ -1,0 +1,978 @@
+From 22c6fd0bbc50d0585ab57ae192025bfd1c0d112e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 18 Nov 2026 05:08:12 +0000
+Subject: [PATCH 2/6] S5: link cronly accounts to devicebasedauth.org accounts
+ over OIDC
+
+Add SESSION routes GET/DELETE /api/dba/link and POST /api/dba/link/start and
+/finish ({ code, state }). The vendored createOidcClient runs authorization
+code + PKCE against DBA_ISSUER (default https://devicebasedauth.org) with
+client cronly.org and redirect ${APP_ORIGIN}/auth/dba/callback, which serves
+the workspace. State, nonce and PKCE verifier are kept in the AccountDO,
+single use, 10-minute TTL, at most 10 pending, pruned by maintenance.
+
+A new DbaLinkDO, one per DBA account, is the global DBA account -> cronly
+account index: lookups on every DBA request spread across objects and a
+claim is atomic, so a DBA account links to at most one cronly account. The
+AccountDO's dba-link row is the confirming half used for display and
+unlink; a claim nobody confirms (an interrupted link) can be taken over.
+Linking is free like sign-in and rate-limited to 10 a minute.
+
+DbaLinkDO is exported from the Worker and bound as DBA_LINKS with migration
+v3 in both wrangler configs; DBA_ISSUER is a plain var. OpenAPI regenerated.
+A fake issuer (test-utils/dba-issuer.js) signs with the vendored issuer.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Kwqh8U8CPCyYKphVe92vcV
+---
+ STATUS.md                               |   2 +-
+ frontend/openapi.json                   | 292 ++++++++++++++++++++++++
+ src/api/dba.js                          |  77 +++++++
+ src/api/dba.test.js                     | 106 +++++++++
+ src/auth/dba.js                         |  21 ++
+ src/durable-objects/account-do.js       |   4 +-
+ src/durable-objects/dba-account.js      |  60 +++++
+ src/durable-objects/dba-link-do.js      |  36 +++
+ src/durable-objects/dba-link-do.test.js |  19 ++
+ src/index.js                            |   9 +
+ src/platform.js                         |   2 +-
+ src/services/openapi.js                 |   2 +
+ test-utils/dba-issuer.js                |  72 ++++++
+ wrangler.local.toml                     |  12 +
+ wrangler.toml                           |  10 +
+ 15 files changed, 721 insertions(+), 3 deletions(-)
+ create mode 100644 src/api/dba.js
+ create mode 100644 src/api/dba.test.js
+ create mode 100644 src/auth/dba.js
+ create mode 100644 src/durable-objects/dba-account.js
+ create mode 100644 src/durable-objects/dba-link-do.js
+ create mode 100644 src/durable-objects/dba-link-do.test.js
+ create mode 100644 test-utils/dba-issuer.js
+
+diff --git a/STATUS.md b/STATUS.md
+index fb46481..c743ada 100644
+--- a/STATUS.md
++++ b/STATUS.md
+@@ -75,7 +75,7 @@ disagrees with it, this file wins and the other document is stale.
+ | S2 | Charge measured JS CPU instead of the configured limit | code | ⬜ | §3.4; needs per-invocation CPU data. |
+ | S3 | Recalibrate prices from a month of real Cloudflare and Anthropic bills | ops/code | ⬜ | `docs/business/pricing.md`. |
+ | S4 | Lower per-run row writes (merge hold + ledger, batch next-fire updates) and pass the saving into the price | code | 🚧 | Shared transactional budgets, active money summaries and ledger buffering reduce ordinary writes; unchanged alarms/runtime indexes and completion settings skip writes. Transactional reads/changes skip transient holds. Ledger pages retain legacy cursors and permanent receipts. Small durable reservations share the balance row; large/legacy snapshots stay standalone. Finalization reuses the durable staged log. Cooldowns/recent-job activity now share the reservation balance write, saving another ordinary compact-run write; evicted cooldowns remain standalone and larger legacy hold arrays migrate after draining. Repeated balance/budget refusals skip writes after one atomic pause/log/reset-wakeup transition; unchanged configuration replay skips settings writes. The 456-path audit includes activity eviction, ledger archival, compact/rollover/large-period summaries, unfunded-retry pauses, runtime-write failures and lost settlement responses: conservative 37 writes, 27 DO requests/five Worker invocations at 85 µ$/run after rounded floors. Scheduled dispatch rearms once after schedule advancement, retaining its atomic pending wakeup; advancement publication survives failures and refusal pauses skip duplicate writes. Completion runtime publication now shares settlement’s account transaction; new completed deliveries skip publication calls while legacy completions retain recovery. Deposits and cost-brake recovery use one versioned wake batch per cause (100 healthy jobs: five deposit/account writes including acknowledgement), preserving unrelated pauses and earlier holds. Terminal credential/input refusals clear retry outboxes, and input-dependent schedules pause once instead of recurring unpaid. Repeated action tests reuse their permanent history index, saving one account write after the first reservation while retaining recency and deleted-action logs. Test setup/start share one JobDO request, saving a request per action test with the same recovery steps. Completed Queue redelivery now uses one compact index read without loading full logs or settings; staged outcomes, private retries and legacy publication still recover. Further worst-case reductions remain. [Cost audit](docs/business/pricing.md). |
+-| S5 | devicebasedauth.org integration: device-bound API keys (`Authorization: DBA` + DPoP, short-lived DBA access tokens) and account linking over OIDC | code/ops | 🚧 | Vendored `@devicebasedauth/verify` (unmodified, hash-checked) in `src/vendor/devicebasedauth/`. Linking, authentication, budgets and UI in progress. [Plan](todo/dba_integration.md). devicebasedauth.org master plan §9. |
++| S5 | devicebasedauth.org integration: device-bound API keys (`Authorization: DBA` + DPoP, short-lived DBA access tokens) and account linking over OIDC | code/ops | 🚧 | Vendored `@devicebasedauth/verify` (unmodified, hash-checked) in `src/vendor/devicebasedauth/`. Account linking done: OIDC (PKCE) start/finish/status/unlink `SESSION` routes, server-side single-use state (10-minute TTL), new `DbaLinkDO` index (one DBA account → at most one cronly account) confirmed by the AccountDO's `dba-link` row; binding + migration v3 in both wrangler configs. Credential authentication, budgets and UI in progress. [Plan](todo/dba_integration.md). devicebasedauth.org master plan §9. |
+ 
+ ## Backlog
+ 
+diff --git a/frontend/openapi.json b/frontend/openapi.json
+index e2199ce..753c7a3 100644
+--- a/frontend/openapi.json
++++ b/frontend/openapi.json
+@@ -2422,6 +2422,279 @@
+         }
+       }
+     },
++    "/api/dba/link": {
++      "get": {
++        "operationId": "get__api_dba_link",
++        "summary": "dba-link-status",
++        "x-access": "session",
++        "security": [
++          {
++            "ClerkSession": []
++          }
++        ],
++        "parameters": [],
++        "responses": {
++          "200": {
++            "description": "Successful result; money is integer micro-dollars.",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/Response"
++                }
++              }
++            }
++          },
++          "400": {
++            "description": "Validation error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/Error"
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "Invalid credential"
++          },
++          "402": {
++            "description": "Insufficient balance or budget"
++          },
++          "403": {
++            "description": "Insufficient scope"
++          },
++          "409": {
++            "description": "Stale proposal, overlap or idempotency conflict"
++          },
++          "429": {
++            "description": "Rate limit exceeded"
++          }
++        }
++      },
++      "delete": {
++        "operationId": "delete__api_dba_link",
++        "summary": "dba-link-delete",
++        "x-access": "session",
++        "security": [
++          {
++            "ClerkSession": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "dry_run",
++            "in": "query",
++            "schema": {
++              "enum": [
++                "1"
++              ]
++            },
++            "description": "Validate and quote without applying or charging."
++          },
++          {
++            "name": "Idempotency-Key",
++            "in": "header",
++            "schema": {
++              "type": "string",
++              "maxLength": 128
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful result; money is integer micro-dollars.",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/Response"
++                }
++              }
++            }
++          },
++          "400": {
++            "description": "Validation error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/Error"
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "Invalid credential"
++          },
++          "402": {
++            "description": "Insufficient balance or budget"
++          },
++          "403": {
++            "description": "Insufficient scope"
++          },
++          "409": {
++            "description": "Stale proposal, overlap or idempotency conflict"
++          },
++          "429": {
++            "description": "Rate limit exceeded"
++          }
++        }
++      }
++    },
++    "/api/dba/link/start": {
++      "post": {
++        "operationId": "post__api_dba_link_start",
++        "summary": "dba-link-start",
++        "x-access": "session",
++        "security": [
++          {
++            "ClerkSession": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "dry_run",
++            "in": "query",
++            "schema": {
++              "enum": [
++                "1"
++              ]
++            },
++            "description": "Validate and quote without applying or charging."
++          },
++          {
++            "name": "Idempotency-Key",
++            "in": "header",
++            "schema": {
++              "type": "string",
++              "maxLength": 128
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful result; money is integer micro-dollars.",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/Response"
++                }
++              }
++            }
++          },
++          "400": {
++            "description": "Validation error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/Error"
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "Invalid credential"
++          },
++          "402": {
++            "description": "Insufficient balance or budget"
++          },
++          "403": {
++            "description": "Insufficient scope"
++          },
++          "409": {
++            "description": "Stale proposal, overlap or idempotency conflict"
++          },
++          "429": {
++            "description": "Rate limit exceeded"
++          }
++        },
++        "requestBody": {
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object"
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/dba/link/finish": {
++      "post": {
++        "operationId": "post__api_dba_link_finish",
++        "summary": "dba-link-finish",
++        "x-access": "session",
++        "security": [
++          {
++            "ClerkSession": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "dry_run",
++            "in": "query",
++            "schema": {
++              "enum": [
++                "1"
++              ]
++            },
++            "description": "Validate and quote without applying or charging."
++          },
++          {
++            "name": "Idempotency-Key",
++            "in": "header",
++            "schema": {
++              "type": "string",
++              "maxLength": 128
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful result; money is integer micro-dollars.",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/Response"
++                }
++              }
++            }
++          },
++          "400": {
++            "description": "Validation error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/Error"
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "Invalid credential"
++          },
++          "402": {
++            "description": "Insufficient balance or budget"
++          },
++          "403": {
++            "description": "Insufficient scope"
++          },
++          "409": {
++            "description": "Stale proposal, overlap or idempotency conflict"
++          },
++          "429": {
++            "description": "Rate limit exceeded"
++          }
++        },
++        "requestBody": {
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/DbaLinkFinish"
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/cron/explain": {
+       "post": {
+         "operationId": "post__api_cron_explain",
+@@ -3588,6 +3861,25 @@
+           }
+         }
+       },
++      "DbaLinkFinish": {
++        "type": "object",
++        "required": [
++          "code",
++          "state"
++        ],
++        "properties": {
++          "code": {
++            "type": "string",
++            "maxLength": 2048,
++            "description": "Authorization code from the devicebasedauth.org redirect."
++          },
++          "state": {
++            "type": "string",
++            "maxLength": 256
++          }
++        },
++        "additionalProperties": false
++      },
+       "Response": {
+         "type": "object",
+         "properties": {
+diff --git a/src/api/dba.js b/src/api/dba.js
+new file mode 100644
+index 0000000..d03423e
+--- /dev/null
++++ b/src/api/dba.js
+@@ -0,0 +1,77 @@
++import { assert, readJson, ApiError } from '../utils/errors.js';
++import { rpc } from '../utils/rpc.js';
++import { dbaIssuer, dbaOidc } from '../auth/dba.js';
++
++const DBA_ACCOUNT = /^[A-Za-z0-9_-]{1,128}$/;
++const free = { quote_microdollars: 0, cost_microdollars: 0 };
++
++/**
++ * Link, inspect and unlink the account's devicebasedauth.org account (all SESSION routes).
++ * Linking is free like signing in, and limited to 10 operations a minute per account.
++ */
++export async function dbaLink(route, request, env, auth) {
++  const dryRun = new URL(request.url).searchParams.get('dry_run') === '1';
++  switch (route.handler) {
++    case 'dba-link-status': return status(env, auth.account);
++    case 'dba-link-start': {
++      if (dryRun) return free;
++      await rpc(env.ACCOUNTS, auth.account, 'rate-limit', { id: 'dba-link', limit: 10 });
++      const { url, state } = await reach(() => dbaOidc(env).begin());
++      const { expires_at } = await rpc(env.ACCOUNTS, auth.account, 'dba-link-begin', { oidc: state });
++      return { url, expires_at };
++    }
++    case 'dba-link-finish': {
++      const body = await readJson(request, 8192);
++      assert(typeof body.code === 'string' && body.code.length > 0 && body.code.length <= 2048, 'invalid_code', 'Expected the authorization code from devicebasedauth.org');
++      assert(typeof body.state === 'string' && body.state.length > 0 && body.state.length <= 256, 'invalid_state', 'Expected the state from devicebasedauth.org');
++      if (dryRun) return free;
++      await rpc(env.ACCOUNTS, auth.account, 'rate-limit', { id: 'dba-link', limit: 10 });
++      const { oidc } = await rpc(env.ACCOUNTS, auth.account, 'dba-link-take', { state: body.state });
++      const claims = await reach(() => dbaOidc(env).finish({ code: body.code, state: body.state }, oidc));
++      const dbaAccount = claims.acct ?? claims.sub;
++      assert(typeof dbaAccount === 'string' && DBA_ACCOUNT.test(dbaAccount), 'dba_link_failed', 'devicebasedauth.org did not name an account', 502);
++      await claim(env, dbaAccount, auth.account);
++      // The index claim comes first and the account row confirms it; until both agree the link
++      // authorizes nothing, so an interruption here cannot let credentials in.
++      const { previous } = await rpc(env.ACCOUNTS, auth.account, 'dba-link-set', { dba_account: dbaAccount, subject: claims.sub, issuer: dbaIssuer(env) });
++      if (previous && previous !== dbaAccount) await rpc(env.DBA_LINKS, previous, 'release', { account: auth.account });
++      return status(env, auth.account);
++    }
++    case 'dba-link-delete': {
++      if (dryRun) return free;
++      await rpc(env.ACCOUNTS, auth.account, 'rate-limit', { id: 'dba-link', limit: 10 });
++      // Clear the confirming row first: credentials stop working even if the release fails.
++      const { previous } = await rpc(env.ACCOUNTS, auth.account, 'dba-unlink');
++      if (previous) await rpc(env.DBA_LINKS, previous, 'release', { account: auth.account });
++      return status(env, auth.account);
++    }
++  }
++}
++
++/** Claim the DBA account for this cronly account, taking over only a claim nobody confirms. */
++async function claim(env, dbaAccount, account) {
++  let result = await rpc(env.DBA_LINKS, dbaAccount, 'claim', { account });
++  if (result.claimed) return;
++  const holder = await rpc(env.ACCOUNTS, result.account, 'dba-link-status');
++  assert(holder.dba_account !== dbaAccount, 'dba_account_linked', 'This devicebasedauth.org account is already linked to another cronly account; unlink it there first', 409);
++  result = await rpc(env.DBA_LINKS, dbaAccount, 'claim', { account, replace: result.account });
++  assert(result.claimed, 'dba_account_linked', 'This devicebasedauth.org account is already linked to another cronly account; unlink it there first', 409);
++}
++
++/** The account's view, confirmed against the global index (a superseded link reads as unlinked). */
++async function status(env, account) {
++  const view = await rpc(env.ACCOUNTS, account, 'dba-link-status');
++  const active = view.linked && (await rpc(env.DBA_LINKS, view.dba_account, 'get')).account === account;
++  return { ...view, linked: active, superseded: view.linked && !active, issuer: dbaIssuer(env), ...free };
++}
++
++/** Call devicebasedauth.org; its failures become stable public errors without its prose. */
++async function reach(operation) {
++  try { return await operation(); } catch (error) {
++    if (error instanceof ApiError) throw error;
++    // Library errors carry an OAuth/verification code; anything else is a network failure.
++    const reason = typeof error?.code === 'string' && /^[a-z_]{1,64}$/.test(error.code) ? error.code : null;
++    if (!reason) throw new ApiError(502, 'dba_unavailable', 'devicebasedauth.org could not be reached; try again');
++    throw new ApiError(400, 'dba_link_failed', 'devicebasedauth.org did not confirm the link; start again', { reason });
++  }
++}
+diff --git a/src/api/dba.test.js b/src/api/dba.test.js
+new file mode 100644
+index 0000000..9a2fff3
+--- /dev/null
++++ b/src/api/dba.test.js
+@@ -0,0 +1,106 @@
++import { it, expect, beforeEach, afterEach, vi } from 'vitest';
++import worker from '../index.js';
++import { AccountDO } from '../durable-objects/account-do.js';
++import { JobDO } from '../durable-objects/job-do.js';
++import { DbaLinkDO } from '../durable-objects/dba-link-do.js';
++import { DBA_STATE_TTL_MS } from '../durable-objects/dba-account.js';
++import { namespace } from '../../test-utils/storage.js';
++import { fakeDbaIssuer } from '../../test-utils/dba-issuer.js';
++import { rpc } from '../utils/rpc.js';
++
++let env; let dba;
++beforeEach(async () => {
++  dba = await fakeDbaIssuer(); vi.stubGlobal('fetch', (...args) => dba.fetch(...args));
++  env = { ENVIRONMENT: 'local', APP_ORIGIN: 'https://cronly.org', DBA_ISSUER: dba.issuer };
++  env.ACCOUNTS = namespace(AccountDO, env); env.JOBS = namespace(JobDO, env); env.DBA_LINKS = namespace(DbaLinkDO, env);
++});
++afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
++
++const call = async (user, method, path, body) => {
++  const response = await worker.fetch(new Request(`https://cronly.org${path}`, { method, headers: { Authorization: `LocalDev ${user}`, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }), env);
++  return { status: response.status, body: await response.json() };
++};
++async function link(user, acct) {
++  const start = await call(user, 'POST', '/api/dba/link/start');
++  expect(start.status).toBe(200);
++  return call(user, 'POST', '/api/dba/link/finish', dba.authorize(start.body.url, { acct }));
++}
++
++it('links, reports and unlinks a devicebasedauth.org account through OIDC with PKCE', async () => {
++  const start = await call('alice', 'POST', '/api/dba/link/start');
++  const query = Object.fromEntries(new URL(start.body.url).searchParams);
++  expect(start.body.url.startsWith(`${dba.issuer}/oauth/authorize?`)).toBe(true);
++  expect(query).toMatchObject({ response_type: 'code', client_id: 'cronly.org', redirect_uri: 'https://cronly.org/auth/dba/callback', code_challenge_method: 'S256' });
++  // The PKCE verifier and nonce stay server-side.
++  expect(JSON.stringify(start.body)).not.toContain('verifier');
++  expect(start.body).toMatchObject({ cost_microdollars: 0 });
++
++  const finish = await call('alice', 'POST', '/api/dba/link/finish', dba.authorize(start.body.url, { acct: 'dba_alice' }));
++  expect(finish).toMatchObject({ status: 200, body: { linked: true, dba_account: 'dba_alice', issuer: dba.issuer, credentials: [], cost_microdollars: 0 } });
++  expect(await rpc(env.DBA_LINKS, 'dba_alice', 'get')).toEqual({ account: 'alice' });
++  expect((await call('alice', 'GET', '/api/dba/link')).body).toMatchObject({ linked: true, dba_account: 'dba_alice' });
++  expect((await call('alice', 'GET', '/api/audit')).body.items).toEqual([expect.objectContaining({ kind: 'link_dba', dba_account: 'dba_alice' })]);
++
++  const unlinked = await call('alice', 'DELETE', '/api/dba/link');
++  expect(unlinked).toMatchObject({ status: 200, body: { linked: false, dba_account: null } });
++  expect(await rpc(env.DBA_LINKS, 'dba_alice', 'get')).toEqual({ account: null });
++});
++
++it('links one devicebasedauth.org account to at most one cronly account', async () => {
++  expect((await link('alice', 'dba_shared')).status).toBe(200);
++  expect(await link('bob', 'dba_shared')).toMatchObject({ status: 409, body: { code: 'dba_account_linked' } });
++  expect((await call('bob', 'GET', '/api/dba/link')).body).toMatchObject({ linked: false });
++  await call('alice', 'DELETE', '/api/dba/link');
++  expect(await link('bob', 'dba_shared')).toMatchObject({ status: 200, body: { linked: true, dba_account: 'dba_shared' } });
++});
++
++it('takes over a claim that its holder no longer confirms, and releases the old account on relink', async () => {
++  // An interrupted link: the index names alice, but alice's account never recorded it.
++  await rpc(env.DBA_LINKS, 'dba_orphan', 'claim', { account: 'alice' });
++  expect(await link('bob', 'dba_orphan')).toMatchObject({ status: 200, body: { linked: true } });
++  expect(await rpc(env.DBA_LINKS, 'dba_orphan', 'get')).toEqual({ account: 'bob' });
++
++  expect((await link('bob', 'dba_next')).body).toMatchObject({ linked: true, dba_account: 'dba_next' });
++  expect(await rpc(env.DBA_LINKS, 'dba_orphan', 'get')).toEqual({ account: null });
++});
++
++it('reports a link superseded in the index as not linked', async () => {
++  await link('alice', 'dba_raced');
++  await rpc(env.DBA_LINKS, 'dba_raced', 'claim', { account: 'bob', replace: 'alice' });
++  expect((await call('alice', 'GET', '/api/dba/link')).body).toMatchObject({ linked: false, superseded: true, dba_account: 'dba_raced' });
++});
++
++it('uses each OIDC state once, expires it, and rejects malformed or refused callbacks', async () => {
++  const start = await call('alice', 'POST', '/api/dba/link/start');
++  const grant = dba.authorize(start.body.url, { acct: 'dba_alice' });
++  expect(await call('alice', 'POST', '/api/dba/link/finish', { code: grant.code, state: 'unknown' })).toMatchObject({ status: 400, body: { code: 'invalid_state' } });
++  expect(await call('bob', 'POST', '/api/dba/link/finish', grant)).toMatchObject({ status: 400, body: { code: 'invalid_state' } });
++  expect((await call('alice', 'POST', '/api/dba/link/finish', grant)).status).toBe(200);
++  expect(await call('alice', 'POST', '/api/dba/link/finish', grant)).toMatchObject({ status: 400, body: { code: 'invalid_state' } });
++  expect(await call('alice', 'POST', '/api/dba/link/finish', { state: 'x' })).toMatchObject({ status: 400, body: { code: 'invalid_code' } });
++
++  // A code devicebasedauth.org does not recognize (or one for another PKCE verifier).
++  const second = await call('alice', 'POST', '/api/dba/link/start');
++  const state = new URL(second.body.url).searchParams.get('state');
++  expect(await call('alice', 'POST', '/api/dba/link/finish', { code: 'forged', state })).toMatchObject({ status: 400, body: { code: 'dba_link_failed', reason: 'invalid_grant' } });
++
++  vi.useFakeTimers({ now: Date.now(), toFake: ['Date'] });
++  const third = await call('alice', 'POST', '/api/dba/link/start');
++  vi.setSystemTime(Date.now() + DBA_STATE_TTL_MS + 1);
++  expect(await call('alice', 'POST', '/api/dba/link/finish', dba.authorize(third.body.url, { acct: 'dba_alice' }))).toMatchObject({ status: 400, body: { code: 'invalid_state' } });
++});
++
++it('bounds pending link requests, quotes dry runs for free and reports an unreachable issuer', async () => {
++  expect(await call('alice', 'POST', '/api/dba/link/start?dry_run=1')).toMatchObject({ status: 200, body: { quote_microdollars: 0, cost_microdollars: 0 } });
++  for (let i = 0; i < 10; i++) expect((await call('alice', 'POST', '/api/dba/link/start')).status).toBe(200);
++  expect(await call('alice', 'POST', '/api/dba/link/start')).toMatchObject({ status: 429, body: { code: 'rate_limited' } });
++  vi.stubGlobal('fetch', async () => { throw new TypeError('network down'); });
++  expect(await call('bob', 'POST', '/api/dba/link/start')).toMatchObject({ status: 502, body: { code: 'dba_unavailable' } });
++});
++
++it('serves the workspace at the registered callback URL', async () => {
++  const seen = [];
++  env.ASSETS = { fetch: request => { seen.push(new URL(request.url).pathname); return new Response('app'); } };
++  expect((await worker.fetch(new Request('https://cronly.org/auth/dba/callback?code=c&state=s'), env)).status).toBe(200);
++  expect(seen).toEqual(['/app.html']);
++});
+diff --git a/src/auth/dba.js b/src/auth/dba.js
+new file mode 100644
+index 0000000..e76bc67
+--- /dev/null
++++ b/src/auth/dba.js
+@@ -0,0 +1,21 @@
++import { createOidcClient } from '../vendor/devicebasedauth/site.js';
++
++/** cronly's audience and OIDC client id at devicebasedauth.org. */
++export const DBA_AUDIENCE = 'cronly.org';
++export const DBA_DEFAULT_ISSUER = 'https://devicebasedauth.org';
++
++/** The devicebasedauth.org issuer this deployment trusts. */
++export function dbaIssuer(env) { return env.DBA_ISSUER || DBA_DEFAULT_ISSUER; }
++
++// Resolve fetch per call so tests (and a future instrumented fetch) can replace the global.
++const fetcher = (...args) => globalThis.fetch(...args);
++
++/**
++ * OIDC client for linking a cronly account to a DBA account (authorization code + PKCE).
++ * Built per link request on purpose: linking is rare, and the vendored client caches discovery
++ * and JWKS bodies without checking the HTTP status, so a module-level client could keep a
++ * transient error response for the life of the isolate.
++ */
++export function dbaOidc(env) {
++  return createOidcClient({ clientId: DBA_AUDIENCE, redirectUri: `${env.APP_ORIGIN}/auth/dba/callback`, issuer: dbaIssuer(env), fetch: fetcher });
++}
+diff --git a/src/durable-objects/account-do.js b/src/durable-objects/account-do.js
+index 30e7f55..62fc1df 100644
+--- a/src/durable-objects/account-do.js
++++ b/src/durable-objects/account-do.js
+@@ -11,6 +11,7 @@ import { accountMoney, accountMetric } from './account-money.js';
+ import { listLedger } from './ledger-history.js';
+ import { getHold, listHolds, putHold } from './hold-storage.js';
+ import { runActivity } from './run-activity.js';
++import { dbaAccountOp } from './dba-account.js';
+ 
+ /** Account definitions and money share one transactional, SQLite-backed object. */
+ export class AccountDO {
+@@ -65,7 +66,7 @@ export class AccountDO {
+       }
+       case 'maintenance': {
+         const now = Date.now();
+-        for (const prefix of ['activation:', 'proposal:', 'rate:']) for (const [key, record] of await tx.list({ prefix })) {
++        for (const prefix of ['activation:', 'proposal:', 'rate:', 'dba-oidc:', 'dba-key:']) for (const [key, record] of await tx.list({ prefix })) {
+           // Applications are permanent receipts, even when the original proposal
+           // has expired. Compact legacy proposals without losing their response.
+           if (prefix === 'proposal:' && record.applied) {
+@@ -226,6 +227,7 @@ export class AccountDO {
+         assert(key && !key.revoked && key.hash === args.hash && key.expires_at > Date.now(), 'invalid_auth', 'Invalid API key', 401);
+         return { scopes: key.scopes };
+       }
++      case 'dba-link-begin': case 'dba-link-take': case 'dba-link-set': case 'dba-unlink': case 'dba-link-status': return dbaAccountOp(tx, args);
+       default: assert(false, 'unknown_operation', 'Unknown internal operation', 404);
+     }
+   }
+diff --git a/src/durable-objects/dba-account.js b/src/durable-objects/dba-account.js
+new file mode 100644
+index 0000000..6e6c866
+--- /dev/null
++++ b/src/durable-objects/dba-account.js
+@@ -0,0 +1,60 @@
++import { assert } from '../utils/errors.js';
++
++/** OIDC link requests expire quickly; the user is waiting at devicebasedauth.org meanwhile. */
++export const DBA_STATE_TTL_MS = 10 * 60000;
++const MAX_PENDING_STATES = 10;
++
++/**
++ * The account half of a devicebasedauth.org link, run inside the AccountDO transaction.
++ * Rows: `dba-link` (the confirmed link), `dba-oidc:<state>` (pending OIDC requests),
++ * `dba-key:<credential id>` (DBA credentials seen on this account).
++ */
++export async function dbaAccountOp(tx, args) {
++  const now = Date.now();
++  switch (args.op) {
++    case 'dba-link-begin': {
++      // The PKCE verifier and nonce stay server-side; only `state` travels in the URL.
++      let pending = 0;
++      for (const [key, row] of await tx.list({ prefix: 'dba-oidc:' })) { if (row.expires_at <= now) await tx.delete(key); else pending++; }
++      assert(pending < MAX_PENDING_STATES, 'rate_limited', 'Too many pending devicebasedauth.org link requests; finish one or wait 10 minutes', 429);
++      const expires_at = now + DBA_STATE_TTL_MS;
++      await tx.put(`dba-oidc:${args.oidc.state}`, { oidc: args.oidc, expires_at });
++      return { expires_at };
++    }
++    case 'dba-link-take': {
++      // Single use: a replayed callback cannot redeem the same state twice.
++      const key = `dba-oidc:${args.state}`; const row = await tx.get(key);
++      if (row) await tx.delete(key);
++      assert(row && row.expires_at > now, 'invalid_state', 'This link request expired or is unknown; start again', 400);
++      return { oidc: row.oidc };
++    }
++    case 'dba-link-set': {
++      const prior = await tx.get('dba-link');
++      await tx.put('dba-link', { dba_account: args.dba_account, subject: args.subject, issuer: args.issuer, linked_at: prior?.dba_account === args.dba_account ? prior.linked_at : now });
++      if (prior?.dba_account !== args.dba_account) {
++        await deleteCredentials(tx);
++        await tx.put(`audit:${now}:dba-link`, { kind: 'link_dba', dba_account: args.dba_account, previous: prior?.dba_account || null, created_at: now });
++      }
++      return { previous: prior?.dba_account || null };
++    }
++    case 'dba-unlink': {
++      const prior = await tx.get('dba-link');
++      if (prior) {
++        await tx.delete('dba-link'); await deleteCredentials(tx);
++        await tx.put(`audit:${now}:dba-unlink`, { kind: 'unlink_dba', dba_account: prior.dba_account, created_at: now });
++      }
++      return { previous: prior?.dba_account || null };
++    }
++    case 'dba-link-status': {
++      const link = await tx.get('dba-link');
++      const credentials = [...(await tx.list({ prefix: 'dba-key:' })).values()].filter(row => row.expires_at > now);
++      return { linked: Boolean(link), dba_account: link?.dba_account || null, linked_at: link?.linked_at || null, credentials };
++    }
++    default: assert(false, 'unknown_operation', 'Unknown internal operation', 404);
++  }
++}
++
++// Credentials belong to the DBA account; a different (or no) link must not inherit them.
++async function deleteCredentials(tx) {
++  for (const key of (await tx.list({ prefix: 'dba-key:' })).keys()) await tx.delete(key);
++}
+diff --git a/src/durable-objects/dba-link-do.js b/src/durable-objects/dba-link-do.js
+new file mode 100644
+index 0000000..4d744d7
+--- /dev/null
++++ b/src/durable-objects/dba-link-do.js
+@@ -0,0 +1,36 @@
++import { assert, errorResponse } from '../utils/errors.js';
++
++/**
++ * Global index from one devicebasedauth.org account to the cronly account it is linked to.
++ *
++ * One object per DBA account (named by it): every DBA-authenticated request looks its link up,
++ * so lookups must spread across objects rather than queue on a singleton such as SafetyDO, and a
++ * per-DBA-account object makes "linked to at most one cronly account" an atomic claim.
++ * The claim alone authorizes nothing: the named AccountDO's `dba-link` row must confirm it.
++ */
++export class DbaLinkDO {
++  constructor(ctx, env) { this.storage = ctx.storage; this.env = env; }
++  async fetch(request) {
++    try {
++      const args = await request.json();
++      return Response.json(await this.storage.transaction(async tx => {
++        const current = await tx.get('link');
++        switch (args.op) {
++          case 'get': return { account: current?.account || null };
++          case 'claim': {
++            // Take over only the holder the caller proved stale, so racing takeovers cannot both win.
++            if (current && current.account !== args.account && current.account !== args.replace) return { account: current.account, claimed: false };
++            if (current?.account !== args.account) await tx.put('link', { account: args.account, claimed_at: Date.now() });
++            return { account: args.account, claimed: true };
++          }
++          case 'release': {
++            // A late release from a former holder must not drop a newer claim.
++            if (current?.account === args.account) await tx.delete('link');
++            return {};
++          }
++          default: assert(false, 'unknown_operation', 'Unknown internal operation', 404);
++        }
++      }));
++    } catch (error) { return errorResponse(error); }
++  }
++}
+diff --git a/src/durable-objects/dba-link-do.test.js b/src/durable-objects/dba-link-do.test.js
+new file mode 100644
+index 0000000..2558aea
+--- /dev/null
++++ b/src/durable-objects/dba-link-do.test.js
+@@ -0,0 +1,19 @@
++import { it, expect } from 'vitest';
++import { DbaLinkDO } from './dba-link-do.js';
++import { namespace } from '../../test-utils/storage.js';
++import { rpc } from '../utils/rpc.js';
++
++it('claims a DBA account once, replaces only the named stale holder and ignores late releases', async () => {
++  const links = namespace(DbaLinkDO, {}); const call = (op, args) => rpc(links, 'dba_x', op, args);
++  expect(await call('get')).toEqual({ account: null });
++  expect(await call('claim', { account: 'a' })).toEqual({ account: 'a', claimed: true });
++  expect(await call('claim', { account: 'a' })).toEqual({ account: 'a', claimed: true });
++  expect(await call('claim', { account: 'b' })).toEqual({ account: 'a', claimed: false });
++  expect(await call('claim', { account: 'b', replace: 'c' })).toEqual({ account: 'a', claimed: false });
++  expect(await call('claim', { account: 'b', replace: 'a' })).toEqual({ account: 'b', claimed: true });
++  await call('release', { account: 'a' });
++  expect(await call('get')).toEqual({ account: 'b' });
++  await call('release', { account: 'b' });
++  expect(await call('get')).toEqual({ account: null });
++  await expect(call('other')).rejects.toMatchObject({ status: 404, code: 'unknown_operation' });
++});
+diff --git a/src/index.js b/src/index.js
+index b45d73a..80de4eb 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -13,6 +13,7 @@ import { rotateSecret } from './executor/rotate-secret.js';
+ import { definitions, keys } from './api/definitions.js';
+ import { clerkWebhook } from './auth/clerk-webhook.js';
+ import { checkout, stripeWebhook } from './api/payments.js';
++import { dbaLink } from './api/dba.js';
+ import { explainCron } from './services/cron.js';
+ import { PUBLIC, SESSION, USER_SCOPES, canAccess } from './auth/scopes.js';
+ import { authenticate } from './auth/middleware.js';
+@@ -23,6 +24,7 @@ import { price, PRICES } from './utils/pricing.js';
+ export { SafetyDO } from './durable-objects/safety-do.js';
+ export { AccountDO } from './durable-objects/account-do.js';
+ export { JobDO } from './durable-objects/job-do.js';
++export { DbaLinkDO } from './durable-objects/dba-link-do.js';
+ 
+ // Routes are the sole dispatch source: an undeclared endpoint cannot execute.
+ export const API_ROUTES = [
+@@ -54,6 +56,10 @@ export const API_ROUTES = [
+   { method: 'GET', path: '/api/keys', access: SESSION, handler: 'keys' },
+   { method: 'POST', path: '/api/keys', access: SESSION, handler: 'keys' },
+   { method: 'DELETE', path: '/api/keys/:id', access: SESSION, handler: 'keys' },
++  { method: 'GET', path: '/api/dba/link', access: SESSION, handler: 'dba-link-status' },
++  { method: 'POST', path: '/api/dba/link/start', access: SESSION, handler: 'dba-link-start' },
++  { method: 'POST', path: '/api/dba/link/finish', access: SESSION, handler: 'dba-link-finish' },
++  { method: 'DELETE', path: '/api/dba/link', access: SESSION, handler: 'dba-link-delete' },
+   { method: 'POST', path: '/api/cron/explain', access: PUBLIC, handler: 'cron-explain' },
+   ...['variables', 'secrets', 'actions', 'jobs'].flatMap(kind => ['GET', 'PUT', 'DELETE'].map(method => ({ method, path: `/api/${kind}/:name`, access: method === 'GET' ? 'read' : kind === 'secrets' ? 'secrets:write' : 'change', handler: 'definitions', kind })))
+ ];
+@@ -83,6 +89,7 @@ async function handle(route, request, env, auth) {
+     case 'rotate-secret': return rotateSecret(request, env, auth, route.params.name);
+     case 'definitions': return definitions(route, request, env, auth);
+     case 'keys': return keys(route, request, env, auth);
++    case 'dba-link-status': case 'dba-link-start': case 'dba-link-finish': case 'dba-link-delete': return dbaLink(route, request, env, auth);
+     case 'clerk-webhook': return clerkWebhook(request, env);
+     case 'stripe-webhook': return stripeWebhook(request, env);
+     case 'checkout': return checkout(request, env, auth, dryRun);
+@@ -130,6 +137,8 @@ const worker = {
+         // indexes internally so the home page and docs retain their public URLs.
+         const assetUrl = new URL(request.url);
+         if (path.endsWith('/')) assetUrl.pathname += 'index.html';
++        // The registered devicebasedauth.org redirect URI is extensionless; the workspace handles it.
++        if (path === '/auth/dba/callback') assetUrl.pathname = '/app.html';
+         return env.ASSETS.fetch(new Request(assetUrl, request));
+       }
+       assert(route, 'not_found', 'Not found', 404);
+diff --git a/src/platform.js b/src/platform.js
+index ab5cafc..e6a9b00 100644
+--- a/src/platform.js
++++ b/src/platform.js
+@@ -4,7 +4,7 @@ import { rpc } from './utils/rpc.js';
+ import { assert, errorResponse } from './utils/errors.js';
+ import { destinationHostname, validateDestination } from './executor/destinations.js';
+ export { default } from './index.js';
+-export { AccountDO, JobDO, SafetyDO, API_ROUTES } from './index.js';
++export { AccountDO, JobDO, SafetyDO, DbaLinkDO, API_ROUTES } from './index.js';
+ 
+ /** Only capability passed to a sandbox; all native network access is disabled. */
+ export class OutboundGateway extends WorkerEntrypoint {
+diff --git a/src/services/openapi.js b/src/services/openapi.js
+index 71e65fe..0939597 100644
+--- a/src/services/openapi.js
++++ b/src/services/openapi.js
+@@ -6,6 +6,7 @@ const schemas = {
+   Job: { type: 'object', required: ['action', 'cron'], properties: { action: { type: 'string', pattern: '^[a-z0-9-]{1,64}$' }, cron: { type: ['string', 'null'] }, timezone: { type: 'string', default: 'UTC' }, overlap: { enum: ['skip', 'allow'] }, missed: { enum: ['skip', 'run_once'] }, enabled: { type: 'boolean' }, retries: { type: 'integer', minimum: 0, maximum: 3 }, budget: { type: 'object', properties: { day: integerMoney, month: integerMoney } } } },
+   Action: { type: 'object', properties: { type: { enum: ['http', 'javascript'] }, url: { type: 'string' }, method: { enum: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] }, headers: { type: 'object', additionalProperties: { type: 'string' } }, body: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 1, maximum: 30 }, follow_redirects: { type: 'boolean' }, source: { type: 'string', maxLength: 262144 }, cpu_ms: { type: 'integer', minimum: 10, maximum: 30000 }, subrequests: { type: 'integer', minimum: 0, maximum: 50 } } },
+   Config: { type: 'object', properties: { variables: { type: 'object', additionalProperties: { type: 'string' } }, secrets: { type: 'object', description: 'Metadata only; set secret values with the write-only endpoint.' }, actions: { type: 'object', additionalProperties: { $ref: '#/components/schemas/Action' } }, jobs: { type: 'object', additionalProperties: { $ref: '#/components/schemas/Job' } } } },
++  DbaLinkFinish: { type: 'object', required: ['code', 'state'], properties: { code: { type: 'string', maxLength: 2048, description: 'Authorization code from the devicebasedauth.org redirect.' }, state: { type: 'string', maxLength: 256 } }, additionalProperties: false },
+   Response: { type: 'object', properties: { cost_microdollars: integerMoney, balance_microdollars: integerMoney, quote_microdollars: integerMoney } }
+ };
+ /** Generate the served and checked-in contract from the only dispatch table. */
+@@ -23,6 +24,7 @@ export function openapi(routes) {
+       let schema = { type: 'object' };
+       if (route.handler === 'definitions') schema = { $ref: `#/components/schemas/${route.kind === 'jobs' ? 'Job' : route.kind === 'actions' ? 'Action' : 'Value'}` };
+       if (route.handler === 'config-write') schema = { $ref: '#/components/schemas/Config' };
++      if (route.handler === 'dba-link-finish') schema = { $ref: '#/components/schemas/DbaLinkFinish' };
+       operation.requestBody = { content: { 'application/json': { schema } } };
+     }
+     if (route.handler === 'quote') for (const name of ['op', 'job', 'resource']) operation.parameters.push({ name, in: 'query', schema: { type: 'string' } });
+diff --git a/test-utils/dba-issuer.js b/test-utils/dba-issuer.js
+new file mode 100644
+index 0000000..7624d17
+--- /dev/null
++++ b/test-utils/dba-issuer.js
+@@ -0,0 +1,72 @@
++import { issuerSigner, jwksFor, signCredential, signAccessToken, signStatusList } from '../src/vendor/devicebasedauth/issuer.js';
++import { createProof } from '../src/vendor/devicebasedauth/credential.js';
++import { generateKeyPair, exportPublicJwk, jwkThumbprint, signJws, b64u } from '../src/vendor/devicebasedauth/jose.js';
++import { setBit } from '../src/vendor/devicebasedauth/status-list.js';
++
++let issuers = 0;
++const id = prefix => `${prefix}${b64u(crypto.getRandomValues(new Uint8Array(12))).replace(/[^A-Za-z0-9]/g, '').slice(0, 12).padEnd(12, 'x')}`;
++
++/**
++ * A fake devicebasedauth.org for tests: a generated P-256 issuer key signs credentials, access
++ * tokens, status lists and OIDC ID tokens with the vendored issuer code, and `fetch` serves
++ * JWKS, the status list, OIDC discovery and the token endpoint. Each instance has its own issuer
++ * URL so module-level verifier caches never mix keys between tests.
++ */
++export async function fakeDbaIssuer() {
++  const issuer = `https://dba-${++issuers}-${crypto.randomUUID().slice(0, 8)}.test`;
++  const pair = await generateKeyPair(true);
++  const issuerKey = { kid: 'test-1', jwk: await crypto.subtle.exportKey('jwk', pair.privateKey) };
++  const signer = await issuerSigner(issuerKey);
++  const statusUri = `${issuer}/v1/lists/1`;
++  let statusBytes = new Uint8Array(64); let nextIndex = 0;
++  const codes = new Map(); const calls = [];
++
++  const base = ({ acct, grants, aud = ['cronly.org'], lifetime = 3600 }) => {
++    const now = Math.floor(Date.now() / 1000); const cid = id('crd_');
++    return { iss: issuer, sub: id('dev_'), acct, aud, cid, jti: `${cid}.1`, iat: now, nbf: now, exp: now + lifetime, grants, status: { status_list: { idx: nextIndex++, uri: statusUri } }, ver: 1 };
++  };
++
++  return {
++    issuer, calls,
++    /** A new device key and a credential for it. */
++    async device({ acct, grants, aud, lifetime, device = { name: 'Test laptop', kind: 'cli', key_protection: 'software' } }) {
++      const keys = await generateKeyPair(false); const publicJwk = await exportPublicJwk(keys.publicKey);
++      const payload = { ...base({ acct, grants, aud, lifetime }), cnf: { jkt: await jwkThumbprint(publicJwk) }, device };
++      const credential = await signCredential(payload, signer);
++      return {
++        credential, payload, publicJwk, privateKey: keys.privateKey,
++        /** Authorization headers for one request (a fresh single-use proof each call). */
++        async headers(method, url, overrides = {}) {
++          return { Authorization: `DBA ${credential}`, DPoP: await createProof({ privateKey: overrides.privateKey || keys.privateKey, publicJwk: overrides.publicJwk || publicJwk, method: overrides.method || method, url: overrides.url || url, credential }) };
++        }
++      };
++    },
++    /** A short-lived bearer access token (no device key). */
++    async accessToken({ acct, grants }) {
++      const payload = base({ acct, grants, lifetime: 600 });
++      return { token: await signAccessToken(payload, signer), payload };
++    },
++    revoke(payload) { statusBytes = setBit(statusBytes, payload.status.status_list.idx, 1); },
++    /** Simulate the user approving the link at devicebasedauth.org; returns the redirect's code. */
++    authorize(authorizationUrl, { acct }) {
++      const query = new URL(authorizationUrl).searchParams; const code = id('code_');
++      codes.set(code, { acct, nonce: query.get('nonce'), client_id: query.get('client_id'), redirect_uri: query.get('redirect_uri'), challenge: query.get('code_challenge') });
++      return { code, state: query.get('state') };
++    },
++    async fetch(input, init = {}) {
++      const url = String(input instanceof Request ? input.url : input); calls.push(url);
++      if (url === `${issuer}/.well-known/jwks.json`) return Response.json(jwksFor([issuerKey]));
++      if (url === statusUri) return new Response(await signStatusList({ uri: statusUri, bytes: statusBytes, issuer }, signer), { headers: { 'Content-Type': 'application/statuslist+jwt' } });
++      if (url === `${issuer}/.well-known/openid-configuration`) return Response.json({ issuer, authorization_endpoint: `${issuer}/oauth/authorize`, token_endpoint: `${issuer}/oauth/token`, jwks_uri: `${issuer}/.well-known/jwks.json` });
++      if (url === `${issuer}/oauth/token`) {
++        const form = new URLSearchParams(init.body); const grant = codes.get(form.get('code')); codes.delete(form.get('code'));
++        const challenge = b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(form.get('code_verifier') || ''))));
++        if (!grant || grant.client_id !== form.get('client_id') || grant.redirect_uri !== form.get('redirect_uri') || grant.challenge !== challenge) return Response.json({ error: 'invalid_grant' }, { status: 400 });
++        const now = Math.floor(Date.now() / 1000);
++        const idToken = await signJws({ typ: 'JWT', kid: signer.kid }, { iss: issuer, sub: grant.acct, acct: grant.acct, aud: grant.client_id, iat: now, exp: now + 300, nonce: grant.nonce }, signer.key);
++        return Response.json({ id_token: idToken, token_type: 'Bearer', expires_in: 300 });
++      }
++      return new Response('not found', { status: 404 });
++    }
++  };
++}
+diff --git a/wrangler.local.toml b/wrangler.local.toml
+index 75981b4..28f5390 100644
+--- a/wrangler.local.toml
++++ b/wrangler.local.toml
+@@ -13,6 +13,10 @@ html_handling = "none"
+ [vars]
+ ENVIRONMENT = "local"
+ APP_ORIGIN = "http://localhost:8787"
++# devicebasedauth.org issuer (S5). Its dev:local also defaults to port 8787: run one of them
++# on another port, e.g. DBA_ISSUER = "http://localhost:8788", and register
++# http://localhost:8787/auth/dba/callback for client cronly.org there.
++DBA_ISSUER = "https://devicebasedauth.org"
+ 
+ SECRETS_MASTER_KEY = "local-only-master-key-never-use-in-production"
+ TOKEN_SIGNING_KEY = "local-only-signing-key-never-use-in-production"
+@@ -66,6 +70,14 @@ class_name = "SafetyDO"
+ tag = "v2"
+ new_sqlite_classes = ["SafetyDO"]
+ 
++[[durable_objects.bindings]]
++name = "DBA_LINKS"
++class_name = "DbaLinkDO"
++
++[[migrations]]
++tag = "v3"
++new_sqlite_classes = ["DbaLinkDO"]
++
+ [[ratelimits]]
+ name = "PUBLIC_LIMITER"
+ namespace_id = "1001"
+diff --git a/wrangler.toml b/wrangler.toml
+index fa794dc..2bcf0fc 100644
+--- a/wrangler.toml
++++ b/wrangler.toml
+@@ -15,6 +15,8 @@ html_handling = "none"
+ [vars]
+ ENVIRONMENT = "production"
+ APP_ORIGIN = "https://cronly.org"
++# devicebasedauth.org issuer for device credentials and account linking (S5).
++DBA_ISSUER = "https://devicebasedauth.org"
+ 
+ # Required secrets, uploaded by CI before deployment:
+ # CLERK_SECRET_KEY, CLERK_PUBLISHABLE_KEY, CLERK_WEBHOOK_SECRET,
+@@ -70,6 +72,14 @@ class_name = "SafetyDO"
+ tag = "v2"
+ new_sqlite_classes = ["SafetyDO"]
+ 
++[[durable_objects.bindings]]
++name = "DBA_LINKS"
++class_name = "DbaLinkDO"
++
++[[migrations]]
++tag = "v3"
++new_sqlite_classes = ["DbaLinkDO"]
++
+ [[ratelimits]]
+ name = "PUBLIC_LIMITER"
+ namespace_id = "1001"
+-- 
+2.43.0
+
