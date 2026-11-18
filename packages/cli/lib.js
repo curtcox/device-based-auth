@@ -204,7 +204,7 @@ async function keyPairMatches(key) {
 /** Where `dba enroll` keeps the private key: `auto` (the OS secret store when it works, else a file), `os` (fail without one) or `file`. */
 export const KEY_STORES = ['auto', 'os', 'file'];
 export const SECRET_SERVICE = 'org.devicebasedauth.dba';
-const STORE_NAMES = { 'macos-keychain': 'the macOS Keychain', 'secret-service': 'the Secret Service keyring (secret-tool)' };
+const STORE_NAMES = { 'macos-keychain': 'the macOS Keychain', 'secret-service': 'the Secret Service keyring (secret-tool)', 'windows-dpapi': 'Windows DPAPI (your Windows account)' };
 
 /** --key-store, else DBA_KEY_STORE, else auto. */
 export function keyStoreOption({ flag, env = {} } = {}) {
@@ -215,16 +215,19 @@ export function keyStoreOption({ flag, env = {} } = {}) {
 
 /**
  * The OS secret store for this platform, or null when there is none the CLI knows: the macOS
- * Keychain through `security`, or the freedesktop Secret Service (GNOME Keyring, KWallet) through
- * `secret-tool`. Windows and headless Linux without secret-tool use the file.
+ * Keychain through `security`, the freedesktop Secret Service (GNOME Keyring, KWallet) through
+ * `secret-tool`, or on Windows DPAPI through Windows PowerShell (see windowsDpapiStore). Headless
+ * Linux without secret-tool uses the file.
  *
  * `run(command, args, input)` runs a program without a shell and resolves to { code, stdout }
  * (code null when it could not start). The secret never goes on a command line, where other
  * users could read it from the process list: secret-tool reads it from stdin, and `security`
  * gets it inside a command typed into its interactive mode (`security -i`), also on stdin.
  * Entries are named by the key's JWK thumbprint, which is base64url and needs no quoting.
+ * Windows also needs `files` ({ read, write, remove } of text files, read resolving to null when
+ * absent) and `dir`, where the DPAPI-sealed blobs live.
  */
-export function osSecretStore({ platform, run }) {
+export function osSecretStore({ platform, run, files, dir }) {
   const check = account => { if (!/^[A-Za-z0-9_-]{43}$/.test(account)) throw new Error('secret store account must be a JWK thumbprint'); };
   const checkSecret = secret => { if (!/^[A-Za-z0-9_-]+$/.test(secret)) throw new Error('secret must be base64url'); };
   if (platform === 'darwin') {
@@ -261,7 +264,69 @@ export function osSecretStore({ platform, run }) {
       async remove(account) { check(account); await run('secret-tool', ['clear', 'service', SECRET_SERVICE, 'account', account], ''); }
     };
   }
+  if (platform === 'win32' && files && dir) return windowsDpapiStore({ run, files, dir, check, checkSecret });
   return null;
+}
+
+/** PowerShell's -EncodedCommand: the script as base64 of UTF-16LE. */
+export function powershellEncoded(script) {
+  const bytes = new Uint8Array(script.length * 2);
+  for (let i = 0; i < script.length; i++) { const code = script.charCodeAt(i); bytes[2 * i] = code & 0xff; bytes[2 * i + 1] = code >> 8; }
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/**
+ * The DPAPI script for one entry: reads stdin, and writes base64 of the sealed blob ("protect")
+ * or the secret it unseals ("unprotect"). The data is on stdin, never in the script, so neither
+ * the secret nor the blob is on a command line. The entropy names the entry, so a blob copied
+ * over another entry's file does not unseal there.
+ */
+export function dpapiScript(mode, account) {
+  const call = mode === 'protect'
+    ? '[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($in),$entropy,$scope))'
+    : '[Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($in),$entropy,$scope))';
+  return [
+    "$ErrorActionPreference='Stop'",
+    'Add-Type -AssemblyName System.Security',
+    '$in=[Console]::In.ReadToEnd().Trim()',
+    `$entropy=[Text.Encoding]::UTF8.GetBytes('${SECRET_SERVICE}/${account}')`,
+    '$scope=[Security.Cryptography.DataProtectionScope]::CurrentUser',
+    `[Console]::Out.Write(${call})`
+  ].join(';');
+}
+
+/**
+ * Windows: the private key sealed with DPAPI for the signed-in Windows user (CurrentUser scope),
+ * the blob in `<dir>/<thumbprint>.dpapi` (the profile directory). Only that user on that machine (or their roaming profile
+ * with its password) can unseal it, so copying the profile or the blob elsewhere copies nothing
+ * usable. Uses Windows PowerShell 5.1, present on every supported Windows, and the built-in
+ * ProtectedData class: nothing to install, nothing compiled.
+ */
+function windowsDpapiStore({ run, files, dir, check, checkSecret }) {
+  const path = account => `${dir}/${account}.dpapi`;
+  const powershell = (mode, account, input) => run('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', powershellEncoded(dpapiScript(mode, account))], input);
+  return {
+    backend: 'windows-dpapi',
+    name: STORE_NAMES['windows-dpapi'],
+    async save(account, secret) {
+      check(account); checkSecret(secret);
+      const result = await powershell('protect', account, secret);
+      const blob = result.stdout.trim();
+      if (result.code !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(blob)) return false;
+      await files.write(path(account), blob);
+      return true;
+    },
+    async load(account) {
+      check(account);
+      const blob = (await files.read(path(account)))?.trim();
+      if (!blob || !/^[A-Za-z0-9+/]+={0,2}$/.test(blob)) return null;
+      const result = await powershell('unprotect', account, blob);
+      return result.code === 0 ? result.stdout.trim() || null : null;
+    },
+    async remove(account) { check(account); await files.remove(path(account)); }
+  };
 }
 
 /**
@@ -282,7 +347,7 @@ export async function saveDeviceKey(key, { mode = 'auto', secrets, now = new Dat
     await secrets.remove(account).catch(() => {});
     if (mode === 'os') throw new UsageError(`Could not keep the key in ${secrets.name}. Unlock it, or use --key-store file.`);
   } else if (mode === 'os') {
-    throw new UsageError('This system has no OS secret store dba can use (macOS Keychain, or secret-tool on Linux). Use --key-store file.');
+    throw new UsageError('This system has no OS secret store dba can use (macOS Keychain, secret-tool on Linux, or DPAPI on Windows). Use --key-store file.');
   }
   return { file: keyFile(key, now), keyProtection: KEY_PROTECTION, store: null };
 }

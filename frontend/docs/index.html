@@ -143,7 +143,7 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 
 <section id="cli">
 <h2>Quick start: CLI</h2>
-<p>The <code>dba</code> CLI never sends the key anywhere. It keeps it in the OS secret store when there is one (the macOS Keychain, or the Secret Service through <code>secret-tool</code> on Linux), and the credential then says <code>key_protection: "os-keychain"</code>; otherwise in a <code>0600</code> file under <code>~/.config/dba/&lt;profile&gt;/</code> (<code>"software"</code>). <code>--key-store os</code> or <code>file</code> (or <code>DBA_KEY_STORE</code>) makes the choice explicit. <code>dba help</code> lists every command.</p>
+<p>The <code>dba</code> CLI never sends the key anywhere. It keeps it in the OS secret store when there is one (the macOS Keychain, the Secret Service through <code>secret-tool</code> on Linux, or on Windows sealed with DPAPI for your Windows account, through the built-in Windows PowerShell), and the credential then says <code>key_protection: "os-keychain"</code>; otherwise in a <code>0600</code> file under <code>~/.config/dba/&lt;profile&gt;/</code> (<code>"software"</code>). <code>--key-store os</code> or <code>file</code> (or <code>DBA_KEY_STORE</code>) makes the choice explicit. <code>dba help</code> lists every command.</p>
 <pre class="code" data-sample="enroll-and-call.sh"><code># 1. Make a key and ask for permission to publish on hashbin.org. This prints a link; the
 #    account owner opens it, checks the grants and approves. The command waits for that.
 dba enroll --aud hashbin.org --action hashbin:content:write --name &quot;Sample laptop&quot; --wait 300

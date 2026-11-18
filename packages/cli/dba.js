@@ -28,7 +28,7 @@ Enroll this machine:
       grant; each --grant adds one (or a JSON list). --print-request only prints the signed
       request (for agents and the MCP server); finish with \`dba import\`.
       The private key never leaves this machine. It is kept in the OS secret store when there
-      is one (macOS Keychain; Secret Service via secret-tool on Linux) and the credential says
+      is one (macOS Keychain; Secret Service via secret-tool on Linux; DPAPI on Windows) and the credential says
       key_protection "os-keychain"; else in a 0600 file, "software". --key-store os refuses to
       fall back to the file, file never tries the OS store (also DBA_KEY_STORE).
   dba enroll --token dbae_… [--aud …] [--action …] [--name …]
@@ -157,7 +157,9 @@ async function loadProfile(globals) {
   const paths = configPaths({ env: process.env, home: homedir(), profile: globals.profile });
   const config = await readJsonFile(paths.config) || {};
   const origin = resolveOrigin({ flag: globals.origin, env: process.env, saved: config.origin });
-  const secrets = osSecretStore({ platform: process.platform, run: runProgram });
+  // DPAPI blobs live in the profile directory, which a first enrollment has not made yet.
+  const files = { read: readTextFile, write: async (path, text) => { await ensureDir(paths.dir); await writePrivate(path, text); }, remove: path => rm(path, { force: true }) };
+  const secrets = osSecretStore({ platform: process.platform, run: runProgram, files, dir: paths.dir });
   return { paths, config, origin, secrets, client: createClient({ origin }), autoRenew: autoRenewEnabled({ flag: globals['no-renew'], env: process.env }) };
 }
 

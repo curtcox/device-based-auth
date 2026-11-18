@@ -1,7 +1,76 @@
+  /**
+   * A stand-in for powershell.exe that checks the -EncodedCommand is one of the two DPAPI scripts
+   * and "seals" by tagging the input with the entry's entropy, so a blob only unseals for its entry.
+   */
+  function fakePowershell({ code = 0 } = {}) {
+    const calls = [];
+    const run = async (command, args, input) => {
+      calls.push({ command, args, input });
+      const script = new TextDecoder('utf-16le').decode(Uint8Array.from(atob(args.at(-1)), c => c.charCodeAt(0)));
+      const entropy = /GetBytes\('([^']+)'\)/.exec(script)[1];
+      if (code !== 0) return { code, stdout: '' };
+      if (script === dpapiScript('protect', entropy.split('/')[1])) return { code: 0, stdout: `${btoa(`${entropy}|${input}`)}\r\n` };
+      if (script === dpapiScript('unprotect', entropy.split('/')[1])) {
+        const [tag, secret] = atob(input).split('|');
+        return tag === entropy ? { code: 0, stdout: secret } : { code: 1, stdout: '' };
+      }
+      return { code: 1, stdout: '' };
+    };
+    return { calls, run };
+  }
+  function memoryFiles() {
+    const map = new Map();
+    return { map, read: async path => map.get(path) ?? null, write: async (path, text) => { map.set(path, text); }, remove: async path => { map.delete(path); } };
+  }
+
+  it('seals with DPAPI on Windows, blob in the profile directory, secret and blob on stdin', async () => {
+    const { calls, run } = fakePowershell();
+    const files = memoryFiles();
+    const store = osSecretStore({ platform: 'win32', run, files, dir: 'C:/Users/me/.config/dba/default' });
+    expect(store.backend).toBe('windows-dpapi');
+    const account = 'E'.repeat(43);
+    expect(await store.save(account, 'c2VjcmV0')).toBe(true);
+    const path = `C:/Users/me/.config/dba/default/${account}.dpapi`;
+    expect([...files.map.keys()]).toEqual([path]);
+    expect(files.map.get(path)).not.toContain('\n');
+    expect(await store.load(account)).toBe('c2VjcmV0');
+    for (const call of calls) {
+      expect(call.command).toBe('powershell.exe');
+      expect(call.args.slice(0, -1)).toEqual(['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
+      expect(call.args.join(' ')).not.toContain('c2VjcmV0');
+    }
+    expect(calls[0].input).toBe('c2VjcmV0');
+    expect(calls[1].input).toBe(files.map.get(path));
+    // A blob moved to another entry's name does not unseal there (the entropy names the entry).
+    const other = 'F'.repeat(43);
+    files.map.set(`C:/Users/me/.config/dba/default/${other}.dpapi`, files.map.get(path));
+    expect(await store.load(other)).toBeNull();
+    await store.remove(account);
+    expect(files.map.has(path)).toBe(false);
+    expect(await store.load(account)).toBeNull();
+  });
+
+  it('reports DPAPI failures as no entry and writes nothing', async () => {
+    const files = memoryFiles();
+    const store = osSecretStore({ platform: 'win32', run: fakePowershell({ code: 1 }).run, files, dir: 'C:/d' });
+    expect(await store.save('G'.repeat(43), 'abc')).toBe(false);
+    expect(files.map.size).toBe(0);
+    files.map.set(`C:/d/${'G'.repeat(43)}.dpapi`, 'not base64!');
+    expect(await store.load('G'.repeat(43))).toBeNull();
+    await expect(store.save('x y', 'abc')).rejects.toThrow(/thumbprint/);
+  });
+
+  it('encodes PowerShell commands as base64 UTF-16LE', () => {
+    expect(powershellEncoded('dir')).toBe('ZABpAHIA');
+    expect(dpapiScript('protect', 'H'.repeat(43))).toContain(`'${SECRET_SERVICE}/${'H'.repeat(43)}'`);
+    expect(dpapiScript('protect', 'x')).toContain('Protect(');
+    expect(dpapiScript('unprotect', 'x')).toContain('Unprotect(');
+  });
+
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
-  enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, keyStoreOption, osSecretStore, saveDeviceKey, forgetDeviceKey, SECRET_SERVICE, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
+  enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, keyStoreOption, osSecretStore, powershellEncoded, dpapiScript, saveDeviceKey, forgetDeviceKey, SECRET_SERVICE, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
   curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
 } from './lib.js';
 import { verifyJws, verifyProof, inspectCredential, jwkThumbprint, sha256b64u, generateKeyPair } from '../verify/src/index.js';
@@ -412,6 +481,7 @@ describe('OS secret store', () => {
     expect(await store.save('C'.repeat(43), 'abc')).toBe(false);
     expect(await store.load('C'.repeat(43))).toBeNull();
     expect(osSecretStore({ platform: 'win32', run: async () => ({ code: 0, stdout: '' }) })).toBeNull();
+    expect(osSecretStore({ platform: 'aix', run: async () => ({ code: 0, stdout: '' }), files: {}, dir: '/x' })).toBeNull();
   });
 
   it('refuses entry names and secrets that would need quoting', async () => {
