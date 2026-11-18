@@ -299,7 +299,12 @@ def verify_proof(proof, *, method: str, url: str, credential: str | None = None,
         raise VerificationError("invalid_proof", "DPoP proof jwk is not a P-256 key") from None
     if jkt and thumbprint != jkt:
         raise VerificationError("key_mismatch", "DPoP proof was not signed by the credential key")
-    if not verify_jws(proof, header_jwk):
+    # A jwk with the right members but no point on the curve is a bad proof (401), not a crash.
+    try:
+        signed = verify_jws(proof, header_jwk)
+    except (ValueError, TypeError):
+        signed = None
+    if not signed:
         raise VerificationError("invalid_proof", "DPoP proof signature does not verify")
     if not _js.strict_eq(get(payload, "htm"), method.upper()):
         raise VerificationError("invalid_proof", "DPoP proof htm does not match the request method")

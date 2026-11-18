@@ -106,7 +106,11 @@ export async function verifyProof(proof, { method, url, credential, jkt, now = M
   let thumbprint;
   try { thumbprint = await jwkThumbprint(header.jwk); } catch { fail('invalid_proof', 'DPoP proof jwk is not a P-256 key'); }
   if (jkt && thumbprint !== jkt) fail('key_mismatch', 'DPoP proof was not signed by the credential key');
-  if (!await verifyJws(proof, header.jwk)) fail('invalid_proof', 'DPoP proof signature does not verify');
+  // A jwk with the right members but no point on the curve makes WebCrypto throw; that is a bad
+  // proof (401), not a server error.
+  let signed = false;
+  try { signed = !!await verifyJws(proof, header.jwk); } catch { signed = false; }
+  if (!signed) fail('invalid_proof', 'DPoP proof signature does not verify');
   if (payload.htm !== method.toUpperCase()) fail('invalid_proof', 'DPoP proof htm does not match the request method');
   if (payload.htu !== htu(url)) fail('invalid_proof', 'DPoP proof htu does not match the request URL');
   if (!Number.isSafeInteger(payload.iat) || payload.iat > now + CLOCK_SKEW || payload.iat < now - PROOF_MAX_AGE - CLOCK_SKEW) fail('stale_proof', 'DPoP proof iat is outside the allowed window');

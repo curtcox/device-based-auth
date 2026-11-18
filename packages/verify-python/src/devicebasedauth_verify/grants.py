@@ -227,8 +227,8 @@ def _check_string_list(value, path, errors, maximum, test, message):
 
 
 def _time_ok(value) -> bool:
-    # JS: TIME.test(w.from ?? '') coerces non-strings with String(); mirrored for parity.
-    return bool(TIME.fullmatch("" if value is MISSING or value is None else _js.to_string(value)))
+    # Window times must be strings: ["08:00"] is invalid (as in the JS evaluator).
+    return isinstance(value, str) and bool(TIME.fullmatch(value))
 
 
 def validate_grant(grant, path: str = "grant") -> list:

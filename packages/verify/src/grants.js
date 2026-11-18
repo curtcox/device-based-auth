@@ -126,8 +126,9 @@ export function validateGrant(grant, path = 'grant') {
         const wp = `${path}.when.windows[${i}]`;
         if (!checkKeys(w, WINDOW_KEYS, wp, errors)) return;
         if (w.days !== undefined && (!Array.isArray(w.days) || w.days.length === 0 || w.days.some(d => !DAYS.includes(d)))) errors.push(`${wp}.days must list days from ${DAYS.join(', ')}`);
-        if (!TIME.test(w.from ?? '') || w.from === '24:00') errors.push(`${wp}.from must be HH:MM (00:00–23:59)`);
-        if (!TIME.test(w.to ?? '')) errors.push(`${wp}.to must be HH:MM (00:00–24:00)`);
+        // typeof first: RegExp.test would coerce ["08:00"] to "08:00".
+        if (typeof w.from !== 'string' || !TIME.test(w.from) || w.from === '24:00') errors.push(`${wp}.from must be HH:MM (00:00–23:59)`);
+        if (typeof w.to !== 'string' || !TIME.test(w.to)) errors.push(`${wp}.to must be HH:MM (00:00–24:00)`);
         if (w.from === w.to) errors.push(`${wp} from and to must differ`);
       });
     } else if (tz !== undefined && !validTimeZone(tz)) errors.push(`${path}.when.tz must be an IANA time zone`);

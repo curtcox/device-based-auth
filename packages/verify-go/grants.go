@@ -415,10 +415,11 @@ func validateWhen(when any, path string, errs *[]string) {
 				}
 				from, _ := get(w, "from")
 				to, _ := get(w, "to")
-				if !timePattern.MatchString(nullishString(from)) || strictEqual(from, "24:00") {
+				// Window times must be strings: ["08:00"] is invalid (as in the JS evaluator).
+				if !isTimeString(from) || strictEqual(from, "24:00") {
 					*errs = append(*errs, wp+".from must be HH:MM (00:00–23:59)")
 				}
-				if !timePattern.MatchString(nullishString(to)) {
+				if !isTimeString(to) {
 					*errs = append(*errs, wp+".to must be HH:MM (00:00–24:00)")
 				}
 				if strictEqual(from, to) {
@@ -443,6 +444,11 @@ func validateWhen(when any, path string, errs *[]string) {
 }
 
 // nullishString is `value ?? ""` (an empty string) followed by the String() coercion RegExp.test applies.
+func isTimeString(v any) bool {
+	s, ok := v.(string)
+	return ok && timePattern.MatchString(s)
+}
+
 func nullishString(v any) string {
 	if v == nil {
 		return ""

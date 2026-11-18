@@ -202,7 +202,10 @@ class Verifier:
         keys = _js.get(self.jwks(), "keys")
         kid = _kid_of(jws)
         key = next((k for k in keys if _js.strict_eq(_js.get(k, "kid"), kid)), None) if isinstance(keys, list) else None
-        decoded = verify_jws(jws, key) if key is not None else None
+        try:
+            decoded = verify_jws(jws, key) if key is not None else None
+        except (ValueError, TypeError):
+            decoded = None
         # The list must be the issuer's list for exactly this uri, or it could revoke nothing.
         if (not decoded or not _js.strict_eq(_js.get(decoded["header"], "typ"), STATUS_LIST_TYP)
                 or not _js.strict_eq(decoded["payload"].get("sub"), uri) or not _js.strict_eq(decoded["payload"].get("iss"), self.issuer)):
@@ -210,7 +213,10 @@ class Verifier:
         exp = decoded["payload"].get("exp")
         if _js.is_safe_integer(exp) and exp < now - CLOCK_SKEW:
             raise VerificationError("status_unavailable", "Status list has expired")
-        data = decode_status_list(decoded["payload"].get("status_list"))
+        try:
+            data = decode_status_list(decoded["payload"].get("status_list"))
+        except (ValueError, TypeError):
+            raise VerificationError("status_unavailable", "Status list could not be decoded") from None
         ttl_claim = decoded["payload"].get("ttl")
         ttl = min(self.status_ttl, ttl_claim if _js.is_safe_integer(ttl_claim) else self.status_ttl)
         self._status_cache[uri] = {"bytes": data, "expires": now + ttl}

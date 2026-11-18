@@ -72,7 +72,7 @@
     "grant_index": null,
     "reasons": [
      [
-      "outside_time_window"
+      "invalid_grant"
      ]
     ],
     "online_required": false,
@@ -104,10 +104,12 @@
     "action": "hashbin:content:write"
    },
    "result": {
-    "allow": true,
-    "grant_index": 0,
+    "allow": false,
+    "grant_index": null,
     "reasons": [
-     []
+     [
+      "invalid_grant"
+     ]
     ],
     "online_required": false,
     "caveats": {}

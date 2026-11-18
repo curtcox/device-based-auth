@@ -62,6 +62,15 @@ describe('proofs', () => {
     await expect(verifyProof(proof, { method: 'POST', url: 'https://hashbin.org/api/upload', credential: 'x.y.z', jkt: dev.jkt, now: NOW })).rejects.toMatchObject({ code: 'invalid_proof' });
     await expect(verifyProof(proof, { method: 'POST', url: 'https://hashbin.org/api/upload', credential, jkt: dev.jkt, now: NOW + 200 })).rejects.toMatchObject({ code: 'stale_proof' });
   });
+  it('refuses a proof whose jwk is not a point on the curve as invalid_proof, not a crash', async () => {
+    const dev = await device(); const credential = 'a.b.c';
+    const proof = await createProof({ ...dev, method: 'GET', url: 'https://hashbin.org/x', credential, now: NOW });
+    const [h, p, sig] = proof.split('.');
+    const header = JSON.parse(new TextDecoder().decode(unb64u(h)));
+    header.jwk = { ...header.jwk, y: b64u(new Uint8Array(32).fill(1)) };
+    const forged = `${b64u(new TextEncoder().encode(JSON.stringify(header)))}.${p}.${sig}`;
+    await expect(verifyProof(forged, { method: 'GET', url: 'https://hashbin.org/x', credential, now: NOW })).rejects.toMatchObject({ code: 'invalid_proof' });
+  });
   it('keeps the replay cache bounded', () => {
     const cache = new ReplayCache(10, 3);
     for (const id of ['a', 'b', 'c', 'd']) expect(cache.check(id, 0)).toBe(true);

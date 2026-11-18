@@ -240,9 +240,11 @@ func (v *Verifier) statusBits(ctx context.Context, uri string) ([]byte, error) {
 	if header, err := DecodeJWS(jws); err == nil {
 		kid, present := header.Header.Get("kid")
 		if key, ok := keys.Find(kid, present); ok {
+			// A key that cannot verify (bad point, wrong type) means the list cannot be trusted:
+			// status_unavailable (503), as in the JS verifier, rather than an internal error.
 			decoded, err = VerifyJWS(jws, key)
-			if err != nil && !errors.Is(err, ErrInvalidSignature) {
-				return nil, fmt.Errorf("dbaverify: issuer key: %w", err)
+			if err != nil {
+				decoded = nil
 			}
 		}
 	}
@@ -261,7 +263,7 @@ func (v *Verifier) statusBits(ctx context.Context, uri string) ([]byte, error) {
 	claim, _ := decoded.Payload.Get("status_list")
 	bits, err := DecodeStatusList(claim)
 	if err != nil {
-		return nil, fmt.Errorf("dbaverify: status list %s: %w", uri, err)
+		return nil, fail("status_unavailable", "Status list could not be decoded")
 	}
 	ttl := v.statusTTL
 	if t, _ := decoded.Payload.Get("ttl"); isSafeInteger(t) && int64(t.(float64)) < ttl {

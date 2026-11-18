@@ -88,10 +88,11 @@ export function createVerifier(options = {}) {
     let decoded = null; let kid;
     try { kid = JSON.parse(atob(jws.split('.')[0].replaceAll('-', '+').replaceAll('_', '/'))).kid; } catch { /* handled below */ }
     const key = keys.keys?.find(k => k.kid === kid);
-    if (key) decoded = await verifyJws(jws, key);
+    if (key) { try { decoded = await verifyJws(jws, key); } catch { decoded = null; } }
     if (!decoded || decoded.header.typ !== STATUS_LIST_TYP || decoded.payload.sub !== uri || decoded.payload.iss !== issuer) throw new VerificationError('status_unavailable', 'Status list did not verify');
     if (Number.isSafeInteger(decoded.payload.exp) && decoded.payload.exp < now - CLOCK_SKEW) throw new VerificationError('status_unavailable', 'Status list has expired');
-    const bytes = await decodeStatusList(decoded.payload.status_list);
+    let bytes;
+    try { bytes = await decodeStatusList(decoded.payload.status_list); } catch { throw new VerificationError('status_unavailable', 'Status list could not be decoded'); }
     const ttl = Math.min(statusTtl, Number.isSafeInteger(decoded.payload.ttl) ? decoded.payload.ttl : statusTtl);
     statusCache.set(uri, { bytes, expires: now + ttl });
     return bytes;

@@ -53,5 +53,6 @@ export const cases = [
   ['unknown grant key denies', [{ actions: W, after_dark: true }], ctx(), false, null, [['unknown_constraint:after_dark']]],
   ['unknown nested key denies', [{ actions: W, when: { tz: 'UTC', moon: 'full' } }], ctx(), false, null, [['unknown_constraint:when.moon']]],
   ['invalid grant denies', [{ actions: ['not an action'] }], ctx(), false, null, [['invalid_grant']]],
+  ['window times must be strings, not lists', [{ actions: W, when: { tz: 'UTC', windows: [{ from: ['08:00'], to: '23:00' }] } }], ctx(), false, null, [['invalid_grant']]],
   ['all failing reasons are reported', [{ actions: ['x:y'], resources: ['other'] }], ctx(), false, null, [['action_not_granted', 'resource_not_granted']]]
 ].map(([name, grants, context, allow, grant_index, reasons]) => ({ name, grants, context, expected: { allow, grant_index, reasons } }));
