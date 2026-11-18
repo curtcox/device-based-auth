@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — devicebasedauth.org</title>
+<meta name="description" content="Your devices, credentials, approvals, balance and API keys.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/">Docs</a><a href="/tools/">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html" aria-current="page">Dashboard</a></nav></div></header>
+<main id="main">
+<div id="account-strip" class="account-strip" hidden aria-live="polite"></div>
+<div id="flash" aria-live="polite"></div>
+<div id="sign-in-area"><p class="muted">Loading…</p></div>
+<div id="app-layout" class="app-layout" hidden>
+<nav id="app-nav" class="app-nav" aria-label="Dashboard">
+<a href="#credentials">Credentials</a>
+<a href="#devices">Devices</a>
+<a href="#approvals">Approvals</a>
+<a href="#issue">Issue</a>
+<a href="#account">Account</a>
+<a href="#transactions">Transactions</a>
+<a href="#keys">API keys</a>
+<a href="#audiences">Audiences</a>
+<a href="#panic" class="danger-link">Revoke everything</a>
+</nav>
+<section id="view" class="app-view"></section>
+</div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>

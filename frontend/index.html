@@ -1,1 +1,99 @@
-<!doctype html><title>devicebasedauth.org</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>devicebasedauth.org — revocable, device-bound credentials</title>
+<meta name="description" content="Revocable, device-bound, human-readable credentials for browsers, servers, scripts and AI agents. Offline verification is free.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/landing.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/">Docs</a><a href="/tools/">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<section class="hero">
+<span class="pill">Pay as you go · no subscription</span>
+<h1>Revocable, device-bound credentials you can read.</h1>
+<p class="lead">Enroll a browser, phone, laptop, server, script or AI agent. It keeps its own private key. devicebasedauth.org issues it a signed, plain-JSON list of exactly what it may do, on which site, at which times and in which places — and you can revoke it at any time.</p>
+<div class="actions"><a class="button" href="/app.html">Open the dashboard</a><a class="button secondary" href="/docs/">Read the docs</a><a class="button secondary" href="/tools/">Try the developer tools</a></div>
+</section>
+
+<section class="grid" aria-label="What it does">
+<div class="card"><h3>Device-bound</h3><p>The device generates its key pair and sends only the public key. Every request carries a fresh DPoP proof signed by that key, so a copied credential is useless.</p></div>
+<div class="card"><h3>Readable</h3><p>A credential is a compact JWS whose middle part is plain JSON: device, sites, actions, time windows, places and limits. The <a href="/tools/inspector.html">inspector</a> shows any credential in plain English.</p></div>
+<div class="card"><h3>Revocable</h3><p>Revoke one credential, a device, or everything at once. Online checks see it instantly; offline verifiers see it through signed status lists within about a minute plus their cache time.</p></div>
+<div class="card"><h3>Free to verify</h3><p>Servers verify credentials offline with a zero-dependency library and cached public keys. Only optional online decisions (usage limits, step-up approval, instant revocation) are metered.</p></div>
+</section>
+
+<h2>For developers and agents</h2>
+<div class="grid-2">
+<div>
+<h3>Verify on your server</h3>
+<pre class="code"><code>import { createVerifier } from '@devicebasedauth/verify';
+
+const dba = createVerifier({ audience: 'example.com' });
+
+export default {
+  async fetch(request) {
+    const result = await dba.verifyRequest(request, { action: 'example:notes:write' });
+    if (!result.allow) return Response.json({ error: 'forbidden', reasons: result.reasons }, { status: result.status });
+    return new Response(`Hello, ${result.account}`);
+  }
+};</code></pre>
+</div>
+<div>
+<h3>Enroll a browser</h3>
+<pre class="code"><code>import { DBA } from 'https://devicebasedauth.org/sdk/dba.js';
+
+const dba = new DBA();
+button.onclick = async () =&gt; {
+  if (!await dba.ready()) {
+    await dba.enroll({ aud: ['example.com'], grants: [{ actions: ['example:notes:write'] }] });
+  }
+  const response = await dba.fetch('https://example.com/api/notes', { method: 'POST', body: '…' });
+};</code></pre>
+<h3>Enroll a script, server or agent</h3>
+<pre class="code"><code>dba enroll --aud example.com --grant example:notes:write
+dba curl https://example.com/api/notes
+curl -H "Authorization: Bearer $(dba token --aud example.com)" https://example.com/api/notes</code></pre>
+</div>
+</div>
+<p>AI agents can request their own credentials through the <a href="/docs/#mcp">MCP server</a> and get an approval link for a human; grants can carry spend caps, usage limits and per-use approval.</p>
+
+<h2>Prices</h2>
+<div class="grid-2">
+<div class="panel">
+<ul id="live-prices" class="plain"><li class="muted">Loading live prices…</li></ul>
+<p class="small muted">Prepaid in micro-dollars (µ$; $1 = 1,000,000 µ$). Minimum deposit <span id="minimum-deposit">$5.00</span>, card fee itemized on top. Unused credit never expires.</p>
+<a href="/pricing.html">Full price table and cost calculator →</a>
+</div>
+<div class="panel">
+<h3>What a credential says</h3>
+<pre class="code"><code>{
+  "aud": ["hashbin.org"],
+  "device": { "name": "Laptop — Firefox", "kind": "browser" },
+  "grants": [{
+    "actions": ["hashbin:content:write"],
+    "when": { "tz": "America/Chicago",
+      "windows": [{ "days": ["mon","tue","wed","thu","fri"], "from": "08:00", "to": "18:00" }] },
+    "where": { "source": "network", "countries": ["US"] },
+    "limits": { "spend_usd_per_month": 5 }
+  }]
+}</code></pre>
+<p class="small">“May "hashbin:content:write", on any resource, weekdays 08:00–18:00 (America/Chicago time), only from US (as seen from its network connection), spending at most $5.00 per month.”</p>
+</div>
+</div>
+
+<h2>Where to next</h2>
+<ul>
+<li><a href="/docs/">Developer docs</a> — concepts, the credential format, quick starts for the browser SDK, CLI, server verification, Workers, online authorization, Sign in with devicebasedauth.org and MCP.</li>
+<li><a href="/tools/">Developer tools</a> — credential inspector, policy playground, grant builder and request signer, all running in your browser.</li>
+<li><a href="/pricing.html">Pricing</a> — every price, its worst-case cost and the floor it must clear.</li>
+<li><a href="/app.html">Dashboard</a> — enroll and approve devices, read every credential, revoke anything.</li>
+</ul>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>
