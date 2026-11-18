@@ -188,6 +188,65 @@
         }
       }
     },
+    "/.well-known/dba-ca.pem": {
+      "get": {
+        "operationId": "get_well_known_dba_ca_pem",
+        "summary": "The CA certificates (PEM) that sign device client certificates, one per issuer key. Add them to your mTLS trust store.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      }
+    },
     "/status/v1/lists/{shard}": {
       "get": {
         "operationId": "get_status_v1_lists_shard",
@@ -2820,6 +2879,95 @@
                 "properties": {
                   "audience": {
                     "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/certificate": {
+      "post": {
+        "operationId": "post_api_v1_certificate",
+        "summary": "An X.509 client certificate (PEM) for the presenting device key, for mTLS (e.g. Cloudflare API Shield): CN = device id, subjectAltName URIs for device, credential and account, clientAuth only. lifetime_seconds 300–86400 (default 3600), never past the credential; mTLS cannot see revocation. Charges the token price.",
+        "x-access": "device",
+        "security": [
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "lifetime_seconds": {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 86400
                   }
                 }
               }

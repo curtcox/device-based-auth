@@ -5,6 +5,7 @@ import { checkout, stripeWebhook } from './api/payments.js';
 import { keys } from './api/keys.js';
 import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment } from './api/enrollments.js';
 import { enrollmentTokens, redeemEnrollmentToken } from './api/enrollment-tokens.js';
+import { caBundle, deviceCertificateFor } from './api/certificates.js';
 import { createCredential, listCredentials, getCredential, credentialDecisions, revoke, revokeSelf, renew, token, whoami } from './api/credentials.js';
 import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
@@ -32,6 +33,7 @@ export const API_ROUTES = [
   { method: 'GET', path: '/health', access: PUBLIC, handler: 'health' },
   { method: 'GET', path: '/.well-known/jwks.json', access: PUBLIC, handler: 'jwks' },
   { method: 'GET', path: '/.well-known/openid-configuration', access: PUBLIC, handler: 'oidc-configuration' },
+  { method: 'GET', path: '/.well-known/dba-ca.pem', access: PUBLIC, handler: 'ca-bundle' },
   { method: 'GET', path: '/status/v1/lists/:shard', access: PUBLIC, handler: 'status-list' },
   { method: 'GET', path: '/api/public/config', access: PUBLIC, handler: 'public-config' },
   { method: 'GET', path: `${V1}/quote`, access: PUBLIC, handler: 'quote' },
@@ -63,6 +65,7 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/revoke-all`, access: 'credentials:revoke', handler: 'revoke-all' },
   { method: 'POST', path: `${V1}/self/revoke`, access: DEVICE, handler: 'revoke-self' },
   { method: 'POST', path: `${V1}/token`, access: DEVICE, handler: 'token' },
+  { method: 'POST', path: `${V1}/certificate`, access: DEVICE, handler: 'certificate' },
   { method: 'POST', path: `${V1}/authorize`, access: 'authorize', handler: 'authorize' },
   { method: 'GET', path: `${V1}/step-ups`, access: SESSION, handler: 'step-ups' },
   { method: 'POST', path: `${V1}/step-ups/:id/approve`, access: SESSION, handler: 'step-up-decide' },
@@ -139,6 +142,8 @@ async function handle(route, request, env, auth) {
     case 'revoke-self': return revokeSelf(env, auth);
     case 'renew': return renew(route, request, env, auth);
     case 'token': return token(request, env, auth);
+    case 'certificate': return deviceCertificateFor(request, env, auth);
+    case 'ca-bundle': return caBundle(env);
     case 'authorize': return authorize(request, env, auth);
     case 'step-ups': return rpc(env.ACCOUNTS, auth.account, 'list-step-ups');
     case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve') });

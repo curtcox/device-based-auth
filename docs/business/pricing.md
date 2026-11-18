@@ -41,7 +41,7 @@ handler adds a Durable Object call or a storage write.
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 5 rows, 10 ms, 1 KB × 13 months | 9 | 15 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 4 rows (balance, usage counter, decision row and its later deletion), 0.5 KB × 3 months | 6 | 10 | **10** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 3 DO req, 1 row (aggregated on the balance row) | 2 | 4 | **5** |
-| Token exchange (≤10-minute bearer token) | Issuing account | 1 Worker req, 4 DO req, 1 row | 2 | 4 | **5** |
+| Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 1 row | 2 | 4 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 4 rows | 6 | 10 | **10** |
 | Register or change an audience | Audience owner | 1 Worker req, 3 DO req, 5 rows, 4 KB × 13 months | 17 | 28 | **100** |
 | Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |

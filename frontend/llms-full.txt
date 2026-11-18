@@ -46,6 +46,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - CLI / agent: `dba enroll --aud example.com --action example:write` prints an approval URL for the human owner, then polls. `dba curl …`, `dba token --aud example.com`, `dba renew`, `dba revoke`. The CLI renews automatically at 2/3 of the lifetime when it uses the credential (`--no-renew` or `DBA_AUTO_RENEW=0` to stop); `dba renew --if-due` suits cron.
 - HTTP: `POST /api/v1/enrollments {request}` where request is a JWS (typ `dba-enroll+jwt`, the new public key in the header `jwk`) over `{iat, aud, grants, device, lifetime_seconds?}`. Response: `approval_url` (give it to the human), `poll_url`. Poll `GET poll_url` until `status` is `approved` (then `credential` is included), `denied` or `expired`.
 - Fleets: the owner creates an enrollment token (`POST /api/v1/enrollment-tokens {name, aud, grants, lifetime_seconds, max_uses, expires_in_days}` → `token: dbae_…`, shown once). Each device signs its usual enrollment request (aud/grants optional; may only narrow the token's) and sends `POST /api/v1/enrollments/redeem {request, enrollment_token}` — issued at once, issue price charged to the token's account. CLI: `DBA_ENROLLMENT_TOKEN=dbae_… dba enroll`; SDK: `dba.enroll({}, { enrollmentToken })`.
+- mTLS: `POST /api/v1/certificate {lifetime_seconds?}` (device credential + DPoP; 300–86400 s, default 3600; token price) returns a PEM X.509 client certificate for the device's own key, signed by the CA in `/.well-known/dba-ca.pem`; CN = device id, SAN URIs `urn:devicebasedauth:{device,credential,account}:…`; no grants, no revocation. CLI: `dba certificate` then `curl --cert client.crt --key client.key`.
 - Pre-approved issuance: `POST /api/v1/credentials {public_jwk, aud, grants, device, lifetime_seconds}` with an API key holding `credentials:issue` (or a device credential holding `dba:credentials:issue`, which can only delegate narrower grants).
 
 ## Main endpoints
@@ -77,6 +78,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `GET /health` (public): Service health and deployed commit.
 - `GET /.well-known/jwks.json` (public): Issuer public keys (JWKS).
 - `GET /.well-known/openid-configuration` (public): OpenID Connect discovery document.
+- `GET /.well-known/dba-ca.pem` (public): The CA certificates (PEM) that sign device client certificates, one per issuer key. Add them to your mTLS trust store.
 - `GET /status/v1/lists/{shard}` (public): A signed status list (IETF Token Status List). Bit idx = 1 means revoked.
 - `GET /api/public/config` (public): Public configuration and prices.
 - `GET /api/v1/quote` (public): Price of an operation (op = issue, renew, decision, read, token, login, audience).
@@ -108,6 +110,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `POST /api/v1/revoke-all` (credentials:revoke): Revoke everything (optionally one audience). Body {"confirm":"revoke-all"}.
 - `POST /api/v1/self/revoke` (device): A device revokes the credential it presents.
 - `POST /api/v1/token` (device): Exchange the presented device credential for a ≤10-minute bearer access token for one audience. Charges the token price.
+- `POST /api/v1/certificate` (device): An X.509 client certificate (PEM) for the presenting device key, for mTLS (e.g. Cloudflare API Shield): CN = device id, subjectAltName URIs for device, credential and account, clientAuth only. lifetime_seconds 300–86400 (default 3600), never past the credential; mTLS cannot see revocation. Charges the token price.
 - `POST /api/v1/authorize` (authorize): Online authorization decision for an audience you own: revocation, usage limits, step-up, decision log. Charges the decision price.
 - `GET /api/v1/step-ups` (session): Pending step-up approval requests.
 - `POST /api/v1/step-ups/{id}/approve` (session): Approve or deny a step-up request.
@@ -245,6 +248,28 @@ If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
 lifetime ≤ 10 minutes, one audience, the same grants, the same `status`, and no `cnf`. It is
 presented as `Authorization: Bearer <token>` and verified the same way minus step 3. Audiences MAY
 refuse access tokens.
+
+## 6a. X.509 client certificates
+
+For relying parties that authenticate with mutual TLS (for example Cloudflare API Shield), a device
+can exchange its credential for an X.509 v3 certificate over its own key:
+`POST /api/v1/certificate` with `{ "lifetime_seconds": 300–86400 }` (default 3600), authenticated
+by the credential and a DPoP proof. The certificate never outlives the credential.
+
+| Field | Value |
+|-------|-------|
+| Signature | `ecdsa-with-SHA256` by the CA certificate of the active issuer key |
+| Issuer | `O=devicebasedauth.org, CN=devicebasedauth.org device CA <kid>`; the CA certificates are published at `/.well-known/dba-ca.pem` (one per issuer key, path length 0) |
+| Subject | `O=devicebasedauth.org, CN=<device id>` (the credential's `sub`) |
+| Subject public key | The device's P-256 key (`cnf.jkt` of the credential) |
+| Validity | `notBefore` 60 s in the past; `notAfter` at most 24 h later, never past `exp` |
+| subjectAltName | URIs `urn:devicebasedauth:device:<sub>`, `urn:devicebasedauth:credential:<cid>`, `urn:devicebasedauth:account:<acct>` |
+| Extensions | basicConstraints `CA:FALSE` (critical), keyUsage `digitalSignature` (critical), extendedKeyUsage `clientAuth`, subject and authority key identifiers (first 20 bytes of SHA-256 over the public point) |
+
+A certificate carries **no grants** and mTLS cannot see revocation: it only proves that the client
+holds a device key that devicebasedauth.org vouched for within the last day. Relying parties look up
+the credential named in the subjectAltName (or require the credential as well) to decide actions,
+and keep certificate lifetimes short.
 
 ## 7. Status lists
 
@@ -402,7 +427,7 @@ handler adds a Durable Object call or a storage write.
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 5 rows, 10 ms, 1 KB × 13 months | 9 | 15 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 4 rows (balance, usage counter, decision row and its later deletion), 0.5 KB × 3 months | 6 | 10 | **10** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 3 DO req, 1 row (aggregated on the balance row) | 2 | 4 | **5** |
-| Token exchange (≤10-minute bearer token) | Issuing account | 1 Worker req, 4 DO req, 1 row | 2 | 4 | **5** |
+| Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 1 row | 2 | 4 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 4 rows | 6 | 10 | **10** |
 | Register or change an audience | Audience owner | 1 Worker req, 3 DO req, 5 rows, 4 KB × 13 months | 17 | 28 | **100** |
 | Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |

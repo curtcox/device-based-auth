@@ -6,6 +6,7 @@
  */
 import { mkdir, readFile, writeFile, rename, chmod, rm, rmdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { createPrivateKey } from 'node:crypto';
 import { homedir, hostname } from 'node:os';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
@@ -40,6 +41,10 @@ Use the credential:
   dba curl CURL-ARGS...                     Run curl with the headers added.
   dba token --aud SITE                      Print a 10-minute bearer token for SITE:
                                               curl -H "Authorization: Bearer $(dba token --aud hashbin.org)" ...
+  dba certificate [--lifetime SECONDS]      Write an X.509 client certificate for this device's key
+                                            (client.crt, client.key, ca.crt in the profile
+                                            directory) for mTLS: curl --cert … --key …. Valid 1 hour
+                                            by default, at most 24; 5 µ$.
   dba renew [--rotate] [--if-due]           Renew the credential (--rotate: move to a new key;
                                             --if-due: only once 2/3 of its lifetime has passed,
                                             for a daily cron job on rarely used devices).
@@ -50,7 +55,7 @@ Any credential:
   dba import CREDENTIAL|-                   Save a credential issued for this profile's key.
 
 Renewal:
-  headers, sign, curl, token and status --online renew the credential first once two thirds of
+  headers, sign, curl, token, certificate and status --online renew the credential first once two thirds of
   its lifetime has passed (25 µ$ from the account's balance). If renewal fails they warn and use
   the current credential, which is still valid. Turn this off with --no-renew or DBA_AUTO_RENEW=0.
 
@@ -72,6 +77,7 @@ const COMMANDS = {
   headers: {},
   sign: {},
   token: { values: ['aud'] },
+  certificate: { values: ['lifetime'] },
   renew: { booleans: ['rotate', 'if-due'] },
   revoke: {},
   help: {}
@@ -296,6 +302,23 @@ async function token(profile, { options }) {
   out(result.access_token);
 }
 
+async function certificate(profile, { options }) {
+  const lifetime = secondsOption(options.lifetime, 'lifetime');
+  const device = await usableDevice(profile);
+  const result = await profile.client.request('POST', '/api/v1/certificate', { device, body: lifetime ? { lifetime_seconds: lifetime } : {} });
+  // curl and most TLS stacks want the key as PKCS#8 PEM; it is the same key as key.json.
+  const keyPem = createPrivateKey({ key: device.key.privateJwk, format: 'jwk' }).export({ type: 'pkcs8', format: 'pem' });
+  await writePrivate(profile.paths.certificateKey, keyPem);
+  await writePrivate(profile.paths.certificate, result.certificate);
+  await writePrivate(profile.paths.ca, result.ca);
+  out(`Client certificate for ${result.subject}, valid until ${result.not_after}:`);
+  out(`  certificate  ${profile.paths.certificate}`);
+  out(`  private key  ${profile.paths.certificateKey}`);
+  out(`  issuing CA   ${profile.paths.ca}`);
+  out('');
+  out(`curl --cert ${profile.paths.certificate} --key ${profile.paths.certificateKey} https://…`);
+}
+
 async function renew(profile, { options }) {
   if (options['if-due']) {
     if (options.rotate) throw new UsageError('--if-due and --rotate cannot be combined');
@@ -329,12 +352,12 @@ async function revoke(profile) {
     if (!['revoked', 'expired'].includes(error.code)) throw error;
     out(`${cid} was already ${error.code}.`);
   }
-  for (const path of [profile.paths.credential, profile.paths.key, profile.paths.config]) await rm(path, { force: true });
+  for (const path of [profile.paths.credential, profile.paths.key, profile.paths.config, profile.paths.certificate, profile.paths.certificateKey, profile.paths.ca]) await rm(path, { force: true });
   await rmdir(profile.paths.dir).catch(() => {});
   out(`Deleted the key and credential in ${profile.paths.dir}.`);
 }
 
-const HANDLERS = { enroll, status, whoami: status, inspect, import: importCredential, headers, sign, token, renew, revoke };
+const HANDLERS = { enroll, status, whoami: status, inspect, import: importCredential, headers, sign, token, certificate, renew, revoke };
 
 async function main(argv) {
   const { globals, command, rest } = splitCommand(argv);

@@ -36,7 +36,7 @@ describe('configuration', () => {
   it('puts each profile in its own directory', () => {
     expect(configPaths({ env: {}, home: '/home/u' }).dir).toBe('/home/u/.config/dba/default');
     expect(configPaths({ env: { XDG_CONFIG_HOME: '/x' }, home: '/home/u', profile: 'work' }).key).toBe('/x/dba/work/key.json');
-    expect(configPaths({ env: { DBA_HOME: '/tmp/dba/' }, home: '/home/u' })).toEqual({ dir: '/tmp/dba/default', key: '/tmp/dba/default/key.json', credential: '/tmp/dba/default/credential.jwt', config: '/tmp/dba/default/config.json' });
+    expect(configPaths({ env: { DBA_HOME: '/tmp/dba/' }, home: '/home/u' })).toEqual({ dir: '/tmp/dba/default', key: '/tmp/dba/default/key.json', credential: '/tmp/dba/default/credential.jwt', config: '/tmp/dba/default/config.json', certificate: '/tmp/dba/default/client.crt', certificateKey: '/tmp/dba/default/client.key', ca: '/tmp/dba/default/ca.crt' });
   });
 
   it('refuses profile names that could escape the directory', () => {

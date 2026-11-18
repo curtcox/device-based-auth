@@ -111,6 +111,28 @@ lifetime ≤ 10 minutes, one audience, the same grants, the same `status`, and n
 presented as `Authorization: Bearer <token>` and verified the same way minus step 3. Audiences MAY
 refuse access tokens.
 
+## 6a. X.509 client certificates
+
+For relying parties that authenticate with mutual TLS (for example Cloudflare API Shield), a device
+can exchange its credential for an X.509 v3 certificate over its own key:
+`POST /api/v1/certificate` with `{ "lifetime_seconds": 300–86400 }` (default 3600), authenticated
+by the credential and a DPoP proof. The certificate never outlives the credential.
+
+| Field | Value |
+|-------|-------|
+| Signature | `ecdsa-with-SHA256` by the CA certificate of the active issuer key |
+| Issuer | `O=devicebasedauth.org, CN=devicebasedauth.org device CA <kid>`; the CA certificates are published at `/.well-known/dba-ca.pem` (one per issuer key, path length 0) |
+| Subject | `O=devicebasedauth.org, CN=<device id>` (the credential's `sub`) |
+| Subject public key | The device's P-256 key (`cnf.jkt` of the credential) |
+| Validity | `notBefore` 60 s in the past; `notAfter` at most 24 h later, never past `exp` |
+| subjectAltName | URIs `urn:devicebasedauth:device:<sub>`, `urn:devicebasedauth:credential:<cid>`, `urn:devicebasedauth:account:<acct>` |
+| Extensions | basicConstraints `CA:FALSE` (critical), keyUsage `digitalSignature` (critical), extendedKeyUsage `clientAuth`, subject and authority key identifiers (first 20 bytes of SHA-256 over the public point) |
+
+A certificate carries **no grants** and mTLS cannot see revocation: it only proves that the client
+holds a device key that devicebasedauth.org vouched for within the last day. Relying parties look up
+the credential named in the subjectAltName (or require the credential as well) to decide actions,
+and keep certificate lifetimes short.
+
 ## 7. Status lists
 
 Status lists follow the IETF OAuth Token Status List draft: 1 bit per credential, byte

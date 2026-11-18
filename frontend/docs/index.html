@@ -321,6 +321,11 @@ const tokens = await fetch(&#39;https://devicebasedauth.org/oauth/token&#39;, {
 <p>Status lists follow the IETF OAuth Token Status List draft: a JWT (<code>typ: statuslist+jwt</code>) signed by the issuer whose <code>sub</code> is the list URL and whose <code>status_list.lst</code> is a zlib-compressed, base64url bitstring, 1 bit per credential, least significant bit first. Fetch them from the <code>uri</code> in the credential (e.g. <code>/status/v1/lists/0</code>); verifiers must fail closed when a list cannot be fetched.</p>
 <h3>Renewal, rotation and access tokens</h3>
 <p><code>POST /api/v1/credentials/{cid}/renew</code>, authenticated by the credential and a proof, issues the next version with a fresh expiry (the renew price); grants never widen. Add <code>new_key_proof</code> (a <code>dba-rotate+jwt</code> signed by the new key) to move to a new key, which revokes the old one. <code>POST /api/v1/token</code> with <code>{"audience"}</code> trades a credential for a ≤ 10-minute bearer token carrying only that audience's grants, for scripts that can only set one header; audiences may refuse them.</p>
+<h3>X.509 client certificates (mTLS)</h3>
+<p>Sites that authenticate with mutual TLS, such as Cloudflare API Shield, can trust devicebasedauth.org's device CA: add <a href="/.well-known/dba-ca.pem"><code>/.well-known/dba-ca.pem</code></a> to the trust store. A device then trades its credential for a certificate over its own key with <code>POST /api/v1/certificate</code> (<code>{"lifetime_seconds"}</code>, 5 minutes to 24 hours, default 1 hour; the token price), or from the CLI:</p>
+<pre class="code"><code>dba certificate                  # writes client.crt, client.key and ca.crt in the profile directory
+curl --cert ~/.config/dba/default/client.crt --key ~/.config/dba/default/client.key https://api.example.com/</code></pre>
+<p>The certificate's CN is the device id and its subjectAltName holds <code>urn:devicebasedauth:device:…</code>, <code>…:credential:…</code> and <code>…:account:…</code> URIs. It carries no grants and mTLS cannot see revocation, so it only proves the client holds a device key vouched for in the last day; decide actions from the credential (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §6a</a>).</p>
 </section>
 
 <section id="api">

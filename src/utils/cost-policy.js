@@ -32,7 +32,8 @@ export const OPERATIONS = Object.freeze({
   decision: { workerRequests: 1, doRequests: 4, rowWrites: 4, cpuMs: 5, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
   // Rate limit, charge (aggregated on the balance row), the read itself.
   read: { workerRequests: 1, doRequests: 3, rowWrites: 1, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 },
-  // Rate limit, credential status (auth), registry, charge.
+  // Rate limit, credential status (auth), registry, charge. An X.509 certificate (B3) costs the
+  // same: no registry read, one DER build and signature well inside the CPU allowance.
   token: { workerRequests: 1, doRequests: 4, rowWrites: 1, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 },
   // Consent (rate limit, registry, code put, code alarm) + token (take code, registry, charge).
   login: { workerRequests: 2, doRequests: 7, rowWrites: 4, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 },

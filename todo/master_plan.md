@@ -521,6 +521,6 @@ STATUS.md AGENTS.md      Status (single source of truth) and contributor guide
 
 ## 13. Deliberately left out of v1
 
-- Server-generated private keys (D1), X.509/mTLS (B3), hardware attestation (B5), external KMS
+- Server-generated private keys (D1), X.509/mTLS (B3; since added as short-lived client certificates, spec/credential.md §6a), hardware attestation (B5), external KMS
   for issuer keys (S6), a shared wallet across sites (rejected, D5), customer-supplied CAs (B6),
   delegation chains deeper than one level, and a native mobile SDK beyond samples (S4).
