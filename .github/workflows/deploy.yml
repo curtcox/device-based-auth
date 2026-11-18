@@ -1,0 +1,47 @@
+name: Deploy production
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+concurrency:
+  group: dba-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    # Deploys only when the owner has finished ops setup (STATUS L9) and set DBA_DEPLOY_ENABLED.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.DBA_DEPLOY_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      ISSUER_KEYS: ${{ secrets.DBA_ISSUER_KEYS }}
+      TOKEN_SIGNING_KEY: ${{ secrets.DBA_TOKEN_SIGNING_KEY }}
+      CLERK_SECRET_KEY: ${{ secrets.DBA_CLERK_SECRET_KEY }}
+      CLERK_PUBLISHABLE_KEY: ${{ secrets.DBA_CLERK_PUBLISHABLE_KEY }}
+      CLERK_WEBHOOK_SECRET: ${{ secrets.DBA_CLERK_WEBHOOK_SECRET }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.DBA_STRIPE_WEBHOOK_SECRET }}
+      STRIPE_CREDIT_PRODUCT_ID: ${{ vars.DBA_STRIPE_CREDIT_PRODUCT_ID }}
+      STRIPE_CARD_COST_PRODUCT_ID: ${{ vars.DBA_STRIPE_CARD_COST_PRODUCT_ID }}
+      OPERATOR_ACCOUNT: ${{ vars.DBA_OPERATOR_ACCOUNT }}
+      CLOUDFLARE_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_TOKEN }}
+      COST_SAFETY_DO_NAMESPACES: ${{ vars.DBA_DO_NAMESPACES }}
+      COST_SAFETY_HARD_STOP: ${{ vars.DBA_COST_SAFETY_HARD_STOP }}
+      LAUNCH_APPROVED: ${{ vars.DBA_LAUNCH_APPROVED }}
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: node scripts/check-deployment-secrets.mjs
+      - run: npx wrangler deploy --var GIT_SHA:${{ github.sha }}
+      - run: node scripts/push-worker-secrets.mjs
+      - run: node scripts/verify-production.mjs
+        env:
+          EXPECTED_GIT_SHA: ${{ github.sha }}
