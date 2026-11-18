@@ -3,6 +3,7 @@ import { rpc } from '../utils/rpc.js';
 import { charge, deposit, readBalance, money } from './ledger.js';
 import { periodSeconds } from '../../packages/verify/src/grants.js';
 import { randomId } from '../utils/ids.js';
+import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -218,7 +219,9 @@ export class AccountDO {
     cred.revoked_at = now; cred.revoked_reason = reason;
     cred.events = [...cred.events, { at: now, type: 'revoked', reason }].slice(-EVENTS_KEPT);
     await tx.put(`cred:${cred.cid}`, cred);
-    await tx.put(`outbox:${cred.cid}`, { shard: cred.status.shard, idx: cred.status.idx, at: now });
+    // One outbox entry carries both jobs: publish the status bit, and tell each audience that has a
+    // revocation webhook (B1). Sharing the entry keeps the success path free of extra writes.
+    await tx.put(`outbox:${cred.cid}`, { shard: cred.status.shard, idx: cred.status.idx, at: now, cid: cred.cid, jti: cred.jti, exp: cred.exp, uri: cred.status.uri, hooks: [...cred.aud] });
     await this.audit(tx, now, 'credential.revoked', { cid: cred.cid, reason });
     return true;
   }
@@ -249,24 +252,89 @@ export class AccountDO {
       }
       return done;
     });
-    await this.deliverOutbox(now);
+    await this.deliverOutbox(now, { send: false });
     return { revoked, count: revoked.length };
   }
 
-  /** Push revocations to the status-list shards; retried by alarm until delivered. */
-  async deliverOutbox(now = Date.now()) {
-    const pending = await this.storage.list({ prefix: 'outbox:', limit: 100 });
-    let failed = false;
-    const byShard = new Map();
-    for (const [key, item] of pending) (byShard.get(item.shard) || byShard.set(item.shard, []).get(item.shard)).push([key, item]);
-    for (const [shard, items] of byShard) {
-      try {
-        await rpc(this.env.STATUS, `shard-${shard}`, 'revoke', { indexes: items.map(([, i]) => i.idx) });
-        for (const [key] of items) await this.storage.delete(key);
-      } catch { failed = true; }
+  /** Make sure the alarm fires no later than `at`. */
+  async alarmBy(at) {
+    const current = await this.storage.getAlarm();
+    if (!current || current > at) await this.storage.setAlarm(at);
+  }
+
+  /**
+   * Push revocations to the status-list shards (retried by alarm until delivered) and to the
+   * revocation webhooks of the credentials' audiences (WEBHOOK_ATTEMPTS rounds, then dropped:
+   * webhooks only speed things up, the status lists stay authoritative). Returns the time the
+   * outbox next needs attention, or null. send=false publishes status bits only and leaves the
+   * webhook calls to an alarm that fires at once, so a revoke never waits on someone's endpoint.
+   */
+  async deliverOutbox(now = Date.now(), { send = true } = {}) {
+    let nextAt = null; const later = at => { nextAt = nextAt === null ? at : Math.min(nextAt, at); };
+    let failed = false; let startAfter;
+    // Page through the outbox, so entries waiting on a webhook's backoff never hide newer ones.
+    for (let page = 0; page < 10; page++) {
+      const result = await this.deliverOutboxPage(now, send, startAfter, later);
+      failed ||= result.failed;
+      if (!result.last) break;
+      startAfter = result.last;
+      if (page === 9) later(now + 1000);
     }
-    if (failed || pending.size === 100) await this.storage.setAlarm(now + OUTBOX_RETRY_MS);
-    return { delivered: !failed };
+    if (nextAt !== null) await this.alarmBy(nextAt);
+    return { delivered: !failed, next_at: nextAt };
+  }
+
+  /** One page (≤ 100 entries) of deliverOutbox. Returns { failed, last } (last: key to continue after). */
+  async deliverOutboxPage(now, send, startAfter, later) {
+    const pending = await this.storage.list({ prefix: 'outbox:', limit: 100, ...(startAfter ? { startAfter } : {}) });
+    if (!pending.size) return { failed: false, last: null };
+    const items = new Map([...pending].map(([key, item]) => [key, { ...item }]));
+
+    const byShard = new Map();
+    for (const [key, item] of items) if (!item.status_done) (byShard.get(item.shard) || byShard.set(item.shard, []).get(item.shard)).push([key, item]);
+    let failed = false;
+    for (const [shard, group] of byShard) {
+      try {
+        await rpc(this.env.STATUS, `shard-${shard}`, 'revoke', { indexes: group.map(([, i]) => i.idx) });
+        for (const [, item] of group) item.status_done = true;
+      } catch { failed = true; later(now + OUTBOX_RETRY_MS); }
+    }
+
+    const withHooks = [...items.values()].filter(i => i.hooks?.length);
+    let urls = null;
+    if (withHooks.length) {
+      try { urls = await rpc(this.env.REGISTRY, 'global', 'webhooks', { names: [...new Set(withHooks.flatMap(i => i.hooks))] }); } catch { later(now + OUTBOX_RETRY_MS); }
+    }
+    if (urls) {
+      // Most audiences have no webhook: forget them before anything is written.
+      for (const item of withHooks) item.hooks = item.hooks.filter(aud => urls[aud]);
+      const due = send ? withHooks.filter(i => i.hooks.length && (i.hook_next ?? 0) <= now) : [];
+      const byAudience = new Map();
+      for (const item of due) for (const aud of item.hooks) (byAudience.get(aud) || byAudience.set(aud, []).get(aud)).push(item);
+      for (const [aud, group] of byAudience) {
+        let ok = false;
+        try {
+          const credentials = group.map(i => ({ cid: i.cid, jti: i.jti, exp: i.exp, revoked_at: Math.floor(i.at / 1000), status: { idx: i.idx, uri: i.uri } }));
+          const event = await signEvent(this.env, aud, 'credentials.revoked', { credentials }, now);
+          ok = (await postEvent(this.env, urls[aud], event.jws)).ok;
+        } catch { ok = false; }
+        if (ok) for (const item of group) item.hooks = item.hooks.filter(a => a !== aud);
+      }
+      for (const item of due) {
+        if (!item.hooks.length) continue;
+        item.hook_attempts = (item.hook_attempts || 0) + 1;
+        if (item.hook_attempts >= WEBHOOK_ATTEMPTS) item.hooks = [];
+        else item.hook_next = now + WEBHOOK_BACKOFF_MS[item.hook_attempts - 1];
+      }
+    }
+
+    for (const [key, item] of items) {
+      const before = pending.get(key);
+      if (item.status_done && !item.hooks?.length) { await this.storage.delete(key); continue; }
+      if (item.hooks?.length) later(Math.max(item.hook_next ?? 0, now));
+      if (item.status_done !== before.status_done || item.hooks?.length !== before.hooks?.length || item.hook_attempts !== before.hook_attempts) await this.storage.put(key, item);
+    }
+    return { failed, last: pending.size === 100 ? [...pending.keys()].pop() : null };
   }
 
   /**
@@ -388,7 +456,7 @@ export class AccountDO {
 
   async alarm() {
     const now = Date.now();
-    await this.deliverOutbox(now);
+    const { next_at: outboxAt } = await this.deliverOutbox(now);
     let more = false;
     // Prune expired decisions, usage windows, step-ups and authorization codes.
     for (const [key, value] of await this.storage.list({ prefix: 'decision:', limit: 500 })) {
@@ -404,7 +472,9 @@ export class AccountDO {
     }
     more = usage.size === 1000;
     const hasWork = (await this.storage.list({ prefix: 'decision:', limit: 1 })).size || (await this.storage.list({ prefix: 'outbox:', limit: 1 })).size;
-    if (hasWork || more) await this.storage.setAlarm(now + (more ? 60000 : 86400000));
+    // The outbox's retry time wins over the daily pruning pass.
+    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt].filter(t => t !== null);
+    if (next.length) await this.storage.setAlarm(Math.min(...next));
   }
 }
 

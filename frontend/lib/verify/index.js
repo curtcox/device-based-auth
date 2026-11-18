@@ -6,3 +6,4 @@ export * from './credential.js';
 export * from './verifier.js';
 export * from './issuer.js';
 export * from './site.js';
+export * from './events.js';

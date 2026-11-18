@@ -6,7 +6,7 @@ import { keys } from './api/keys.js';
 import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment } from './api/enrollments.js';
 import { createCredential, listCredentials, getCredential, credentialDecisions, revoke, revokeSelf, renew, token, whoami } from './api/credentials.js';
 import { authorize } from './api/authorize.js';
-import { audiences, audienceUsage } from './api/audiences.js';
+import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
 import { statusList, republishStatusLists } from './api/status.js';
 import { inspect } from './api/inspect.js';
@@ -67,6 +67,7 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/audiences/:name/usage`, access: 'audiences:read', handler: 'audience-usage' },
   { method: 'POST', path: `${V1}/audiences`, access: 'audiences:write', handler: 'audiences' },
   { method: 'PATCH', path: `${V1}/audiences/:name`, access: 'audiences:write', handler: 'audiences' },
+  { method: 'POST', path: `${V1}/audiences/:name/webhook-test`, access: 'audiences:write', handler: 'audience-webhook-test' },
   { method: 'GET', path: `${V1}/keys`, access: SESSION, handler: 'keys' },
   { method: 'POST', path: `${V1}/keys`, access: SESSION, handler: 'keys' },
   { method: 'DELETE', path: `${V1}/keys/:id`, access: SESSION, handler: 'keys' },
@@ -136,6 +137,7 @@ async function handle(route, request, env, auth) {
     case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve') });
     case 'audiences': return audiences(route, request, env, auth);
     case 'audience-usage': return audienceUsage(route, request, env, auth);
+    case 'audience-webhook-test': return audienceWebhookTest(route, request, env, auth);
     case 'account-settings': return accountSettings(route, request, env, auth);
     case 'keys': return keys(route, request, env, auth);
     case 'checkout': return checkout(request, env, auth, dryRun);

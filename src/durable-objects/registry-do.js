@@ -33,6 +33,12 @@ export class RegistryDO {
             for (const name of args.names) { const a = await tx.get(`aud:${name}`); assert(a, 'unknown_audience', `Unknown audience ${name}`, 400); found[name] = a; }
             return found;
           }
+          case 'webhooks': {
+            // Revocation webhook URLs for the named audiences that have one (unknown names skipped).
+            const hooks = {};
+            for (const name of args.names.slice(0, 100)) { const a = await tx.get(`aud:${name}`); if (a?.revocation_webhook) hooks[name] = a.revocation_webhook; }
+            return hooks;
+          }
           case 'list': {
             const all = [...(await tx.list({ prefix: 'aud:' })).values()];
             return { items: args.owner ? all.filter(a => a.owner === args.owner) : all.map(({ name, namespace, description, first_party }) => ({ name, namespace, description, first_party: !!first_party })) };

@@ -36,8 +36,8 @@ handler adds a Durable Object call or a storage write.
 
 | Operation | Who pays | Counted (per `OPERATIONS`) | Cost µ$ | Floor µ$ | **Price µ$** |
 |-----------|----------|----------------------------|--------:|---------:|-------------:|
-| Issue a credential (enrollment approval or API) | Issuing account | 3 Worker req, 10 DO req, 14 rows, 15 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** | 37 | 61 | **75** |
-| Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 37 | 61 | **75** |
+| Issue a credential (enrollment approval or API) | Issuing account | 3 Worker req, 18 DO req, 18 rows, 80 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries | 44 | 72 | **75** |
+| Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 44 | 72 | **75** |
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 5 rows, 10 ms, 1 KB × 13 months | 9 | 15 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 4 rows (balance, usage counter, decision row and its later deletion), 0.5 KB × 3 months | 6 | 10 | **10** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 3 DO req, 1 row (aggregated on the balance row) | 2 | 4 | **5** |
@@ -58,7 +58,13 @@ balance update needs anyway) and flushed as one ledger row per kind when the day
 ### Why issuance is the expensive operation
 
 It carries 13 months of record storage and the full cost of revoking the credential later, so that
-revocation is free and always possible, even at a zero balance.
+revocation is free and always possible, even at a zero balance. That includes telling up to 8
+audiences by signed webhook (spec/events.md): four delivery rounds when an endpoint keeps failing.
+The revocation shares one outbox row with its webhook deliveries, so the success path writes no
+extra rows, and audiences without a webhook cost one registry lookup.
+
+The webhook test button (`POST /api/v1/audiences/{name}/webhook-test`) is charged as a metered read:
+1 Worker request, 3 DO requests, one signature and one outbound request.
 
 ## What customers would pay
 
@@ -74,7 +80,7 @@ A $5 deposit covers about 66,000 issuances, 200,000 renewals, or 500,000 online 
 
 ## Margin and break-even
 
-Margin per operation (`price × 0.92 − cost`): issue ≈ 32 µ$, renew ≈ 14 µ$, decision ≈ 3 µ$,
+Margin per operation (`price × 0.92 − cost`): issue ≈ 25 µ$, renew ≈ 14 µ$, decision ≈ 3 µ$,
 read/token ≈ 3 µ$, login ≈ 3 µ$. Profit = Σ margins − fixed costs, so it rises with every
 operation (master plan principle 6).
 
@@ -93,7 +99,7 @@ measurements are missing for 36 hours. Paid operations keep working: they are pr
 
 ## Open questions for the owner
 
-1. Approve these prices (D6), or lower issue/renew towards their floors (61 / 15)?
+1. Approve these prices (D6), or lower issue/renew towards their floors (72 / 15)?
 2. Clerk monthly retained users are the one per-user cost not tied to an operation. Mitigations in
    place: dashboard sign-in with a DBA browser credential (no Clerk session). Proposed (D8, not
    built): close zero-balance accounts with no live credentials after 12 idle months.

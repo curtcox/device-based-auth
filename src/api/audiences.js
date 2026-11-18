@@ -3,6 +3,7 @@ import { rpc } from '../utils/rpc.js';
 import { price } from '../utils/pricing.js';
 import { AUDIENCE_NAME } from '../durable-objects/registry-do.js';
 import { authenticate } from '../auth/middleware.js';
+import { cleanWebhookUrl, signEvent, postEvent } from '../services/webhooks.js';
 
 const ACTION_SUFFIX = /^[a-z0-9_.-]{1,64}(?::[a-z0-9_.-]{1,64})*$/;
 
@@ -50,8 +51,25 @@ export async function audienceUsage(route, request, env, auth) {
   return rpc(env.ACCOUNTS, auth.account, 'audience-usage', { audience: current.name });
 }
 
+/**
+ * Send a signed webhook.test event to the audience's revocation webhook now and report the
+ * response, so an owner can check their endpoint. Metered at the read price.
+ */
+export async function audienceWebhookTest(route, request, env, auth) {
+  const current = await rpc(env.REGISTRY, 'global', 'get', { name: route.params.name });
+  assert(current.owner === auth.account, 'forbidden', 'You do not own this audience', 403);
+  assert(current.revocation_webhook, 'no_webhook', 'Set revocation_webhook on the audience first', 409);
+  await rpc(env.ACCOUNTS, auth.account, 'charge', { kind: 'read', amount: price('read'), aggregate: true, detail: { audience: current.name } });
+  const event = await signEvent(env, current.name, 'webhook.test');
+  const result = await postEvent(env, current.revocation_webhook, event.jws);
+  return { url: current.revocation_webhook, event_id: event.jti, delivered: result.ok, status: result.status, ...(result.error ? { error: result.error } : {}) };
+}
+
+/** Public audience record: the webhook URL is the owner's business. */
+function publicAudience({ revocation_webhook: _hook, ...audience }) { return audience; }
+
 export async function audiences(route, request, env, auth) {
-  if (request.method === 'GET' && route.params.name) return rpc(env.REGISTRY, 'global', 'get', { name: route.params.name });
+  if (request.method === 'GET' && route.params.name) return publicAudience(await rpc(env.REGISTRY, 'global', 'get', { name: route.params.name }));
   if (request.method === 'GET') {
     if (new URL(request.url).searchParams.get('mine') !== '1') return rpc(env.REGISTRY, 'global', 'list', {});
     // The public list route authenticates only when asked for "my audiences".
@@ -64,6 +82,7 @@ export async function audiences(route, request, env, auth) {
     assert(AUDIENCE_NAME.test(name), 'invalid_audience', 'name must be a lower-case domain name you control');
     const namespace = String(body.namespace ?? '');
     const record = { name, namespace, description: String(body.description ?? '').slice(0, 300), catalog: cleanCatalog(namespace, body.catalog), redirect_uris: cleanRedirects(body.redirect_uris), accept_access_tokens: body.accept_access_tokens !== false, verified: true };
+    if (body.revocation_webhook) record.revocation_webhook = cleanWebhookUrl(body.revocation_webhook, name, env);
     await verifyDomain(env, name, auth.account);
     await rpc(env.ACCOUNTS, auth.account, 'charge', { id: `audience-${name}`, kind: 'audience', amount: price('audience') });
     return rpc(env.REGISTRY, 'global', 'register', { audience: record, owner: auth.account });
@@ -75,6 +94,7 @@ export async function audiences(route, request, env, auth) {
   if (body.catalog !== undefined) changes.catalog = cleanCatalog(current.namespace, body.catalog);
   if (body.redirect_uris !== undefined) changes.redirect_uris = cleanRedirects(body.redirect_uris);
   if (body.accept_access_tokens !== undefined) changes.accept_access_tokens = body.accept_access_tokens !== false;
+  if (body.revocation_webhook !== undefined) changes.revocation_webhook = cleanWebhookUrl(body.revocation_webhook, current.name, env);
   await rpc(env.ACCOUNTS, auth.account, 'charge', { id: `audience-${current.name}-${Date.now()}`, kind: 'audience', amount: price('audience') });
   return rpc(env.REGISTRY, 'global', 'update', { name: current.name, owner: auth.account, changes });
 }

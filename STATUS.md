@@ -79,7 +79,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 
 | ID | Item |
 |----|------|
-| B1 | Revocation webhooks to audiences |
+| B1 | ✅ Revocation webhooks to audiences: signed `dba-event+jwt` events ([spec/events.md](spec/events.md)) to an https URL on the audience's domain; `handleEvent` in `@devicebasedauth/verify` applies them before the status-list cache expires; 4 delivery rounds prepaid in the issue price (worst case now 44 µ$, floor 72); test button in the API. Dashboard field pending |
 | B2 | Credential templates / fleet enrollment tokens |
 | B3 | X.509 export for mTLS (Cloudflare API Shield) |
 | B4 | Shared replay cache DO for offline verifiers |

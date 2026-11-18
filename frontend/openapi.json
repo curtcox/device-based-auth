@@ -2842,7 +2842,7 @@
     "/api/v1/audiences": {
       "get": {
         "operationId": "get_api_v1_audiences",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner.",
         "x-access": "public",
         "security": [],
         "parameters": [],
@@ -2899,7 +2899,7 @@
       },
       "post": {
         "operationId": "post_api_v1_audiences",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner.",
         "x-access": "audiences:write",
         "security": [
           {
@@ -2978,7 +2978,7 @@
     "/api/v1/audiences/{name}": {
       "get": {
         "operationId": "get_api_v1_audiences_name",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner.",
         "x-access": "public",
         "security": [],
         "parameters": [
@@ -3044,7 +3044,7 @@
       },
       "patch": {
         "operationId": "patch_api_v1_audiences_name",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner.",
         "x-access": "audiences:write",
         "security": [
           {
@@ -3205,6 +3205,93 @@
           }
         },
         "description": "Requires scope `audiences:read` (API key), a signed-in session, or a device credential with `dba:audiences:read`."
+      }
+    },
+    "/api/v1/audiences/{name}/webhook-test": {
+      "post": {
+        "operationId": "post_api_v1_audiences_name_webhook_test",
+        "summary": "Send a signed webhook.test event (typ dba-event+jwt, spec/events.md) to the audience's revocation_webhook now and report the answer. Charges the read price.",
+        "x-access": "audiences:write",
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "description": "Requires scope `audiences:write` (API key), a signed-in session, or a device credential with `dba:audiences:write`."
       }
     },
     "/api/v1/keys": {

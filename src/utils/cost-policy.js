@@ -20,8 +20,10 @@ export const OPERATIONS = Object.freeze({
   // Enrollment approval: rate limit, registry, funds check, status allocation, store, enrollment
   // get/put and its expiry alarm (8 DO requests); 13 months of device/credential/audit/ledger
   // records; plus a prepaid revocation (worker request, account + shard DO requests, 5 rows,
-  // one status-list publish to R2).
-  issue: { workerRequests: 3, doRequests: 10, rowWrites: 14, cpuMs: 15, storageKBMonths: 6 * 13, r2ClassA: 1 },
+  // one status-list publish to R2), plus prepaid revocation webhooks (B1): a registry lookup per
+  // round, four delivery rounds to up to 8 audiences (signing ~2 ms each), three alarm wake-ups,
+  // and four outbox rewrites when every round fails (8 DO requests, 4 rows, 65 ms).
+  issue: { workerRequests: 3, doRequests: 18, rowWrites: 18, cpuMs: 80, storageKBMonths: 6 * 13, r2ClassA: 1 },
   // Rate limit, credential status (auth), credential status (renew), funds check, renew.
   renew: { workerRequests: 1, doRequests: 5, rowWrites: 5, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 },
   // Rate limit, charge on the audience's balance row, registry (normally cached), issuer check

@@ -6,6 +6,7 @@ import { verifyJws, decodeJws } from './jose.js';
 import { verifyCredential, verifyProof, ReplayCache, VerificationError, DEFAULT_ISSUER, STATUS_LIST_TYP, CLOCK_SKEW } from './credential.js';
 import { evaluateGrants } from './grants.js';
 import { decodeStatusList, getBit } from './status-list.js';
+import { verifyEvent } from './events.js';
 
 /** Read Cloudflare's request.cf (when present) into a network location. */
 export function networkLocation(request) {
@@ -47,6 +48,9 @@ export function createVerifier(options = {}) {
   const jwksTtl = options.jwksTtl ?? 3600; const statusTtl = options.statusTtl ?? 300;
   const replay = options.replay === false ? null : options.replay || new ReplayCache();
   let jwksCache = null; const statusCache = new Map();
+  // Revocations pushed by webhook (handleEvent): "uri#idx" -> credential exp. Checked before the
+  // cached status list, so a pushed revocation takes effect before the list's TTL runs out.
+  const pushedRevocations = new Map(); const seenEvents = new Map();
 
   let jwksFailure = null; const statusFailures = new Map();
   const FAILURE_BACKOFF = options.failureBackoff ?? 30;
@@ -101,6 +105,7 @@ export function createVerifier(options = {}) {
   /** Is the credential revoked? (true / false; throws status_unavailable when unknown) */
   async function isRevoked(payload) {
     const { idx, uri } = payload.status.status_list;
+    if (pushedRevocations.has(`${uri}#${idx}`)) return true;
     return getBit(await statusBytes(uri), idx) === 1;
   }
 
@@ -185,5 +190,35 @@ export function createVerifier(options = {}) {
     return { ...body, status: body.allow ? 200 : 403 };
   }
 
-  return { jwks, verify, isRevoked, authenticateRequest, verifyRequest, allowedActions, verifyOnline, decide, issuer, audience };
+  /**
+   * Verify a webhook body from devicebasedauth.org (spec/events.md) and apply it: a
+   * credentials.revoked event marks those credentials revoked in this verifier at once.
+   * Returns { ok: true, type, payload, duplicate } or { ok: false, status, code, message }.
+   * Answer the webhook with 2xx when ok, else with the returned status.
+   */
+  async function handleEvent(body) {
+    const now = clock();
+    for (const [key, exp] of pushedRevocations) if (exp + CLOCK_SKEW < now) pushedRevocations.delete(key);
+    for (const [key, at] of seenEvents) if (at < now - 3600) seenEvents.delete(key);
+    let result;
+    try {
+      try { result = await verifyEvent(body, { jwks: await jwks(), issuer, audience, now }); }
+      catch (error) {
+        if (error.code !== 'unknown_kid') throw error;
+        result = await verifyEvent(body, { jwks: await jwks(true), issuer, audience, now });
+      }
+    } catch (error) {
+      if (error instanceof VerificationError) return { ok: false, status: error.code === 'jwks_unavailable' ? 503 : 400, code: error.code, message: error.message };
+      throw error;
+    }
+    const { payload } = result;
+    const duplicate = seenEvents.has(payload.jti);
+    seenEvents.set(payload.jti, now);
+    if (payload.type === 'credentials.revoked') {
+      for (const c of payload.credentials) pushedRevocations.set(`${c.status.uri}#${c.status.idx}`, c.exp);
+    }
+    return { ok: true, type: payload.type, payload, duplicate };
+  }
+
+  return { jwks, verify, isRevoked, handleEvent, authenticateRequest, verifyRequest, allowedActions, verifyOnline, decide, issuer, audience };
 }
