@@ -18,6 +18,13 @@ export default {
   async fetch(request, env = {}) {
     verifier ??= createVerifier({ issuer: env.DBA_ISSUER || 'https://devicebasedauth.org', audience: env.DBA_AUDIENCE || 'hashbin.org' });
     const { pathname } = new URL(request.url);
+    // Revocation webhook (spec/events.md): register this URL on your audience. A signed
+    // credentials.revoked event makes this verifier deny those credentials at once, before its
+    // cached status list expires.
+    if (request.method === 'POST' && pathname === '/webhooks/devicebasedauth') {
+      const event = await verifier.handleEvent(await request.text());
+      return Response.json(event.ok ? { received: event.type } : { error: event.message, code: event.code }, { status: event.ok ? 200 : event.status });
+    }
     for (const route of ROUTES) {
       const match = request.method === route.method && pathname.match(route.pattern);
       if (!match) continue;

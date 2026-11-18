@@ -8,6 +8,7 @@
 // A sample whose toolchain is missing (python3 with cryptography + requests, go) is skipped,
 // unless DBA_SAMPLES_STRICT=1, when it fails.
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,8 +52,8 @@ const SAMPLES = [
 ];
 
 /** POST/GET the local server as the sample owner. */
-async function api(method, path, body) {
-  const response = await fetch(`${ORIGIN}${path}`, { method, headers: { Authorization: `LocalDev ${OWNER}`, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+async function api(method, path, body, as = OWNER) {
+  const response = await fetch(`${ORIGIN}${path}`, { method, headers: { Authorization: `LocalDev ${as}`, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
   const json = await response.json();
   if (!response.ok) throw new Error(`${method} ${path}: ${json.error} (${json.code})`);
   return json;
@@ -122,6 +123,32 @@ async function workerMiddleware() {
   await expect('delete (not granted)', await signedRequest(device, 'DELETE', 'https://hashbin.org/api/content/abc'), 403, 'forbidden');
   await expect('no credential', new Request('https://hashbin.org/api/content', { method: 'POST' }), 401, 'credential_required');
   await expect('unknown route', new Request('https://hashbin.org/nope'), 404, 'not_found');
+
+  // Revocation webhook: point hashbin.org's webhook (the local operator owns it) at a small HTTP
+  // server that hands requests to the sample Worker, revoke the credential, and wait for the event.
+  const received = [];
+  const hook = createServer(async (req, res) => {
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    const response = await worker.fetch(new Request(`http://localhost${req.url}`, { method: req.method, headers: { 'Content-Type': req.headers['content-type'] || '' }, body: Buffer.concat(chunks) }), env);
+    const text = await response.text();
+    received.push(`${response.status} ${text}`);
+    res.writeHead(response.status, { 'Content-Type': 'application/json' }).end(text);
+  });
+  await new Promise(resolve => hook.listen(0, '127.0.0.1', resolve));
+  try {
+    const url = `http://localhost:${hook.address().port}/webhooks/devicebasedauth`;
+    await api('POST', '/api/v1/dev/deposit', { amount_microdollars: 1_000_000 }, 'operator');
+    await api('PATCH', '/api/v1/audiences/hashbin.org', { revocation_webhook: url }, 'operator');
+    const cid = JSON.parse(Buffer.from(device.credential.split('.')[1], 'base64url')).cid;
+    await api('DELETE', `/api/v1/credentials/${cid}`);
+    const deadline = Date.now() + 30_000;
+    while (!received.length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 200));
+    const delivered = received[0]?.startsWith('200 ') && received[0].includes('credentials.revoked');
+    ok &&= !!delivered;
+    lines.push(`${delivered ? 'ok  ' : 'FAIL'} revocation webhook: ${received[0] ?? 'nothing arrived'}`);
+    await expect('publish after the pushed revocation', await signedRequest(device, 'POST', 'https://hashbin.org/api/content'), 401, 'revoked');
+    await api('PATCH', '/api/v1/audiences/hashbin.org', { revocation_webhook: null }, 'operator');
+  } finally { hook.close(); }
   return { code: ok ? 0 : 1, output: `${lines.join('\n')}\n` };
 }
 

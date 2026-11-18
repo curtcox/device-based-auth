@@ -5,6 +5,7 @@
 Machine-readable API: https://devicebasedauth.org/openapi.json
 Credential format: https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md
 Grant evaluation rules and test vectors: https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md
+Revocation webhook events: https://github.com/curtcox/device-based-auth/blob/main/spec/events.md
 Docs: https://devicebasedauth.org/docs/
 Everything in one file (this summary, every route, the credential spec, evaluation rules and pricing): https://devicebasedauth.org/llms-full.txt
 MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_… or a device credential)
@@ -36,6 +37,8 @@ if (!result.allow) return new Response(result.code, { status: result.status });
 ```
 
 Offline verification fetches `https://devicebasedauth.org/.well-known/jwks.json` and status lists (`https://status.devicebasedauth.org/v1/lists/<n>`, signed JWT, bit idx set = revoked), caching both.
+
+Instant offline revocation: set `revocation_webhook` (https on your audience's domain) with `PATCH /api/v1/audiences/{name}`. Revocations of credentials naming your audience arrive as a POSTed JWS (`typ: dba-event+jwt`, signed with the issuer key); `await dba.handleEvent(await request.text())` verifies it and makes the verifier deny those credentials at once. Retried after 1 min, 10 min, 1 h; free for audiences; the status list stays authoritative. `POST /api/v1/audiences/{name}/webhook-test` sends a test event (read price).
 
 ## Enroll a device
 

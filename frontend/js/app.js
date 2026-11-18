@@ -592,6 +592,37 @@ function audienceUsage(usage) {
   ];
 }
 
+/** Revocation webhook (spec/events.md): set or clear the URL, and send a signed test event. */
+function audienceWebhook(audience) {
+  const out = h('div', {});
+  const form = h('form', { class: 'stack webhook-form' },
+    h('label', {}, 'Revocation webhook', h('span', { class: 'hint' }, ` — optional; https on ${audience.name.replace(/:\d+$/, '')} or a subdomain. Signed events tell you about revoked credentials at once.`),
+      h('input', { name: 'revocation_webhook', type: 'url', value: audience.revocation_webhook || '', placeholder: `https://${audience.name}/webhooks/devicebasedauth`, autocomplete: 'off' })),
+    h('div', { class: 'actions' },
+      h('button', { type: 'submit' }, `Save for ${usd(config.prices.audience)}`),
+      audience.revocation_webhook ? h('button', { type: 'button', class: 'secondary', dataset: { action: 'test' } }, `Send test event (${usd(config.prices.read)})`) : null),
+    out);
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(form, async () => {
+      try {
+        const saved = await api(`/api/v1/audiences/${enc(audience.name)}`, { method: 'PATCH', body: { revocation_webhook: field(form, 'revocation_webhook') || null } });
+        flash('success', saved.revocation_webhook ? `Revocation webhook for ${saved.name} saved.` : `Revocation webhook for ${saved.name} removed.`); await refreshStrip(); await render();
+      } catch (error) { replace(out, errorBox(error)); }
+    });
+  });
+  form.querySelector('[data-action="test"]')?.addEventListener('click', () => busy(form, async () => {
+    try {
+      const result = await api(`/api/v1/audiences/${enc(audience.name)}/webhook-test`, { method: 'POST' });
+      replace(out, result.delivered
+        ? notice('success', `Delivered: your endpoint answered HTTP ${result.status}.`)
+        : notice('error', `Not delivered: ${result.status ? `your endpoint answered HTTP ${result.status}` : result.error || 'no answer'}. Answer 2xx within 5 seconds, without redirecting.`));
+      await refreshStrip();
+    } catch (error) { replace(out, errorBox(error)); }
+  }));
+  return form;
+}
+
 async function audiences() {
   const all = (await api('/api/v1/audiences', { auth: false })).items;
   const mine = await myAudiences(all);
@@ -625,7 +656,7 @@ async function audiences() {
     mine.length ? mine.map((a, i) => h('div', { class: 'panel', dataset: { audience: a.name } }, h('h3', {}, a.name, ' ', h('span', { class: 'muted small' }, `${a.namespace}:*`)), h('p', {}, a.description || ''),
       table(['Action', 'Allows'], (a.catalog || []).map(c => [h('code', {}, c.action), c.description])),
       a.redirect_uris?.length ? h('p', { class: 'small' }, 'Redirect URIs: ', a.redirect_uris.join(', ')) : null,
-      audienceUsage(usage[i]))) : h('p', { class: 'muted' }, 'You have not registered an audience.'),
+      audienceUsage(usage[i]), audienceWebhook(a))) : h('p', { class: 'muted' }, 'You have not registered an audience.'),
     h('h2', {}, 'Register an audience'),
     notice('info', h('p', {}, h('strong', {}, 'Prove you control the domain. '), 'Before registering, publish this JSON at ', h('code', {}, 'https://<your domain>/.well-known/devicebasedauth.json'), ':'),
       h('pre', { class: 'code' }, JSON.stringify({ account: accountInfo.account })),

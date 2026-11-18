@@ -181,7 +181,7 @@ if (!result.allow) return Response.json({ error: &#39;forbidden&#39;, code: resu
 
 <section id="workers">
 <h2>Cloudflare Worker middleware</h2>
-<p>A complete Worker that guards routes by action. Requests from Cloudflare carry <code>request.cf</code>, so network-location constraints (countries, regions, areas) work without configuration.</p>
+<p>A complete Worker that guards routes by action and applies revocation webhooks. Requests from Cloudflare carry <code>request.cf</code>, so network-location constraints (countries, regions, areas) work without configuration.</p>
 <pre class="code" data-sample="worker-middleware.mjs"><code>import { createVerifier } from &#39;@devicebasedauth/verify&#39;;
 
 // Module scope: the verifier, its key and status-list caches, and its proof-replay cache live
@@ -197,6 +197,13 @@ export default {
   async fetch(request, env = {}) {
     verifier ??= createVerifier({ issuer: env.DBA_ISSUER || &#39;https://devicebasedauth.org&#39;, audience: env.DBA_AUDIENCE || &#39;hashbin.org&#39; });
     const { pathname } = new URL(request.url);
+    // Revocation webhook (spec/events.md): register this URL on your audience. A signed
+    // credentials.revoked event makes this verifier deny those credentials at once, before its
+    // cached status list expires.
+    if (request.method === &#39;POST&#39; &amp;&amp; pathname === &#39;/webhooks/devicebasedauth&#39;) {
+      const event = await verifier.handleEvent(await request.text());
+      return Response.json(event.ok ? { received: event.type } : { error: event.message, code: event.code }, { status: event.ok ? 200 : event.status });
+    }
     for (const route of ROUTES) {
       const match = request.method === route.method &amp;&amp; pathname.match(route.pattern);
       if (!match) continue;
@@ -290,6 +297,7 @@ const tokens = await fetch(&#39;https://devicebasedauth.org/oauth/token&#39;, {
 <li>Revocation is free: its cost is prepaid in the issue price, so it works at a zero balance.</li>
 <li>Online checks (<code>/api/v1/authorize</code>, and this service's own API) see a revocation immediately.</li>
 <li>Offline verifiers see it through the credential's status list, republished within about a minute and cached by verifiers for at most their TTL (we publish 60 s; verifiers should cache ≤ 5 minutes). Short credential lifetimes with automatic renewal bound the window further.</li>
+<li>Audiences can also be told at once: set <code>revocation_webhook</code> on your audience (<code>PATCH /api/v1/audiences/{name}</code>, an https URL on your own domain, or in the dashboard). Each revocation of a credential naming your audience is POSTed as a <code>dba-event+jwt</code> signed with the issuer key; <code>verifier.handleEvent(body)</code> checks it and denies those credentials immediately (see the <a href="#workers">Worker sample</a>). Delivery is retried after 1 minute, 10 minutes and 1 hour, costs audiences nothing, and never replaces the status list. Format: <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/events.md">spec/events.md</a>.</li>
 </ul>
 <p>Status lists follow the IETF OAuth Token Status List draft: a JWT (<code>typ: statuslist+jwt</code>) signed by the issuer whose <code>sub</code> is the list URL and whose <code>status_list.lst</code> is a zlib-compressed, base64url bitstring, 1 bit per credential, least significant bit first. Fetch them from the <code>uri</code> in the credential (e.g. <code>/status/v1/lists/0</code>); verifiers must fail closed when a list cannot be fetched.</p>
 <h3>Renewal, rotation and access tokens</h3>

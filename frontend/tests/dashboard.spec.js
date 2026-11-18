@@ -71,6 +71,13 @@ test('devices, API keys, audiences and the panic button', async ({ page, request
   await expect(page.locator('#view')).toContainText('Read notes');
   await expect(page.locator('.audience-usage')).toContainText('Online decisions');
   await expect(page.locator('.audience-usage tbody tr')).toHaveCount(1);
+  // Revocation webhook (B1): nothing listens on port 9, so the test event is reported undelivered.
+  await page.getByLabel(/Revocation webhook/).fill('http://localhost:9/hook');
+  await page.getByRole('button', { name: /^Save for/ }).click();
+  await expect(page.locator('#flash')).toContainText(`Revocation webhook for ${owner}.localhost saved.`);
+  await expect(page.getByLabel(/Revocation webhook/)).toHaveValue('http://localhost:9/hook');
+  await page.getByRole('button', { name: /^Send test event/ }).click();
+  await expect(page.locator('.webhook-form')).toContainText('Not delivered');
 
   await page.getByRole('link', { name: 'Revoke everything' }).click();
   const button = page.locator('#panic-button');
