@@ -21,7 +21,10 @@ export async function verifyToken(token, prefix, secret, maxLength = 16384) {
   try {
     if (!secret || typeof token !== 'string' || token.length > maxLength || !token.startsWith(prefix)) return null;
     const [body, tag, extra] = token.slice(prefix.length).split('.');
-    if (extra !== undefined || !await crypto.subtle.verify('HMAC', await hmacKey(secret), unb64u(tag), encoder.encode(`${prefix}${body}`))) return null;
+    // Only the canonical spelling of the tag: base64url's spare low bits in the last character
+    // would otherwise give one token several valid strings, defeating any use-once check that
+    // remembers tokens (or their digests) by string.
+    if (extra !== undefined || typeof tag !== 'string' || b64u(unb64u(tag)) !== tag || !await crypto.subtle.verify('HMAC', await hmacKey(secret), unb64u(tag), encoder.encode(`${prefix}${body}`))) return null;
     const payload = JSON.parse(new TextDecoder().decode(unb64u(body)));
     if (payload.exp !== undefined && payload.exp < Math.floor(Date.now() / 1000)) return null;
     return payload;
