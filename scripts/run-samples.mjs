@@ -5,11 +5,14 @@
 // would open; this harness approves it as sample-owner (LocalDev auth, local mode only), so the
 // samples themselves contain no test hooks. Each sample must exit 0 and print what it promises.
 //
-// A sample whose toolchain is missing (python3 with cryptography + requests, go, a JDK) is skipped,
-// unless DBA_SAMPLES_STRICT=1, when it fails.
+// A sample whose toolchain is missing (python3 with cryptography + requests, go, a JDK; swtpm and
+// tpm2-tools for the TPM sample) is skipped, unless DBA_SAMPLES_STRICT=1, when it fails.
+//
+// The TPM sample runs on a software TPM whose EK certificate comes from a throwaway CA made here;
+// the server trusts that CA through TPM_EK_TEST_CA, which only a local server reads.
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +27,9 @@ const SAMPLE_TIMEOUT_MS = 120_000;
 const APPROVAL_LINK = /\/approve\.html#(enr_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
 
 const has = (command, args) => spawnSync(command, args, { stdio: 'ignore' }).status === 0;
+const TPM_TOOLS = ['swtpm', 'swtpm_setup', 'swtpm_localca', 'tpm2_createek', 'tpm2_activatecredential', 'jq', 'openssl'];
+const hasTpmTools = () => TPM_TOOLS.every(tool => has('sh', ['-c', `command -v ${tool}`]));
+let tpmCaDir = null;
 
 /**
  * Each sample: a command to run (or an in-process function), the toolchain it needs, and the
@@ -50,6 +56,11 @@ const SAMPLES = [
     expect: [/^Attestation challenge: [\w-]{43}$/m, /^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m, /^Renewed: crd_\w+\.2$/m]
   },
   {
+    name: 'tpm', command: ['bash', 'docs/samples/tpm/swtpm.sh'], env: () => ({ DBA_SAMPLE_TPM_CA: tpmCaDir }),
+    needs: () => (hasTpmTools() && !!tpmCaDir) || 'swtpm, swtpm-tools, tpm2-tools, jq and openssl',
+    expect: [/^Attestation challenge: [\w-]{43}$/m, /^Approved\. Attested: tpm \(id:00001014\)$/m, /^whoami: account sample-owner, device dev_\w+$/m, /only with a key attested to be in secure hardware/]
+  },
+  {
     name: 'go_verify', command: ['go', 'run', '.'], cwd: 'docs/samples/go_verify', credential: true,
     needs: () => has('go', ['version']) || 'go',
     expect: [/^Signature: valid \(issuer key local-dev-1\)$/m, /^Device: dev_\w+$/m, /^Grant 1: \{"actions":\["hashbin:content:write"\]\}$/m]
@@ -67,9 +78,19 @@ async function api(method, path, body, as = OWNER) {
 /** What the account owner does on the approval page. */
 const approve = request => api('POST', '/api/v1/enrollments/approve', { request });
 
-function startServer(persistDir) {
+/** A throwaway EK CA for the TPM sample's swtpm; returns its certificate (DER, base64) or null. */
+async function makeTpmCa(dir) {
+  const made = spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', join(dir, 'ca.key'), '-out', join(dir, 'ca.crt'), '-subj', '/CN=DBA sample EK CA', '-days', '2',
+    '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign'], { stdio: 'ignore' });
+  if (made.status !== 0) return null;
+  const pem = await readFile(join(dir, 'ca.crt'), 'utf8');
+  return pem.replace(/-----[A-Z ]+-----|\s/g, '');
+}
+
+function startServer(persistDir, extraVars = {}) {
   const args = ['wrangler', 'dev', '--config', 'wrangler.local.toml', '--local', '--port', String(PORT), '--persist-to', persistDir,
-    '--var', `APP_ORIGIN:${ORIGIN}`, '--var', `ISSUER:${ORIGIN}`, '--var', `STATUS_ORIGIN:${ORIGIN}/status`];
+    '--var', `APP_ORIGIN:${ORIGIN}`, '--var', `ISSUER:${ORIGIN}`, '--var', `STATUS_ORIGIN:${ORIGIN}/status`,
+    ...Object.entries(extraVars).flatMap(([name, value]) => ['--var', `${name}:${value}`])];
   // Its own process group, so stopping it also stops workerd underneath npx and wrangler.
   const child = spawn('npx', args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   const log = [];
@@ -160,7 +181,13 @@ async function workerMiddleware() {
 async function main() {
   try { await fetch(`${ORIGIN}/health`); console.error(`Something is already listening on ${ORIGIN}; stop it or set DBA_SAMPLES_PORT.`); return 1; } catch { /* free */ }
   const persistDir = await mkdtemp(join(tmpdir(), 'dba-samples-'));
-  const server = startServer(persistDir);
+  const extraVars = {};
+  if (hasTpmTools()) {
+    const dir = await mkdtemp(join(persistDir, 'tpm-ca-'));
+    const ca = await makeTpmCa(dir);
+    if (ca) { tpmCaDir = dir; extraVars.TPM_EK_TEST_CA = ca; }
+  }
+  const server = startServer(persistDir, extraVars);
   const stopAll = () => { server.stop(); };
   process.on('SIGINT', () => { stopAll(); process.exit(130); });
   const failures = []; const skipped = [];
@@ -179,7 +206,7 @@ async function main() {
       let result;
       if (sample.run) result = await sample.run().catch(error => ({ code: 1, output: `${error.stack}\n` }));
       else {
-        const env = { ...process.env, DBA_ORIGIN: ORIGIN, DBA_HOME: await mkdtemp(join(persistDir, 'home-')) };
+        const env = { ...process.env, DBA_ORIGIN: ORIGIN, DBA_HOME: await mkdtemp(join(persistDir, 'home-')), ...sample.env?.() };
         if (sample.credential) {
           credential ??= (await enrollDevice({ origin: ORIGIN, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], onApprovalUrl: url => approve(new URL(url).hash.slice(1)) })).credential;
           env.DBA_CREDENTIAL = credential;

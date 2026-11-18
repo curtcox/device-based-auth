@@ -27,6 +27,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends swtpm swtpm-tools tpm2-tools
       - run: npm run test:samples
         env:
           DBA_SAMPLES_STRICT: '1'

@@ -227,6 +227,7 @@ Object result = client.call("POST", "https://hashbin.org/api/content", credentia
 <li>The answer holds a secret only your TPM can unwrap, as <code>credential_blob</code> (the file <code>tpm2_activatecredential -i</code> reads) or as <code>id_object</code> and <code>encrypted_secret</code>, and an <code>activation</code> token. Unwrap it with <code>TPM2_ActivateCredential</code> (AK and EK loaded; the EK needs a policy session with <code>tpm2_policysecret -c e</code>).</li>
 <li>Add <code>attestation: { format: "tpm-ek", challenge, activation, secret }</code> (the secret base64) to the signed enrollment request, within 10 minutes.</li>
 </ol>
+<p>A complete shell script, run in CI against a software TPM, does all of this and then signs each request's DPoP proof with <code>tpm2_sign</code>: <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/tpm/enroll-tpm.sh">docs/samples/tpm/enroll-tpm.sh</a>.</p>
 <p>The issuer checks the EK certificate against the TPM manufacturers' EK CAs (Infineon, STMicroelectronics, Nuvoton, Intel, Nationz), the AK's attributes and signature, the certified key, and the returned secret, then signs the same <code>{ format: "tpm", security_level: "tpm", tpm_manufacturer }</code>. The EK certificate is not stored. Virtual TPMs (cloud vTPMs, swtpm) are not trusted.</p>
 </section>
 
