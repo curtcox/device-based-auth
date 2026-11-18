@@ -32,11 +32,11 @@ A change that finishes, starts or discovers an item updates its row here in the 
 
 | ID | Decision | Owner | Status | Recommendation |
 |----|----------|-------|--------|----------------|
-| D1 | Who generates device private keys: the device (DBA only ever sees public keys) or DBA (delivers the private key once)? | owner | ❓ | Device-generated. DBA never holding private keys removes the biggest breach risk; WebCrypto, keychains, TPMs and Secure Enclave all support it. Master plan §1, §5.1. |
+| D1 | Who generates device private keys: the device (DBA only ever sees public keys) or DBA (delivers the private key once)? | owner | ✅ Owner chose device-generated 2026-11-18. | Device-generated. DBA never holding private keys removes the biggest breach risk; WebCrypto, keychains, TPMs and Secure Enclave all support it. Master plan §1, §5.1. |
 | D2 | Credential format: compact JWS (JSON after base64url decode), plain JSON with detached signature, or X.509 | owner | ❓ | JWS/ES256, with readable "inspect" views everywhere; X.509 export later (B3). §3.1. |
-| D3 | Verification: offline free + online metered, or online-only (every action billed)? Who pays for online decisions? | owner | ❓ | Offline free; online decisions (instant revocation, usage limits, audit) at ~10 µ$ billed to the audience. §6, pricing.md. |
-| D4 | Location constraints: accept network-observed location, device-reported location in the signed proof, or both? | owner | ❓ | Support both with an explicit `where.source`, and document that neither is tamper-proof without attestation (B5). §3.5. |
-| D5 | Billing across sites: separate balances per site, or one shared wallet usable on all three? | owner | ❓ | Separate at launch; shared wallet as S7 (cross-repo ledger change). §9.3. |
+| D3 | Verification: offline free + online metered, or online-only (every action billed)? Who pays for online decisions? | owner | ✅ Owner chose offline free + online metered, billed to the audience, 2026-11-18. | Offline free; online decisions (instant revocation, usage limits, audit) at ~10 µ$ billed to the audience. §6, pricing.md. |
+| D4 | Location constraints: accept network-observed location, device-reported location in the signed proof, or both? | owner | ✅ Owner chose both, selected per grant, 2026-11-18. | Support both with an explicit `where.source`, and document that neither is tamper-proof without attestation (B5). §3.5. |
+| D5 | Billing across sites: separate balances per site, or one shared wallet usable on all three? | owner | ✅ Owner chose always separate, 2026-11-18. | Each site keeps its own balance and Stripe product. §9.3. |
 | D6 | Draft prices (issue 75 µ$, renew 25 µ$, online decision 10 µ$, API read 21 µ$, $5 minimum deposit) | owner | ❓ | Accept as starting points; recalibrate from measured costs. [pricing.md](docs/business/pricing.md). |
 | D7 | Site sign-in: DBA as a custom OIDC provider inside each site's Clerk app first (Stage A), then device-bound sessions (Stage B)? Separate Clerk application for DBA? | owner/ops | ❓ | Yes to both; confirm the Clerk plan allows custom OIDC providers. §9.2. |
 | D8 | Operating entity and dormant accounts: same LLC/Cloudflare account as hashbin and cronly; close zero-balance accounts with no live credentials after 12 months idle? | legal | ❓ | Same entity (as cronly D1); shared operator profile; yes to dormant-account closure after notice. §8.3, §10. |
@@ -68,7 +68,6 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | S4 | Mobile sample apps (iOS Secure Enclave, Android Keystore) | code | ⬜ |
 | S5 | Python and Go verifier packages | code | ⬜ |
 | S6 | Issuer signing keys in an external KMS/HSM | ops | ⬜ |
-| S7 | Shared wallet across hashbin, cronly and DBA | code/owner | ⬜ |
 
 ## Backlog
 

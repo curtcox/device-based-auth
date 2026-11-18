@@ -445,11 +445,10 @@ devicebasedauth.org dogfoods Stage B for its own dashboard after the first Clerk
 
 ### 9.3 Billing across sites
 
-Who pays for what is decision D5. Recommended: DBA charges **the account that issues** for
-issue/renew, and **the audience operator** for online decisions; hashbin and cronly verify offline,
-so their users pay DBA only for issuing and renewing their device keys. A shared wallet across the
-three sites (one Stripe deposit usable everywhere, reducing card fees) is attractive but is a
-cross-repo ledger change; it is planned as S7, not launch.
+Decided (D3, D5, 2026-11-18): every site keeps its own separate balance and Stripe product.
+DBA charges **the account that issues** for issue/renew, and **the audience operator** for online
+decisions. hashbin and cronly verify offline, so their users pay DBA (from their DBA balance) only
+for issuing and renewing device keys for those sites. There is no shared wallet.
 
 ### 9.4 Rollout order
 
@@ -505,7 +504,7 @@ STATUS.md AGENTS.md      Status (single source of truth) and contributor guide
 
 | Phase | Deliverable | Exit criteria |
 |-------|-------------|---------------|
-| 0 | Decisions D1–D8; `spec/credential.md`, `spec/evaluation.md`, first 50 test vectors; pricing sheet | Owner approves decisions and draft prices |
+| 0 | Remaining decisions (D2, D6–D8); `spec/credential.md`, `spec/evaluation.md`, first 50 test vectors; pricing sheet | Owner approves decisions and draft prices |
 | 1 | Scaffold ported from cronly: Worker, local mode, Clerk, Stripe ledger (µ$), API_ROUTES, cost policy, CI, deploy | `npm run dev:local` works with LocalDev auth and fake deposits; CI green |
 | 2 | Issuer keys + JWKS; `packages/verify`; inspector and playground pages | Vectors pass in verify library and in the browser |
 | 3 | Enrollment (browser SDK, device code, API), CredentialRegistry, dashboard list/detail | A browser and a CLI device enroll locally and show in the dashboard |
@@ -522,5 +521,5 @@ STATUS.md AGENTS.md      Status (single source of truth) and contributor guide
 ## 13. Deliberately left out of v1
 
 - Server-generated private keys (D1), X.509/mTLS (B3), hardware attestation (B5), external KMS
-  for issuer keys (S6), shared wallet across sites (S7), customer-supplied CAs (B6),
+  for issuer keys (S6), a shared wallet across sites (rejected, D5), customer-supplied CAs (B6),
   delegation chains deeper than one level, and a native mobile SDK beyond samples (S4).
