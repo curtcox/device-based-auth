@@ -1,6 +1,6 @@
 // Writes spec/vectors/*.json. Evaluation cases are hand-written in scripts/vectors/;
 // credential vectors are signed once with a published TEST-ONLY key and then frozen.
-import { writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { writeFileSync, existsSync } from 'node:fs';
 import { cases } from './vectors/evaluation-cases.mjs';
 import { generateKeyPair, exportPublicJwk, jwkThumbprint, issuerSigner, jwksFor, signCredential, createProof, b64u, signStatusList, setBit } from '../packages/verify/src/index.js';
 

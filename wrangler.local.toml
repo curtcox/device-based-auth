@@ -1,0 +1,59 @@
+name = "dba-local"
+main = "src/index.js"
+compatibility_date = "2026-10-30"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[assets]
+directory = "./frontend"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/status/*", "/.well-known/*", "/oauth/*", "/webhooks/*", "/mcp", "/health"]
+
+[vars]
+ENVIRONMENT = "local"
+APP_ORIGIN = "http://localhost:8787"
+ISSUER = "http://localhost:8787"
+STATUS_ORIGIN = "http://localhost:8787/status"
+APP_AUDIENCE = "devicebasedauth.org"
+OPERATOR_ACCOUNT = "operator"
+STATUS_SHARDS = "4"
+STATUS_PUBLISH_DELAY_MS = "1000"
+TOKEN_SIGNING_KEY = "local-only-token-key-never-use-in-production"
+# LOCAL-ONLY issuer key. It is public; never use it anywhere else.
+ISSUER_KEYS = '[{"kid":"local-dev-1","jwk":{"kty":"EC","crv":"P-256","x":"7JpWNkkiVpo6U4e_uyCPqE1vbX3YgD_tAxIsPpkRiXM","y":"l-S-a8rFSHV1OrTCrD-h-UY10xKDjIktWe7v6sb0ebU","d":"hNAkCnSeFCxN-xdgUt9jFhKfjSMvegxGwqX1tZj5Qm4"}}]'
+
+[[durable_objects.bindings]]
+name = "ACCOUNTS"
+class_name = "AccountDO"
+
+[[durable_objects.bindings]]
+name = "STATUS"
+class_name = "StatusListDO"
+
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "RegistryDO"
+
+[[durable_objects.bindings]]
+name = "ENROLLMENTS"
+class_name = "EnrollmentDO"
+
+[[durable_objects.bindings]]
+name = "SAFETY"
+class_name = "SafetyDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AccountDO", "StatusListDO", "RegistryDO", "EnrollmentDO", "SafetyDO"]
+
+[[r2_buckets]]
+binding = "STATUS_BUCKET"
+bucket_name = "dba-status-local"
+
+[triggers]
+crons = ["7 * * * *"]
+
+[[ratelimits]]
+name = "PUBLIC_LIMITER"
+namespace_id = "2001"
+simple = { limit = 600, period = 60 }
