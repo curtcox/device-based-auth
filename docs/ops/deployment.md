@@ -27,6 +27,12 @@ Store the output, wrapped in a JSON array (`[ … ]`), as the GitHub secret `DBA
 random 48+ character string as `DBA_TOKEN_SIGNING_KEY` (`openssl rand -base64 48`). Never reuse the
 local key from `wrangler.local.toml`; the deploy check refuses `local-` key ids.
 
+Security notices (Web Push to the owner's browsers when credentials, API keys or enrollment
+tokens are issued, master plan §10) need a VAPID key: store the output of
+`node scripts/generate-issuer-key.mjs --vapid` as `DBA_PUSH_VAPID_KEY`. Keep it for good: browsers
+subscribe to this exact key, so replacing it silently ends every subscription (owners would have to
+turn notices on again). Without it the dashboard does not offer notices.
+
 ## 3. Clerk
 
 Create a separate Clerk application for devicebasedauth.org (Google and GitHub sign-in, like

@@ -72,6 +72,18 @@ aggregate ledger row for its kind, so each of those operations counts one row fo
 omitted until 2026-11-18, which left decision and login 2 µ$ under their floors).
 Any upward correction found in an audit must raise those prices.
 
+### Security notices ride on the issue price
+
+An account owner can turn on security notices for up to 5 browsers (master plan §10): an encrypted
+Web Push message when a credential is issued or rotated, an API key or app connection is created,
+or an enrollment token is made. Push services charge nothing; each message costs the account's
+Durable Object about 2 ms of CPU (a fresh ECDH key, HKDF and AES-GCM; the VAPID signature is
+reused for hours), so issue counts 10 ms for five browsers. Ordinary issuances are announced at
+most once an hour per account (the next notice says how many were held back); credentials with
+`dba:*` actions, rotations of them, reinstated devices, API keys and enrollment tokens are always
+announced. The hourly decision is stored on the balance row the charge writes anyway, so it costs
+no extra row. Subscribing a browser is free (a signed-in owner only, at most 5, one row).
+
 ### Key attestation adds nothing to the issue price
 
 Android key attestation (B5) is checked when the enrollment starts, which is free and behind the

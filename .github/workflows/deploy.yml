@@ -30,6 +30,7 @@ jobs:
       COST_SAFETY_HARD_STOP: ${{ vars.DBA_COST_SAFETY_HARD_STOP }}
       LAUNCH_APPROVED: ${{ vars.DBA_LAUNCH_APPROVED }}
       ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      PUSH_VAPID_KEY: ${{ secrets.DBA_PUSH_VAPID_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

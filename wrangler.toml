@@ -32,6 +32,7 @@ WORKER_NAME = "dba-worker-prod"
 # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (+ vars STRIPE_CREDIT_PRODUCT_ID, STRIPE_CARD_COST_PRODUCT_ID)
 # OPERATOR_ACCOUNT       Clerk user id that owns the first-party audiences (and pays their decisions/logins)
 # CLOUDFLARE_ANALYTICS_TOKEN, CLOUDFLARE_ACCOUNT_ID, COST_SAFETY_DO_NAMESPACES (cost-safety brake)
+# PUSH_VAPID_KEY         private P-256 JWK signing security notices (Web Push); without it they are off
 # Optional: ALERT_WEBHOOK_URL, COST_SAFETY_BRAKE_CENTS, COST_SAFETY_HARD_STOP=true, LAUNCH_APPROVED=true, GIT_SHA
 
 [[durable_objects.bindings]]

@@ -10,6 +10,7 @@ import { createCredential, listCredentials, getCredential, credentialDecisions, 
 import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
+import { pushSubscriptions, pushPublicKey } from './api/push.js';
 import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
 import { inspect } from './api/inspect.js';
 import { oidcConfiguration, oidcAuthorize, oidcToken, oidcUserinfo } from './api/oidc.js';
@@ -57,6 +58,9 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/account`, access: 'account:read', handler: 'account' },
   { method: 'GET', path: `${V1}/account/settings`, access: SESSION, handler: 'account-settings' },
   { method: 'PATCH', path: `${V1}/account/settings`, access: SESSION, handler: 'account-settings' },
+  { method: 'GET', path: `${V1}/push-subscriptions`, access: SESSION, handler: 'push-subscriptions' },
+  { method: 'POST', path: `${V1}/push-subscriptions`, access: SESSION, handler: 'push-subscriptions' },
+  { method: 'DELETE', path: `${V1}/push-subscriptions/:id`, access: SESSION, handler: 'push-subscriptions' },
   { method: 'GET', path: `${V1}/transactions`, access: 'transactions:read', handler: 'transactions' },
   { method: 'GET', path: `${V1}/audit`, access: 'transactions:read', handler: 'audit' },
   { method: 'GET', path: `${V1}/credentials`, access: 'credentials:read', handler: 'credentials-list' },
@@ -142,7 +146,7 @@ async function handle(route, request, env, auth) {
     case 'health': return { status: 'ok', environment: env.ENVIRONMENT, git_sha: env.GIT_SHA || 'local' };
     case 'jwks': return new Response(JSON.stringify(jwks(env)), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600', ...CORS } });
     case 'status-list': return statusList(route, env);
-    case 'public-config': return { local: env.ENVIRONMENT === 'local', environment: env.ENVIRONMENT, issuer: issuerName(env), audience: appAudience(env), app_origin: env.APP_ORIGIN, status_origin: env.STATUS_ORIGIN, clerk_publishable_key: env.CLERK_PUBLISHABLE_KEY || null, prices: PRICES, price_table: priceTable(), minimum_deposit_cents: MINIMUM_DEPOSIT_CENTS };
+    case 'public-config': return { local: env.ENVIRONMENT === 'local', environment: env.ENVIRONMENT, issuer: issuerName(env), audience: appAudience(env), app_origin: env.APP_ORIGIN, status_origin: env.STATUS_ORIGIN, clerk_publishable_key: env.CLERK_PUBLISHABLE_KEY || null, prices: PRICES, price_table: priceTable(), minimum_deposit_cents: MINIMUM_DEPOSIT_CENTS, push_public_key: await pushPublicKey(env) };
     case 'quote': {
       const op = url.searchParams.get('op');
       assert(Object.hasOwn(PRICES, op || ''), 'invalid_operation', `op must be one of ${Object.keys(PRICES).join(', ')}`);
@@ -181,6 +185,7 @@ async function handle(route, request, env, auth) {
     case 'audience-usage': return audienceUsage(route, request, env, auth);
     case 'audience-webhook-test': return audienceWebhookTest(route, request, env, auth);
     case 'account-settings': return accountSettings(route, request, env, auth);
+    case 'push-subscriptions': return pushSubscriptions(route, request, env, auth);
     case 'keys': return keys(route, request, env, auth);
     case 'checkout': return checkout(request, env, auth, dryRun);
     case 'dev-deposit': {

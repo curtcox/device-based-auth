@@ -1775,6 +1775,259 @@
         }
       }
     },
+    "/api/v1/push-subscriptions": {
+      "get": {
+        "operationId": "get_api_v1_push_subscriptions",
+        "summary": "Browsers that get security notices (Web Push) when credentials, API keys or enrollment tokens are issued; at most 5, free, dashboard only. POST takes a PushSubscription made with push_public_key from /api/public/config and sends it a first notice; DELETE tells every subscribed browser.",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_api_v1_push_subscriptions",
+        "summary": "Browsers that get security notices (Web Push) when credentials, API keys or enrollment tokens are issued; at most 5, free, dashboard only. POST takes a PushSubscription made with push_public_key from /api/public/config and sends it a first notice; DELETE tells every subscribed browser.",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "subscription"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "subscription": {
+                    "type": "object",
+                    "required": [
+                      "endpoint",
+                      "keys"
+                    ],
+                    "description": "PushSubscription.toJSON() from the browser.",
+                    "properties": {
+                      "endpoint": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "keys": {
+                        "type": "object",
+                        "required": [
+                          "p256dh",
+                          "auth"
+                        ],
+                        "properties": {
+                          "p256dh": {
+                            "type": "string"
+                          },
+                          "auth": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/push-subscriptions/{id}": {
+      "delete": {
+        "operationId": "delete_api_v1_push_subscriptions_id",
+        "summary": "Browsers that get security notices (Web Push) when credentials, API keys or enrollment tokens are issued; at most 5, free, dashboard only. POST takes a PushSubscription made with push_public_key from /api/public/config and sends it a first notice; DELETE tells every subscribed browser.",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/transactions": {
       "get": {
         "operationId": "get_api_v1_transactions",

@@ -4,6 +4,8 @@ import { charge, deposit, readBalance, money } from './ledger.js';
 import { periodSeconds } from '../../packages/verify/src/grants.js';
 import { randomId } from '../utils/ids.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
+import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
+import { hasDbaAction } from '../auth/reverify.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -42,6 +44,15 @@ export class AccountDO {
   constructor(ctx, env) {
     this.ctx = ctx; this.storage = ctx.storage; this.env = env;
     this.proofs = new Map(); this.rates = new Map();
+    // Work that outlives the request (security notices). Tests await it with settle().
+    this.inflight = new Set();
+  }
+
+  /** Run work after the response; a Durable Object stays alive while it is pending. */
+  background(promise) {
+    const tracked = promise.catch(() => {}).finally(() => this.inflight.delete(tracked));
+    this.inflight.add(tracked);
+    this.ctx.waitUntil?.(tracked);
   }
 
   async fetch(request) {
@@ -149,6 +160,9 @@ export class AccountDO {
       const key = { id, name, scopes, hash, created_at: now, ...(oauth ? { kind: 'oauth', oauth } : {}) };
       await tx.put(`key:${id}`, key); await this.audit(tx, now, oauth ? 'app.connected' : 'key.created', { key_id: id, name, scopes });
       return visibleKey(key);
+    }).then(async key => {
+      this.notify({ title: oauth ? 'App connected to your account' : 'API key created', body: `${oauth ? 'An app' : 'An API key'} “${noticeText(name)}” can now act for your devicebasedauth.org account (${scopes.join(', ')}).`, path: '#keys', tag: `key-${id}` }, now);
+      return key;
     });
   }
 
@@ -215,6 +229,9 @@ export class AccountDO {
       await this.audit(tx, now, 'enrollment_token.created', { token_id: id, name, aud: template.aud, max_uses });
       await scheduleCompaction(tx, now);
       return visibleToken(token, now);
+    }).then(token => {
+      this.notify({ title: 'Enrollment token created', body: `“${noticeText(name)}” lets up to ${max_uses} devices enroll for ${noticeText(template.aud.join(', '), 120)} without approval.`, path: '#tokens', tag: `etok-${id}` }, now);
+      return token;
     });
   }
 
@@ -246,7 +263,11 @@ export class AccountDO {
    * stored JWS is exactly what the device receives; if the charge fails nothing is kept.
    */
   async op_store_credential({ record, device, price, charge_id, fingerprint, reinstate = false, source, enrollment_token }, now) {
-    return this.tx(async tx => {
+    let announce = 0; let reinstated = false;
+    const urgent = hasDbaAction(record.grants);
+    const stored = await this.tx(async tx => {
+      announce = 0; reinstated = false;
+      const subscribed = (await tx.get('push:subs'))?.length > 0;
       const settings = await this.settings(tx);
       let token = null;
       if (enrollment_token) {
@@ -254,7 +275,7 @@ export class AccountDO {
         assert(token && token.hash === enrollment_token.hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
       }
       const issuedToday = (await readBalance(tx, now)).day.counts?.issue || 0; // before this charge counts
-      const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid }, receipt: { cid: record.cid, ...(fingerprint ? { fingerprint } : {}) } }, now);
+      const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid }, receipt: { cid: record.cid, ...(fingerprint ? { fingerprint } : {}) }, annotate: subscribed ? state => { announce = nextNotice(state, now, urgent); } : undefined }, now);
       // The same charge id again (an Idempotency-Key retry, two approvals of one enrollment racing):
       // hand back what the first request issued. Storing this one would be a credential nobody paid for.
       if (paid.duplicate) return this.issuedBefore(tx, paid, fingerprint, now);
@@ -277,10 +298,20 @@ export class AccountDO {
       const cred = { ...record, created_at: now, events: [{ at: now, type: 'issued', jti: record.jti, source }] };
       await tx.put(`cred:${record.cid}`, cred);
       await this.audit(tx, now, 'credential.issued', { cid: record.cid, device_id: device.id, aud: record.aud, source, ...(record.enrollment_token ? { token_id: record.enrollment_token } : {}) });
-      if (existing?.revoked_at) await this.audit(tx, now, 'device.reinstated', { device_id: device.id, cid: record.cid });
+      if (existing?.revoked_at) { reinstated = true; await this.audit(tx, now, 'device.reinstated', { device_id: device.id, cid: record.cid }); }
       await scheduleCompaction(tx, now);
       return { cid: record.cid, charged: price, balance_microdollars: paid.balance_microdollars };
     });
+    if (announce || (reinstated && (await this.storage.get('push:subs'))?.length)) {
+      const what = `${noticeText(device.name) || 'a device'} for ${noticeText(record.aud.join(', '), 120)}`;
+      const more = announce > 1 ? ` (and ${announce - 1} more since the last notice)` : '';
+      this.notify({
+        title: reinstated ? 'Revoked device reinstated' : urgent ? 'Credential with account access issued' : 'Credential issued',
+        body: reinstated ? `A revoked device, ${what}, was issued a credential again.` : urgent ? `${what} can now act on your devicebasedauth.org account.` : `${what}${more}.`,
+        path: `#credential/${encodeURIComponent(record.cid)}`, tag: urgent || reinstated ? `cred-${record.cid}` : 'issued'
+      }, now);
+    }
+    return stored;
   }
 
   /** The credential a repeated charge id already paid for, if the request is the same one. */
@@ -471,7 +502,9 @@ export class AccountDO {
    * key and status index, and revokes the old index so old copies stop working everywhere.
    */
   async op_renew({ cid, from_jti, update, price, charge_id, rotation, recovery = false }, now) {
+    let announce = 0; let rotated = null;
     const result = await this.tx(async tx => {
+      announce = 0;
       const cred = await tx.get(`cred:${cid}`);
       assert(cred, 'not_found', 'Credential not found', 404);
       assert(!cred.revoked_at, 'revoked', 'Credential has been revoked', 403);
@@ -490,7 +523,10 @@ export class AccountDO {
       // once per credential per withdrawn key, since the result is signed by the active key.
       const free = recovery && !rotation;
       assert(free || cap === null || used < cap, 'renewal_limit', `This credential has been renewed ${used} times this month, the account's limit; the owner can raise it in the dashboard`, 429, { limit: cap });
-      const paid = free ? null : await charge(tx, { id: charge_id, kind: rotation ? 'rotate' : 'renew', amount: price, detail: { cid } }, now);
+      // A rotation moves a credential to a new key: announced like an issuance.
+      const subscribed = rotation && (await tx.get('push:subs'))?.length > 0;
+      rotated = rotation ? cred : null;
+      const paid = free ? null : await charge(tx, { id: charge_id, kind: rotation ? 'rotate' : 'renew', amount: price, detail: { cid }, annotate: subscribed ? state => { announce = nextNotice(state, now, hasDbaAction(cred.grants)); } : undefined }, now);
       if (rotation) await tx.put(`outbox:${cid}:${cred.status.idx}`, { shard: cred.status.shard, idx: cred.status.idx, at: now });
       const type = rotation ? 'rotated' : recovery ? 'recovered' : 'renewed';
       const next = { ...cred, ...update, renewed_at: now, renewals: { period: monthOf(now), count: used + (free ? 0 : 1) }, events: [...cred.events, { at: now, type, jti: update.jti }].slice(-EVENTS_KEPT) };
@@ -502,8 +538,69 @@ export class AccountDO {
       await this.audit(tx, now, `credential.${type}`, { cid, jti: update.jti });
       return { cid, jti: update.jti, charged: free ? 0 : price, ...(paid ? { balance_microdollars: paid.balance_microdollars } : {}) };
     });
+    if (announce) {
+      const more = announce > 1 ? ` (and ${announce - 1} more issuances since the last notice)` : '';
+      this.notify({ title: 'Credential moved to a new key', body: `${noticeText(rotated.device?.name) || 'A device'} rotated its credential for ${noticeText(rotated.aud.join(', '), 120)} to a new key${more}.`, path: `#credential/${encodeURIComponent(cid)}`, tag: hasDbaAction(rotated.grants) ? `cred-${cid}` : 'issued' }, now);
+    }
     if (rotation) await this.deliverOutbox(now);
     return result;
+  }
+
+  // ---- Security notices (Web Push, master plan §10) ------------------------------
+  // Up to MAX_SUBSCRIPTIONS browsers, kept in one row so issuance reads them with one get.
+
+  /** Send a notice to every subscribed browser after the response; drop browsers that left. */
+  notify({ title, body, path, tag }, now) {
+    this.background((async () => {
+      const subs = (await this.storage.get('push:subs')) || [];
+      if (!subs.length) return;
+      const results = await broadcast(this.env, subs, { title, body, url: `${this.env.APP_ORIGIN || ''}/app.html${path || ''}`, tag }, now);
+      await this.dropGone(results.filter(r => r.gone).map(r => r.id));
+    })());
+  }
+
+  async dropGone(ids) {
+    if (!ids.length) return;
+    await this.tx(async tx => {
+      const subs = (await tx.get('push:subs')) || [];
+      const left = subs.filter(s => !ids.includes(s.id));
+      if (left.length !== subs.length) await tx.put('push:subs', left);
+    });
+  }
+
+  async op_push_list() {
+    return { items: ((await this.storage.get('push:subs')) || []).map(visibleSubscription) };
+  }
+
+  /** Add (or refresh, for the same endpoint) a browser, then send it a first notice to prove it works. */
+  async op_push_subscribe({ id, subscription, name }, now) {
+    const item = await this.tx(async tx => {
+      const subs = (await tx.get('push:subs')) || [];
+      const same = subs.find(s => s.endpoint === subscription.endpoint);
+      const others = subs.filter(s => s !== same);
+      assert(others.length < MAX_SUBSCRIPTIONS, 'too_many_subscriptions', `At most ${MAX_SUBSCRIPTIONS} browsers get security notices; turn one off first`, 409);
+      const entry = { id: same?.id || id, name, ...subscription, created_at: same?.created_at || now };
+      await tx.put('push:subs', [...others, entry]);
+      if (!same) await this.audit(tx, now, 'push.subscribed', { subscription_id: entry.id, name });
+      return entry;
+    });
+    const [first] = await broadcast(this.env, [item], { title: 'Security notices are on', body: `This browser (“${noticeText(name)}”) will be told when credentials, API keys or enrollment tokens are issued on your devicebasedauth.org account.`, url: `${this.env.APP_ORIGIN || ''}/app.html#account`, tag: 'subscribed' }, now);
+    if (first.gone) await this.dropGone([item.id]);
+    return { ...visibleSubscription(item), delivered: first.ok, ...(first.ok ? {} : { delivery_status: first.status, delivery_error: first.error }) };
+  }
+
+  /** Turn notices off for one browser. Every browser, the removed one included, is told. */
+  async op_push_unsubscribe({ id }, now) {
+    const removed = await this.tx(async tx => {
+      const subs = (await tx.get('push:subs')) || [];
+      const entry = subs.find(s => s.id === id);
+      assert(entry, 'not_found', 'Subscription not found', 404);
+      await tx.put('push:subs', subs.filter(s => s !== entry));
+      await this.audit(tx, now, 'push.unsubscribed', { subscription_id: id, name: entry.name });
+      return { entry, all: subs };
+    });
+    this.background(broadcast(this.env, removed.all, { title: 'Security notices turned off', body: `Notices to “${noticeText(removed.entry.name)}” were turned off. If that was not you, sign in and check your account.`, url: `${this.env.APP_ORIGIN || ''}/app.html#account`, tag: 'unsubscribed' }, now));
+    return { ...visibleSubscription(removed.entry), removed: true };
   }
 
   // ---- Online authorization ---------------------------------------------------
@@ -741,4 +838,10 @@ export { money, ApiError };
  */
 export function sameStatusEntry(current, claimed) {
   return !!current && current.idx === claimed?.idx && current.uri === claimed?.uri;
+}
+
+/** A push subscription without its endpoint and keys (only the browser's push service host). */
+function visibleSubscription(s) {
+  let host = ''; try { host = new URL(s.endpoint).hostname; } catch { /* ignore */ }
+  return { id: s.id, name: s.name, push_service: host, created_at: s.created_at };
 }

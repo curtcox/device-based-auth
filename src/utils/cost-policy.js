@@ -27,7 +27,10 @@ export const OPERATIONS = Object.freeze({
   // After 13 months compaction deletes what it wrote (credential, device, ledger, receipt and the
   // issued and revoked audit rows: 6 rows), in an alarm wake-up that also rewrites its schedule
   // (1 DO request, 1 row, 1 ms); worst case, one credential falls due per compaction run.
-  issue: { workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 81, storageKBMonths: 6 * 13, r2ClassA: 1 },
+  // Security notices (master plan §10): one encrypted Web Push to each of up to 5 subscribed
+  // browsers (ECDH, HKDF, AES-GCM; the VAPID signature is reused for hours), ~2 ms each, sent by
+  // the account's DO after it answers; whether to send rides on the balance row (no extra write).
+  issue: { workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 },
   // Rate limit, credential status (auth), credential status (renew), funds check, renew; later
   // compaction deletes its ledger, receipt and audit rows.
   renew: { workerRequests: 1, doRequests: 5, rowWrites: 8, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 },

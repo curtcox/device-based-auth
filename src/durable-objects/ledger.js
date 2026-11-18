@@ -33,9 +33,10 @@ export async function readBalance(tx, now = Date.now()) {
  * (used for high-volume small charges: reads, decisions, tokens).
  * A non-aggregate charge with an id is made once: a second call returns the first receipt with
  * `duplicate: true` (and charges nothing), so callers must not do the paid-for work again.
+ * `annotate(state)` may add bookkeeping to the balance row before it is written (no extra write).
  * Returns { charged, balance_microdollars } or the prior receipt with duplicate: true.
  */
-export async function charge(tx, { id, kind, amount, aggregate = false, detail, receipt }, now = Date.now()) {
+export async function charge(tx, { id, kind, amount, aggregate = false, detail, receipt, annotate }, now = Date.now()) {
   money(amount);
   if (id && !aggregate) {
     const prior = await tx.get(`receipt:${id}`);
@@ -65,6 +66,7 @@ export async function charge(tx, { id, kind, amount, aggregate = false, detail, 
     // `receipt` adds what a retry needs to find what this charge paid for (no extra write).
     await tx.put(`receipt:${id}`, { id, charged: amount, created_at: now, ...receipt });
   }
+  annotate?.(state);
   await tx.put('balance', state);
   return { charged: amount, balance_microdollars: state.balance_microdollars };
 }

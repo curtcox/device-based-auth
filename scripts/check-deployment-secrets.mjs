@@ -7,6 +7,9 @@ try {
   if (!Array.isArray(keys) || !keys.some(k => !k.retired && !k.withdrawn && k.jwk?.crv === 'P-256' && k.jwk?.d)) problems.push('ISSUER_KEYS needs an active P-256 private JWK');
   if (keys.some(k => k.kid?.startsWith('local-'))) problems.push('ISSUER_KEYS contains the local development key');
 } catch { problems.push('ISSUER_KEYS is not JSON'); }
+if (process.env.PUSH_VAPID_KEY) {
+  try { const k = JSON.parse(process.env.PUSH_VAPID_KEY); if (k.crv !== 'P-256' || !k.d || !k.x || !k.y) problems.push('PUSH_VAPID_KEY must be a private P-256 JWK'); } catch { problems.push('PUSH_VAPID_KEY is not JSON'); }
+}
 if ((process.env.TOKEN_SIGNING_KEY || '').length < 32) problems.push('TOKEN_SIGNING_KEY must be at least 32 characters');
 if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
 console.log('deployment secrets present');

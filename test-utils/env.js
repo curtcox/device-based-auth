@@ -34,6 +34,15 @@ export async function runAlarms(env) {
   }
 }
 
+/** Wait for work Durable Objects run after responding (security notices). */
+export async function settle(env) {
+  for (let pending = true; pending;) {
+    const all = [...env.ACCOUNTS.objects.values()].flatMap(o => [...(o.inflight || [])]);
+    pending = all.length > 0;
+    await Promise.all(all);
+  }
+}
+
 /** Call the Worker like a client would. */
 export async function call(env, method, path, { auth, body, headers = {} } = {}) {
   const init = { method, headers: { ...headers } };
