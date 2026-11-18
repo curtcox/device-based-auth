@@ -2,16 +2,19 @@ import { assert, readJson } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { describeGrant } from '../../packages/verify/src/grants.js';
 import { issueCredential, renewCredential, exchangeToken } from '../services/credentials.js';
+import { canAccess, SESSION } from '../auth/scopes.js';
 
 /** Issue by API (fleets, CI, agents provisioned by a trusted device). */
 export async function createCredential(request, env, auth) {
   const body = await readJson(request, 65536);
-  const parent = auth.device?.payload;
+  // A device signed in to the dashboard (dba:session) acts as its owner; any other device
+  // delegates, so it can only issue grants narrower than its own and never past its own expiry.
+  const parent = auth.device && !canAccess({ ...auth, session: false }, SESSION) ? auth.device.payload : null;
   const issued = await issueCredential(env, auth.account, body, {
     source: parent ? 'delegation' : auth.key_id ? 'api' : 'dashboard',
     chargeId: request.headers.get('Idempotency-Key') ? `issue-${auth.account}-${request.headers.get('Idempotency-Key')}` : undefined,
     // A device may only delegate grants narrower than its own, and never past its own expiry.
-    parentGrants: parent?.grants, maxExp: parent?.exp
+    parentGrants: parent?.grants, maxExp: parent?.exp, parentCid: parent?.cid
   });
   return { credential: issued.credential, cid: issued.cid, device_id: issued.device_id, payload: issued.payload, cost_microdollars: issued.charged };
 }

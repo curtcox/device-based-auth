@@ -165,7 +165,7 @@ export class AccountDO {
   async op_credential_status({ cid }, now) {
     const cred = await this.storage.get(`cred:${cid}`);
     if (!cred) return { exists: false, revoked: true };
-    return { exists: true, revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, status: cred.status, device: cred.device };
+    return { exists: true, revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device };
   }
 
   async revokeOne(tx, cred, now, reason) {
@@ -197,6 +197,11 @@ export class AccountDO {
       }
       const done = [];
       for (const cred of targets) if (await this.revokeOne(tx, cred, now, reason)) done.push(cred.cid);
+      // Credentials a revoked device delegated are revoked with it (transitively).
+      const every = [...(await tx.list({ prefix: 'cred:' })).values()];
+      for (let i = 0; i < done.length; i++) {
+        for (const child of every) if (child.parent_cid === done[i] && await this.revokeOne(tx, child, now, `issuer ${done[i]} revoked`)) done.push(child.cid);
+      }
       return done;
     });
     await this.deliverOutbox(now);

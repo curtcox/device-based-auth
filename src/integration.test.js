@@ -91,7 +91,7 @@ describe('revocation', () => {
     expect(result.body.count).toBe(2);
     await enroll(env, 'alice', await newDevice());
     expect((await call(env, 'POST', '/api/v1/revoke-all', { auth: 'alice', body: {} })).status).toBe(400);
-    expect((await call(env, 'POST', '/api/v1/revoke-all', { auth: 'alice', body: { confirm: 'revoke-all' } })).body.count).toBe(1);
+    const all = await call(env, 'POST', '/api/v1/revoke-all', { auth: 'alice', body: { confirm: 'revoke-all' } }); expect(all.body.count, JSON.stringify(all.body)).toBe(1);
   });
 
   it('lets a device revoke itself', async () => {
@@ -233,6 +233,19 @@ describe('API keys, metered reads and delegation', () => {
     expect(ok.status).toBe(200);
     expect(ok.body.payload.exp).toBeLessThanOrEqual(inspectCredential(credential).payload.exp);
     expect((await issue([{ actions: ['hashbin:content:write'] }])).body.code).toBe('not_narrower');
+    // Revoking the delegating credential revokes what it issued.
+    const revoked = await call(env, 'DELETE', `/api/v1/credentials/${inspectCredential(credential).payload.cid}`, { auth: 'alice' });
+    expect(revoked.body.revoked).toEqual([inspectCredential(credential).payload.cid, ok.body.cid]);
+  });
+
+  it('lets a dashboard device (dba:session) issue like its owner', async () => {
+    await fund(env, 'alice');
+    const dashboard = await newDevice();
+    const credential = (await enroll(env, 'alice', dashboard, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:session'] }] })).approve.body.credential;
+    const child = await newDevice();
+    const issued = await call(env, 'POST', '/api/v1/credentials', { headers: await dashboard.headers('POST', '/api/v1/credentials', credential), body: { public_jwk: child.publicJwk, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], lifetime_seconds: 86400 * 90 } });
+    expect(issued.status).toBe(200);
+    expect(issued.body.payload.exp - issued.body.payload.iat).toBe(86400 * 90);
   });
 
   it('signs in to its own API with a DBA device credential holding dba:session', async () => {

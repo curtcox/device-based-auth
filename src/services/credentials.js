@@ -69,7 +69,7 @@ export async function requireFunds(env, account, amount) {
  * Issue a credential: validate, check funds, allocate a status index, sign, then charge and store
  * atomically in the account. Returns { credential, cid, payload, charged }.
  */
-export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, now = Date.now() }) {
+export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, parentCid, now = Date.now() }) {
   const jwk = cleanJwk(request.public_jwk);
   const device = cleanDevice(request.device);
   const { aud, grants, lifetime } = await validateIssue(env, request);
@@ -81,9 +81,10 @@ export async function issueCredential(env, account, request, { source, chargeId,
   const cid = randomId('crd'); const deviceId = await derivedId('dev', account, jkt);
   const iat = Math.floor(now / 1000);
   const exp = Math.min(iat + lifetime, maxExp ?? Infinity);
+  assert(exp > iat + 60, 'parent_expiring', 'The delegating credential expires too soon to issue from', 409);
   const payload = { iss: issuerName(env), sub: deviceId, acct: account, aud, cid, jti: `${cid}.1`, iat, nbf: iat, exp, cnf: { jkt }, device, grants, status: { status_list: { idx: status.idx, uri: status.uri } }, ver: 1 };
   const credential = await signCredential(payload, await activeSigner(env));
-  const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source };
+  const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}) };
   const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, source, now });
   return { credential, cid, device_id: deviceId, payload, charged: stored.charged };
 }
@@ -117,7 +118,10 @@ export async function renewCredential(env, device, body, now = Date.now()) {
   await requireFunds(env, account, amount);
   const iat = Math.floor(now / 1000);
   const version = Number(payload.jti.split('.').at(-1)) + 1;
-  const next = { ...payload, sub: deviceId, jti: `${payload.cid}.${version}`, iat, nbf: iat, exp: iat + record.lifetime, cnf: { jkt }, status: { status_list: { idx: status.idx, uri: status.uri } } };
+  // Delegated credentials never outlive the credential that issued them.
+  const exp = Math.min(iat + record.lifetime, record.max_exp ?? Infinity);
+  assert(exp > iat + 60, 'parent_expiring', 'This credential cannot be renewed past the expiry of the credential that delegated it', 409);
+  const next = { ...payload, sub: deviceId, jti: `${payload.cid}.${version}`, iat, nbf: iat, exp, cnf: { jkt }, status: { status_list: { idx: status.idx, uri: status.uri } } };
   const credential = await signCredential(next, await activeSigner(env));
   const update = { jti: next.jti, version, iat, exp: next.exp, jws: credential, ...(rotation ? { jkt, device_id: deviceId, status } : {}) };
   const result = await rpc(env.ACCOUNTS, account, 'renew', { cid: payload.cid, from_jti: payload.jti, update, price: amount, charge_id: `renew-${next.jti}`, rotation, now });
