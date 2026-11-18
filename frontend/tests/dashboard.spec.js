@@ -39,6 +39,19 @@ test('devices, API keys, audiences and the panic button', async ({ page, request
   await page.getByRole('link', { name: 'Devices', exact: true }).click();
   await expect(page.locator('#view table')).toContainText(first.device_id);
 
+  // Export: every credential, as CSV and as JSON, with names kept as data.
+  await page.getByRole('link', { name: 'Credentials', exact: true }).click();
+  const [csvDownload] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export CSV' }).click()]);
+  expect(csvDownload.suggestedFilename()).toMatch(/^credentials-\d{4}-\d{2}-\d{2}\.csv$/);
+  const csv = await new Response(await csvDownload.createReadStream()).text();
+  expect(csv.split('\r\n')).toHaveLength(4);
+  expect(csv).toContain(first.cid);
+  expect(csv).toContain('Laptop <b>bold</b>');
+  const [jsonDownload] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export JSON' }).click()]);
+  const exported = JSON.parse(await new Response(await jsonDownload.createReadStream()).text());
+  expect(exported).toMatchObject({ account: owner, count: 2 });
+  expect(exported.items.some(c => 'jws' in c)).toBe(false);
+
   await page.getByRole('link', { name: 'API keys', exact: true }).click();
   await page.getByLabel('Name', { exact: true }).fill('ci reader');
   await page.getByRole('button', { name: 'Create key' }).click();

@@ -50,7 +50,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | L1 | Credential and evaluation spec + conformance vectors | code | ✅ | [spec/](spec/): 46 evaluation and 15 signature vectors, run in CI |
 | L2 | Worker scaffold ported from cronly (route table, local mode, Clerk, Stripe µ$ ledger, API keys, CI) | code | ✅ | `src/`, `.github/workflows/` |
 | L3 | Issuer keys, JWKS, `@devicebasedauth/verify`, inspector + playground | code | ✅ | Plus grant builder and request signer |
-| L4 | Enrollment (browser SDK, CLI, API), credential registry, dashboard | code | ✅ | Browser enrollment tested end to end in Playwright |
+| L4 | Enrollment (browser SDK, CLI, API), credential registry, dashboard | code | ✅ | Browser enrollment tested end to end in Playwright; credential export as CSV (formula-safe) and JSON |
 | L5 | Revocation, status lists on R2, renewal, rotation, delegation limits | code | ✅ | Revoking a credential revokes what it delegated |
 | L6 | Online authorize, usage counters, step-up, audience registry | code | ✅ | Audience console shows online decisions, sign-ins and spend per month (`GET /api/v1/audiences/{name}/usage`) |
 | L7 | Docs with CI-executed samples, OpenAPI, CLI, llms.txt, MCP | code | ✅ | Docs code blocks marked data-sample are checked against the tested samples; `/llms-full.txt` generated from llms.txt, the route table, spec and pricing (drift-tested) |

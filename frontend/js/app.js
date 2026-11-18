@@ -7,6 +7,7 @@ import { api } from './api.js';
 import { initAuth, renderSignIn, signOut, authMode, signedInLabel, enrollDashboardDevice, preloadSdk, currentDevice } from './auth.js';
 import { h, $, replace, usd, money, num, date, relative, duration, pretty, jsonBlock, copyButton, badge, notice, table, dl, field, splitList } from './html.js';
 import { inspectCredential, validateGrants, evaluateGrants } from '/lib/verify/index.js';
+import { credentialsCsv, credentialsJson } from './export.js';
 
 /** Account API-key scopes (src/services/first-party.js DBA_SCOPES). */
 const SCOPES = {
@@ -142,6 +143,43 @@ function credentialRows(items) {
   ]);
 }
 
+/** Every credential matching the filter, page by page (up to 50 pages of 200). */
+async function allCredentials(query) {
+  const items = []; let cursor = null;
+  for (let page = 0; page < 50; page++) {
+    const params = new URLSearchParams({ ...Object.fromEntries(query), ...(cursor ? { cursor } : {}) });
+    const data = await api(`/api/v1/credentials${params.size ? `?${params}` : ''}`);
+    items.push(...data.items); cursor = data.next_cursor;
+    if (!cursor) break;
+  }
+  return items;
+}
+
+/** Save text as a file in the browser's downloads. */
+function download(name, type, text) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = h('a', { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportButtons(query) {
+  const stamp = () => new Date().toISOString().slice(0, 10);
+  const run = format => async event => {
+    const button = event.currentTarget; button.disabled = true;
+    try {
+      const items = await allCredentials(query);
+      if (format === 'csv') download(`credentials-${stamp()}.csv`, 'text/csv;charset=utf-8', credentialsCsv(items));
+      else download(`credentials-${stamp()}.json`, 'application/json', credentialsJson(items, { account: accountInfo?.account, filter: Object.fromEntries(query) }));
+    } catch (error) { flash('error', `Export failed: ${error.message}`); }
+    finally { button.disabled = false; }
+  };
+  return h('div', { class: 'actions' },
+    h('button', { type: 'button', class: 'secondary small', onclick: run('csv') }, 'Export CSV'),
+    h('button', { type: 'button', class: 'secondary small', onclick: run('json') }, 'Export JSON'),
+    h('span', { class: 'muted small' }, 'Exports every credential matching the filter (no private keys or signed credentials).'));
+}
+
 async function credentials() {
   const query = new URLSearchParams(Object.entries(credentialFilter).filter(([, v]) => v));
   const data = await api(`/api/v1/credentials${query.size ? `?${query}` : ''}`);
@@ -172,7 +210,7 @@ async function credentials() {
       body.append(more);
     }
   }
-  return [h('h1', {}, 'Credentials'), h('p', { class: 'muted' }, 'Every credential this account issued. Select one to read it, see its history, or revoke it.'), filter, body];
+  return [h('h1', {}, 'Credentials'), h('p', { class: 'muted' }, 'Every credential this account issued. Select one to read it, see its history, or revoke it.'), filter, data.items.length ? exportButtons(query) : null, body];
 }
 
 const EVENT_LABELS = { issued: 'Issued', renewed: 'Renewed', rotated: 'Rotated to a new key', revoked: 'Revoked' };
