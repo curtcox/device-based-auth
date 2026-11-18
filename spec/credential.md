@@ -145,7 +145,9 @@ and `pub_area` (the key's `TPMT_PUBLIC`) base64. The issuer follows the WebAuthn
 attestation format (§8.3) and accepts it only when:
 
 1. the chain has 1–5 certificates, each signed by the next and the last by the pinned Microsoft
-   TPM Root Certificate Authority 2014, none outside its validity period; Microsoft issues AIK
+   TPM Root Certificate Authority 2014, none outside its validity period, and the last not on the
+   root's CRL (signed by the root and current to within 7 days past its `nextUpdate`; if it
+   cannot be fetched, enrollment fails with `503 attestation_unavailable`); Microsoft issues AIK
    certificates only to TPMs whose endorsement certificate it has checked;
 2. the AIK certificate has extended key usage 2.23.133.8.3, is not a CA, and names the TPM
    manufacturer in its subject alternative name;
@@ -157,7 +159,7 @@ attestation format (§8.3) and accepts it only when:
 5. `pub_area` is an ECC NIST P-256 key equal to the enrolled key, with `fixedTPM`, `fixedParent`,
    `sensitiveDataOrigin` and `sign` set: generated in this TPM and unable to leave it.
 
-Revocation of Microsoft's AIK CAs is not checked. A TPM whose AIK has no certificate from
+AIK certificates themselves carry no revocation pointer. A TPM whose AIK has no certificate from
 Microsoft (most Linux machines) cannot attest yet: that needs endorsement-key credential
 activation against the manufacturers' roots.
 

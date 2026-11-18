@@ -2,7 +2,7 @@
 // with the TCG profile), under a test root, so enrollment can be tested without a TPM: an RSA AIK
 // "certifies" a P-256 key's TPMT_PUBLIC in a TPMS_ATTEST it signs with RS256.
 // Real Windows attestations are tested in src/tpm-attestation.test.js.
-import { seq, set, oid, utf8, bool, concat, tlv } from '../src/services/der.js';
+import { seq, set, oid, utf8, bool, concat, tlv, integer, time, bits } from '../src/services/der.js';
 import { certificate, ext, spkiOf } from './android-attestation.js';
 
 const rsaParams = { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash: 'SHA-256' };
@@ -20,7 +20,7 @@ export async function tpmAuthority() {
   const inter = await crypto.subtle.generateKey(rsaParams, true, ['sign', 'verify']);
   const rootSpki = await spkiOf(root.publicKey);
   const interCert = await certificate({ serial: Uint8Array.of(0x21), issuer: 'Test TPM Root', subject: 'Test AIK CA', spki: await spkiOf(inter.publicKey), signer: { kind: 'rsa', privateKey: root.privateKey }, notBefore: Date.UTC(2025, 0, 1), notAfter: Date.UTC(2045, 0, 1), extensions: [ext('2.5.29.19', seq(bool(true)), true)] });
-  return { rootSpki, rootSpkiB64u: b64u(rootSpki), interCert, interSigner: { kind: 'rsa', privateKey: inter.privateKey } };
+  return { rootSpki, rootSpkiB64u: b64u(rootSpki), rootKey: root.privateKey, interCert, interSerial: '21', interSigner: { kind: 'rsa', privateKey: inter.privateKey } };
 }
 
 /** TPMT_PUBLIC for a P-256 public key (raw x and y), with SHA-256 names. */
@@ -50,4 +50,14 @@ export async function tpmAttestation(authority, jwk, extraData, { attributes, cu
     extensions: [ext('2.5.29.19', seq(...(ca ? [bool(true)] : [])), true), ext('2.5.29.37', seq(oid(eku))), ...san] });
   const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', aik.privateKey, certInfo));
   return { alg: -257, x5c: [b64(aikCert), b64(authority.interCert)], sig: b64(sig), cert_info: b64(certInfo), pub_area: b64(pubArea) };
+}
+
+/** A CRL from the test root revoking `serials` (hex), as Microsoft publishes for its TPM root. */
+export async function tpmCrl(authority, serials = [], { thisUpdate = Date.UTC(2025, 0, 1), nextUpdate = Date.UTC(2045, 0, 1) } = {}) {
+  const algId = seq(oid('1.2.840.113549.1.1.11'), new Uint8Array([5, 0]));
+  const hexBytes = hex => Uint8Array.from(hex.match(/../g), h => parseInt(h, 16));
+  const entries = serials.map(serial => seq(integer(hexBytes(serial)), time(thisUpdate)));
+  const tbs = seq(integer(Uint8Array.of(1)), algId, seq(set(seq(oid('2.5.4.3'), utf8('Test TPM Root')))), time(thisUpdate), time(nextUpdate), ...(entries.length ? [seq(...entries)] : []));
+  const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', authority.rootKey, tbs));
+  return seq(tbs, algId, bits(sig));
 }

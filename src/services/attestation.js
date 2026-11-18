@@ -13,7 +13,7 @@ import { b64u, unb64u, jwkThumbprint } from '../../packages/verify/src/jose.js';
 import { assert, ApiError } from '../utils/errors.js';
 import { children, parseOne, expectTag, decodeOid, decodeSmallInt, integerHex, decodeTime, concat } from './der.js';
 import { verifyAppleAttestation, appleClientData, appleRootSpki } from './apple-attestation.js';
-import { verifyTpmAttestation, tpmQualifyingData, microsoftTpmRootSpki } from './tpm-attestation.js';
+import { verifyTpmAttestation, tpmQualifyingData, microsoftTpmRootSpki, tpmRevokedSerials } from './tpm-attestation.js';
 
 /**
  * SHA-256 of the SubjectPublicKeyInfo of each Google hardware attestation root, from
@@ -258,7 +258,10 @@ export async function verifyAttestation(attestation, jwk, env, { now = Date.now(
   if (attestation.format === 'tpm') {
     for (const member of ['sig', 'cert_info', 'pub_area']) assert(typeof attestation[member] === 'string', 'invalid_attestation', `attestation.${member} is required for tpm`);
     const roots = [microsoftTpmRootSpki(), ...(local && env.TPM_ATTESTATION_TEST_ROOT ? [unb64u(env.TPM_ATTESTATION_TEST_ROOT)] : [])];
-    return verifyTpmAttestation({ alg: attestation.alg, x5c: attestation.x5c, sig: attestation.sig, certInfo: attestation.cert_info, pubArea: attestation.pub_area, jwk, extraData: await tpmQualifyingData(attestation.challenge, await jwkThumbprint(jwk)), now, roots });
+    const revokedSerials = () => tpmRevokedSerials(roots, fetcher, now).catch(() => {
+      throw new ApiError(503, 'attestation_unavailable', 'Microsoft\'s TPM revocation list is unavailable; try again shortly');
+    });
+    return verifyTpmAttestation({ alg: attestation.alg, x5c: attestation.x5c, sig: attestation.sig, certInfo: attestation.cert_info, pubArea: attestation.pub_area, jwk, extraData: await tpmQualifyingData(attestation.challenge, await jwkThumbprint(jwk)), now, roots, revokedSerials });
   }
   if (attestation.format === 'apple-appattest') {
     for (const member of ['object', 'key_id', 'app_id']) assert(typeof attestation[member] === 'string', 'invalid_attestation', `attestation.${member} is required for apple-appattest`);

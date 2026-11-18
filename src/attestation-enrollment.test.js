@@ -6,20 +6,25 @@ import { attestationAuthority, attestationChain } from '../test-utils/android-at
 import { appleAuthority, appleAttestation } from '../test-utils/apple-attestation.js';
 import { resetRevocationCache, createChallenge, verifyAttestation } from './services/attestation.js';
 import { appleClientData } from './services/apple-attestation.js';
-import { tpmAuthority, tpmAttestation } from '../test-utils/tpm-attestation.js';
-import { tpmQualifyingData } from './services/tpm-attestation.js';
+import { tpmAuthority, tpmAttestation, tpmCrl } from '../test-utils/tpm-attestation.js';
+import { tpmQualifyingData, resetTpmCrlCache, MICROSOFT_TPM_CRL_URL } from './services/tpm-attestation.js';
 import { jwkThumbprint } from '../packages/verify/src/jose.js';
 
-let authority; let apple; let tpm; let env;
+let authority; let apple; let tpm; let env; let tpmCrlResponse;
 beforeAll(async () => { authority = await attestationAuthority(); apple = await appleAuthority(); tpm = await tpmAuthority(); });
 beforeEach(async () => {
   env = await testEnv({ ANDROID_ATTESTATION_TEST_ROOT: authority.rootPin, APPLE_ATTESTATION_TEST_ROOT: apple.rootSpkiB64u, TPM_ATTESTATION_TEST_ROOT: tpm.rootSpkiB64u });
   await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
-  resetRevocationCache();
-  // Google's revocation list, as the Worker would fetch it.
-  vi.stubGlobal('fetch', vi.fn(async url => String(url).startsWith('https://android.googleapis.com/attestation/status') ? Response.json({ entries: { dead: { status: 'REVOKED' } } }) : new Response('unexpected', { status: 500 })));
+  resetRevocationCache(); resetTpmCrlCache();
+  tpmCrlResponse = async () => new Response(await tpmCrl(tpm, ['7f']));
+  // Google's revocation list and the TPM root's CRL, as the Worker would fetch them.
+  vi.stubGlobal('fetch', vi.fn(async url => {
+    if (String(url).startsWith('https://android.googleapis.com/attestation/status')) return Response.json({ entries: { dead: { status: 'REVOKED' } } });
+    if (String(url) === MICROSOFT_TPM_CRL_URL) return tpmCrlResponse();
+    return new Response('unexpected', { status: 500 });
+  }));
 });
-afterEach(() => { vi.unstubAllGlobals(); resetRevocationCache(); });
+afterEach(() => { vi.unstubAllGlobals(); resetRevocationCache(); resetTpmCrlCache(); });
 
 const publicKeyOf = device => crypto.subtle.importKey('jwk', device.publicJwk, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']);
 
@@ -212,6 +217,19 @@ describe('attested enrollment (B5, TPM 2.0)', () => {
     const device = await newDevice();
     expect((await tpmStart(device, { bindTo: await newDevice() })).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('qualifying data does not match') });
     expect((await tpmStart(device, { overrides: { attributes: 0x00040070 } })).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('fixedTPM') });
+  });
+
+  it('checks the root\'s CRL, and fails closed when it cannot', async () => {
+    tpmCrlResponse = async () => new Response(await tpmCrl(tpm, [tpm.interSerial]));
+    expect((await tpmStart(await newDevice())).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('revoked by Microsoft') });
+    resetTpmCrlCache();
+    tpmCrlResponse = async () => new Response('down', { status: 503 });
+    const down = await tpmStart(await newDevice());
+    expect(down.status).toBe(503);
+    expect(down.body.code).toBe('attestation_unavailable');
+    resetTpmCrlCache();
+    tpmCrlResponse = async () => new Response(await tpmCrl(tpm, [], { thisUpdate: Date.UTC(2024, 0, 1), nextUpdate: Date.UTC(2024, 3, 1) }));
+    expect((await tpmStart(await newDevice())).status).toBe(503);
   });
 
   it('trusts the test root only on a local server', async () => {

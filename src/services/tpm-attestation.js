@@ -11,9 +11,10 @@
 // qualifyingData in place of WebAuthn's: the AIK chain to the pinned root, the AIK certificate's
 // TPM profile (EKU 2.23.133.8.3, not a CA, TPM manufacturer in the SAN), the signature over
 // certInfo, certInfo naming exactly the key in pubArea, and pubArea being the enrolled key with
-// fixedTPM, fixedParent, sensitiveDataOrigin and sign set.
+// fixedTPM, fixedParent, sensitiveDataOrigin and sign set. The CA that issued the AIK certificate
+// must not be on the root's CRL.
 import { ApiError } from '../utils/errors.js';
-import { children, parseOne, expectTag, decodeOid, concat } from './der.js';
+import { children, parseOne, expectTag, decodeOid, concat, integerHex, decodeTime } from './der.js';
 import { unb64u } from '../../packages/verify/src/jose.js';
 import { parseCertificate, signedBy } from './attestation.js';
 
@@ -25,6 +26,10 @@ import { parseCertificate, signedBy } from './attestation.js';
 export const MICROSOFT_TPM_ROOT = 'MIIF9TCCA92gAwIBAgIQXbYwTgy/J79JuMhpUB5dyzANBgkqhkiG9w0BAQsFADCBjDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjE2MDQGA1UEAxMtTWljcm9zb2Z0IFRQTSBSb290IENlcnRpZmljYXRlIEF1dGhvcml0eSAyMDE0MB4XDTE0MTIxMDIxMzExOVoXDTM5MTIxMDIxMzkyOFowgYwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xNjA0BgNVBAMTLU1pY3Jvc29mdCBUUE0gUm9vdCBDZXJ0aWZpY2F0ZSBBdXRob3JpdHkgMjAxNDCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAJ+n+bnKt/JHIRC/oI/xgkgsYdPzP0gpvduDA2GbRtth+L4WUyoZKGBw7uz5bjjP8Aql4YExyjR3EZQ4LqnZChMpoCofbeDR4MjCE1TGwWghGpS0mM3GtWD9XiME4rE2K0VW3pdN0CLzkYbvZbs2wQTFfE62yNQiDjyHFWAZ4BQH4eWa8wrDMUxIAneUCpU6zCwM+l6Qh4ohX063BHzXlTSTc1fDsiPaKuMMjWjK9vp5UHFPa+dMAWr6OljQZPFIg3aZ4cUfzS9y+n77Hs1NXPBn6E4Db679z4DThIXyoKeZTv1aaWOWl/exsDLGt2mTMTyykVV8uD1eRjYriFpmoRDwJKAEMOfaURarzp7hka9TOElGyD2gOV4Fscr2MxAYCywLmOLzA4VDSYLuKAhPSp7yawET30AvY1HRfMwBxetSqWP2+yZRNYJlHpor5QTuRDgzR+Zej+aWx6rWNYx43kLthozeVJ3QCsD5iEI/OZlmWn5WYf7O8LB/1A7scrYv44FD8ck3Z+hxXpkklAsjJMsHZa9mBqh+VR1AicX4uZG8m16x65ZU2uUpBa3rn8CTNmw17ZHOiuSWJtS9+PrZVA8ljgf4QgA1g6NPOEiLG2fn8Gm+r5Ak+9tqv72KDd2FPBJ7Xx4stYj/WjNPtEUhW4rcLK3ktLfcy6ea7Rocw5y5AgMBAAGjUTBPMAsGA1UdDwQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBR6jArOL0hiF+KU0a5VwVLscXSkVjAQBgkrBgEEAYI3FQEEAwIBADANBgkqhkiG9w0BAQsFAAOCAgEAW4ioo1+J9VWC0UntSBXcXRm1ePTVamtsxVy/GpP4EmJd3Ub53JzNBfYdgfUL51CppS3ZY6BoagB+DqoA2GbSL+7sFGHBl5ka6FNelrwsH6VVw4xV/8klIjmqOyfatPYsz0sUdZev+reeiGpKVoXrK6BDnUU27/mgPtem5YKWvHB/soofUrLKzZV3WfGdx9zBr8V0xW6vO3CKaqkqU9y6EsQw34n7eJCbEVVQ8VdFd9iV1pmXwaBAfBwkviPTKEP9Cm+zbFIOLr3V3CL9hJj+gkTUuXWlJJ6wVXEG5i4rIbLAV59UrW4LonP+seqvWMJYUFxu/niF0R3fSGM+NU11DtBVkhRZt1u0kFhZqjDz1dWyfT/N7Hke3WsDqUFsBi+8SEw90rWx2aUkLvKo83oU4Mx4na+2I3l9F2a2VNGk4K7l3a00g51miPiq0Da0jqw30PaLluTMTGY5+RnZVh50JD6nk+Ea3wRkU8aiYFnpIxfKBZ72whmYYa/egj9IKeqpR0vuLebbU0fJBf880K1jWD3Z5SFyJXo057Mv0OPw5mttytE585ZIy5JsaRXlsOoWGRXE3kUT/MKR1UoAgR54c8Bsh+9Dq2wqIK9mRn15zvBDeyHG6+czurLopziOUeWokxZN1syrEdKlhFoPYavm6t+PzIcpdxZwHA+V3jLJPfI=';
 /** SHA-256 of that root's SubjectPublicKeyInfo, checked by a test against the certificate. */
 export const MICROSOFT_TPM_ROOT_SPKI_SHA256 = 'Xq36AYeiTtt0e5hSP4nPktM+6yDsgbnQox4XC3PC27I=';
+/** The root's CRL (the CRL distribution point of every AIK CA it issues; ~10 KB, quarterly). */
+export const MICROSOFT_TPM_CRL_URL = 'http://www.microsoft.com/pkiops/crl/Microsoft%20TPM%20Root%20Certificate%20Authority%202014.crl';
+// A CRL past its nextUpdate is still used for this long, since Microsoft publishes late at times.
+const CRL_GRACE_MS = 7 * 86400_000;
 
 const AIK_EKU = '2.23.133.8.3';
 const TPM_MANUFACTURER = '2.23.133.2.1';
@@ -136,10 +141,11 @@ function checkAikCertificate(aik) {
  * options: { alg: COSE algorithm of the AIK signature (-257 RS256 or -65535 RS1); x5c: base64
  * certificates, AIK first, root left out; sig, certInfo, pubArea: base64; jwk: the enrolled P-256
  * key; extraData: the qualifyingData the device passed to TPM2_Certify; now (ms); roots:
- * SubjectPublicKeyInfo DERs of trusted roots }.
+ * SubjectPublicKeyInfo DERs of trusted roots; revokedSerials: async () => Set of the serials the
+ * root's CRL lists, called only once the chain checks out }.
  * Returns the `device.attestation` claim, or throws invalid_attestation.
  */
-export async function verifyTpmAttestation({ alg, x5c, sig, certInfo, pubArea, jwk, extraData, now = Date.now(), roots = [microsoftTpmRootSpki()] }) {
+export async function verifyTpmAttestation({ alg, x5c, sig, certInfo, pubArea, jwk, extraData, now = Date.now(), roots = [microsoftTpmRootSpki()], revokedSerials = async () => new Set() }) {
   const hash = SIGNATURE_ALGS[String(alg)];
   if (!hash) throw invalid('alg must be -257 (RS256) or -65535 (RS1)');
   if (!Array.isArray(x5c) || x5c.length < 1 || x5c.length > MAX_CHAIN || x5c.some(c => typeof c !== 'string' || c.length > MAX_PART_BYTES * 2)) throw invalid(`x5c must list 1–${MAX_CHAIN} base64 certificates, attestation key first`);
@@ -163,6 +169,9 @@ export async function verifyTpmAttestation({ alg, x5c, sig, certInfo, pubArea, j
   for (const [i, cert] of certs.entries()) {
     if (cert.notBefore > now + SKEW_MS || cert.notAfter < now - SKEW_MS) throw invalid(`certificate ${i} is outside its validity period`);
   }
+  // The root's CRL covers what the root signed: the last certificate. (AIK certificates themselves
+  // carry no revocation pointer.)
+  if ((await revokedSerials()).has(certs.at(-1).serial)) throw invalid('the attestation key\'s CA is revoked by Microsoft');
   let manufacturer;
   try { manufacturer = checkAikCertificate(certs[0]); } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -196,6 +205,46 @@ export async function verifyTpmAttestation({ alg, x5c, sig, certInfo, pubArea, j
   }
   return { format: 'tpm', security_level: 'tpm', tpm_manufacturer: manufacturer };
 }
+
+/**
+ * Parse a DER CertificateList and check it was signed by one of `roots` and is current. Returns
+ * the revoked serials (lowercase hex, as parseCertificate reports them).
+ */
+export async function parseTpmCrl(der, roots, now = Date.now()) {
+  const [tbs, sigAlg, sigValue] = children(expectTag(parseOne(der), 16, 'CertificateList'));
+  const fields = children(expectTag(tbs, 16, 'TBSCertList'));
+  let i = fields[0].tag === 2 ? 1 : 0; // version
+  i += 2; // signature algorithm, issuer
+  i++; // thisUpdate
+  const nextUpdate = fields[i] && (fields[i].tag === 0x17 || fields[i].tag === 0x18) ? decodeTime(fields[i++]) : null;
+  const serials = new Set();
+  if (fields[i] && fields[i].cls === 0 && fields[i].tag === 16) {
+    for (const entry of children(fields[i])) serials.add(integerHex(children(entry)[0]));
+  }
+  const bitsValue = expectTag(sigValue, 3, 'BIT STRING').content;
+  const crl = { tbs: tbs.raw, signatureAlgorithm: decodeOid(children(sigAlg)[0]), signature: bitsValue.subarray(1) };
+  let signed = false;
+  for (const root of roots) signed = signed || await signedBy(crl, root).catch(() => false);
+  if (!signed) throw new Error('CRL is not signed by a trusted root');
+  if (nextUpdate === null || nextUpdate + CRL_GRACE_MS < now) throw new Error('CRL is out of date');
+  return serials;
+}
+
+let crlCache = null;
+
+/**
+ * Serials of AIK CAs Microsoft's TPM root has revoked. Cached per isolate for an hour and at the
+ * edge; failures are thrown, so enrollment fails closed (as for Google's list).
+ */
+export async function tpmRevokedSerials(roots, fetcher = fetch, now = Date.now()) {
+  if (crlCache && crlCache.until > now) return crlCache.serials;
+  const response = await fetcher(MICROSOFT_TPM_CRL_URL, { cf: { cacheTtl: 3600, cacheEverything: true } });
+  if (!response.ok) throw new Error(`TPM root CRL: HTTP ${response.status}`);
+  const serials = await parseTpmCrl(new Uint8Array(await response.arrayBuffer()), roots, now);
+  crlCache = { serials, until: now + 3600_000 };
+  return serials;
+}
+export function resetTpmCrlCache() { crlCache = null; }
 
 /** The qualifying data a device passes to TPM2_Certify when enrolling the key with this thumbprint. */
 export const tpmQualifyingData = async (challenge, jkt) => digest('SHA-256', new TextEncoder().encode(`${challenge}.${jkt}`));

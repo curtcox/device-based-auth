@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { verifyTpmAttestation, microsoftTpmRootSpki, MICROSOFT_TPM_ROOT_SPKI_SHA256, parsePubArea } from './services/tpm-attestation.js';
-import { tpmAuthority, tpmAttestation } from '../test-utils/tpm-attestation.js';
+import { verifyTpmAttestation, microsoftTpmRootSpki, MICROSOFT_TPM_ROOT_SPKI_SHA256, parsePubArea, parseTpmCrl } from './services/tpm-attestation.js';
+import { parseCertificate } from './services/attestation.js';
+import { tpmAuthority, tpmAttestation, tpmCrl } from '../test-utils/tpm-attestation.js';
 import { b64u } from '../packages/verify/src/jose.js';
 
 const fixtures = JSON.parse(readFileSync(new URL('./services/testdata/tpm-windows-hello.json', import.meta.url)));
@@ -90,5 +91,42 @@ describe('TPM attestation, synthetic chains', () => {
 
   it('refuses a chain that does not reach the trusted root', async () => {
     expect(await code(verify({}, { roots: [microsoftTpmRootSpki()] }))).toContain('Microsoft TPM Root');
+  });
+});
+
+describe('Microsoft TPM root CRL', () => {
+  const crl = new Uint8Array(readFileSync(new URL('./services/testdata/microsoft-tpm-root-2026-11.crl', import.meta.url)));
+  const CRL_TIME = Date.UTC(2026, 10, 18); // published 2026-11-09, next update 2027-02-08
+
+  it('reads the real CRL, signed by the pinned root', async () => {
+    const serials = await parseTpmCrl(crl, [microsoftTpmRootSpki()], CRL_TIME);
+    expect(serials.size).toBe(178);
+    expect(serials.has('330000015e34399d0c39e51d2900000000015e')).toBe(true);
+    // The AIK CA of the recorded Windows attestation is not revoked.
+    const aikCa = parseCertificate(fromBase64(fixtures.ecc.x5c[1]));
+    expect(serials.has(aikCa.serial)).toBe(false);
+  });
+
+  it('refuses a CRL from another root or a stale one', async () => {
+    await expect(parseTpmCrl(crl, [(await tpmAuthority()).rootSpki], CRL_TIME)).rejects.toThrow(/not signed by a trusted root/);
+    await expect(parseTpmCrl(crl, [microsoftTpmRootSpki()], Date.UTC(2027, 1, 20))).rejects.toThrow(/out of date/);
+    const tampered = crl.slice(); tampered[300] ^= 1;
+    await expect(parseTpmCrl(tampered, [microsoftTpmRootSpki()], CRL_TIME)).rejects.toThrow();
+  });
+
+  it('refuses an attestation whose AIK CA the root revoked, after the chain checks out', async () => {
+    const f = fixtures.ecc;
+    const aikCa = parseCertificate(fromBase64(f.x5c[1]));
+    const result = await code(verifyTpmAttestation({ ...fixtureInput(f), jwk: jwkOf(f.pub_area), revokedSerials: async () => new Set([aikCa.serial]) }));
+    expect(result).toContain('revoked by Microsoft');
+    let asked = false;
+    await code(verifyTpmAttestation({ ...fixtureInput(f), jwk: jwkOf(f.pub_area), roots: [(await tpmAuthority()).rootSpki], revokedSerials: async () => { asked = true; return new Set(); } }));
+    expect(asked).toBe(false);
+  });
+
+  it('reads test CRLs with and without entries', async () => {
+    const authority = await tpmAuthority();
+    expect([...await parseTpmCrl(await tpmCrl(authority, ['21', '0a0b']), [authority.rootSpki])]).toEqual(['21', 'a0b']);
+    expect((await parseTpmCrl(await tpmCrl(authority), [authority.rootSpki])).size).toBe(0);
   });
 });
