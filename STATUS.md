@@ -8,6 +8,9 @@ with it, this file wins and the other document is stale.
 - **Overall:** Service, verify library, browser SDK, CLI, samples and OIDC provider implemented and
   tested locally (`npm test`, `npm run test:samples`, `npm run test:e2e`). Prices implemented at the
   proposed values pending D6. Open decisions D2, D6–D8 are implemented with the recommended defaults.
+  Backlog B1–B4 (revocation webhooks, enrollment tokens, X.509 client certificates, shared replay
+  cache) are done; the issue price now sits 1 µ$ above its floor (74 µ$), so anything more it must
+  prepay needs a price change (D6).
   Design in [`todo/master_plan.md`](todo/master_plan.md); prices in [`docs/business/pricing.md`](docs/business/pricing.md).
 
 ---
