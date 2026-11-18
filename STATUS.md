@@ -7,9 +7,10 @@ with it, this file wins and the other document is stale.
 - **Production:** not deployed (owner steps in [docs/ops/deployment.md](docs/ops/deployment.md)).
 - **Overall:** Service, verify library, browser SDK, CLI, samples and OIDC provider implemented and
   tested locally (`npm test`, `npm run test:samples`, `npm run test:e2e`). Prices implemented at the
-  proposed values pending D6. Open decisions D2, D6–D8 are implemented with the recommended defaults.
+  proposed values pending D6. Open decisions D2, D6–D8 are implemented with the recommended defaults; D9 (security email) blocks the rest of S8.
   Backlog B1–B4 (revocation webhooks, enrollment tokens, X.509 client certificates, shared replay
-  cache) are done; the issue price now sits 1 µ$ above its floor (74 µ$), so anything more it must
+  cache) are done, B5 Android key attestation is done pending a real-phone check, and S4 has an
+  Android sample; the issue price now sits 1 µ$ above its floor (74 µ$), so anything more it must
   prepay needs a price change (D6).
   Design in [`todo/master_plan.md`](todo/master_plan.md); prices in [`docs/business/pricing.md`](docs/business/pricing.md).
 
@@ -45,6 +46,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | D6 | Prices (issue/rotate 75 µ$, renew 25, online decision 10, metered read 5, token 5, OIDC login 10, audience 100; $5 minimum deposit) | owner | ❓ Implemented pending approval. | Accept; decision and login are at their floors. Recalibrate from measured costs (S3). [pricing.md](docs/business/pricing.md). |
 | D7 | Site sign-in: DBA as a custom OIDC provider inside each site's Clerk app first (Stage A), then device-bound sessions (Stage B)? Separate Clerk application for DBA? | owner/ops | ❓ | Yes to both; confirm the Clerk plan allows custom OIDC providers. §9.2. |
 | D8 | Operating entity and dormant accounts: same LLC/Cloudflare account as hashbin and cronly; close zero-balance accounts with no live credentials after 12 months idle? | legal | ❓ | Same entity (as cronly D1); shared operator profile; yes to dormant-account closure after notice. §8.3, §10. |
+| D9 | Security email on issuance (S8, master plan §10): which provider, and who pays? A transactional email costs about 100 µ$ (Amazon SES) to 1,500 µ$ (Postmark), more than the whole 75 µ$ issue price, so "an email per issuance" breaks the price-floor rule | owner | ❓ | Email only for account-takeover-sensitive events (`dba:*` credentials, API keys, enrollment tokens, raised limits; all already behind recent sign-in), plus at most one hourly digest of other issuances per account, charged as a separate `notice` price (~250 µ$ with SES) when sent. Pick a provider; then the code is a sender + an AccountDO outbox alarm over the existing audit trail |
 
 ## Launch blockers
 
@@ -76,7 +78,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | S5 | Python and Go verifier packages | code | ✅ | `packages/verify-python` (104 tests) and `packages/verify-go` (stdlib only; vectors, JS cross-check, race-clean) pass every vector, in CI. Publishing to PyPI / tagging the Go module is an owner step. Fixed in all three from the ports' findings: malformed DPoP keys are invalid_proof (was 500), malformed status lists status_unavailable, non-string window times invalid_grant. Status-list `idx` is bounded to 0…2³¹−1 (credentials outside it are `invalid_claims`; bits computed without 32-bit wrap; two signature vectors) |
 | S7 | CLI auto-renewal at 2/3 of lifetime (the SDK has it) | code | ✅ | `headers`, `sign`, `curl`, `token`, `status --online` renew first when due (lock against parallel runs; warn and continue on failure); `dba renew --if-due` for cron; `--no-renew` / `DBA_AUTO_RENEW=0` |
 | S6 | Issuer signing keys in an external KMS/HSM | ops | ⬜ | |
-| S8 | Recent re-authentication (Clerk reverification or passkey) before approving `dba:*` grants or raising limits; email on every issuance (master plan §10) | code/ops | 🚧 | Re-authentication done: creating API keys, approving/issuing `dba:*` credentials or enrollment tokens, and raising budget limits need a Clerk sign-in within 10 minutes (`fva` claim; 403 `reverification_required` with Clerk's hint; the dashboard offers "Sign in again"); dashboard devices are refused, API keys pass. Live check after L9 in docs/ops/deployment.md §3. Email on every issuance still needs an email provider (owner) |
+| S8 | Recent re-authentication (Clerk reverification or passkey) before approving `dba:*` grants or raising limits; email on every issuance (master plan §10) | code/ops | 🚧 | Re-authentication done: creating API keys, approving/issuing `dba:*` credentials or enrollment tokens, and raising budget limits need a Clerk sign-in within 10 minutes (`fva` claim; 403 `reverification_required` with Clerk's hint; the dashboard offers "Sign in again"); dashboard devices are refused, API keys pass. Live check after L9 in docs/ops/deployment.md §3. Email on every issuance waits on D9 (provider and pricing) |
 
 ## Backlog
 
