@@ -4,6 +4,8 @@
   "description": "dba: enroll devices, inspect, revoke and use devicebasedauth.org credentials from the command line",
   "type": "module",
   "bin": { "dba": "dba.js" },
+  "files": ["dba.js", "lib.js"],
+  "engines": { "node": ">=22" },
   "dependencies": { "@devicebasedauth/verify": "0.1.0" },
   "license": "MIT"
 }

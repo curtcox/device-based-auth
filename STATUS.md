@@ -53,14 +53,14 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | L4 | Enrollment (browser SDK, CLI, API), credential registry, dashboard | code | ✅ | Browser enrollment tested end to end in Playwright |
 | L5 | Revocation, status lists on R2, renewal, rotation, delegation limits | code | ✅ | Revoking a credential revokes what it delegated |
 | L6 | Online authorize, usage counters, step-up, audience registry | code | ✅ | |
-| L7 | Docs with CI-executed samples, OpenAPI, CLI, llms.txt, MCP | code | ✅ | Docs code blocks marked data-sample are checked against the tested samples |
+| L7 | Docs with CI-executed samples, OpenAPI, CLI, llms.txt, MCP | code | ✅ | Docs code blocks marked data-sample are checked against the tested samples; `/llms-full.txt` generated from llms.txt, the route table, spec and pricing (drift-tested) |
 | L8 | OIDC provider; DBA dashboard signs in with DBA credentials | code | ✅ | Consent page and "use this browser as a device" tested in Playwright |
 | L9 | Cloudflare zone, R2 bucket + `status.` custom domain, Clerk app, Stripe products, secrets, `DBA_DEPLOY_ENABLED` | ops | ⬜ | [docs/ops/deployment.md](docs/ops/deployment.md) |
 | L10 | Cost-safety brake and monitoring | code/ops | 🟨 | Code ✅; needs analytics token and DO namespace ids (L9) |
 | L11 | Terms, Privacy, acceptable use (no covert tracking) | legal | 🟨 | DRAFT pages with entity/address/jurisdiction placeholders; owner and legal review needed (shared operator profile, cronly D7) |
 | L12 | Security review of issuance, revocation and verification | code/owner | 🟨 | Self-review done (delegation fixes in 8c68a50); independent review still needed |
 | L13 | Website: dashboard, approval and consent pages, developer tools, pricing, docs; Playwright tests | code | ✅ | 20 Playwright tests in CI; light/dark; 390 px phone width checked |
-| L14 | Publish `@devicebasedauth/verify` (and the CLI) to npm | ops | ⬜ | CLI must import `@devicebasedauth/verify` instead of a relative path before publishing |
+| L14 | Publish `@devicebasedauth/verify` (and the CLI) to npm | ops | ⬜ | Code ready: the CLI imports `@devicebasedauth/verify` by name and packs only `dba.js` and `lib.js`. Owner: `npm publish -w packages/verify` then `-w packages/cli` |
 
 ## Soon after launch
 
@@ -71,7 +71,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | S3 | Recalibrate prices from a month of measured costs | owner | ⬜ | |
 | S4 | Mobile sample apps (iOS Secure Enclave, Android Keystore) | code | ⬜ | |
 | S5 | Python and Go verifier packages | code | ⬜ | Python and Go samples exist in docs/samples |
-| S7 | CLI auto-renewal at 2/3 of lifetime (the SDK has it) | code | ⬜ | |
+| S7 | CLI auto-renewal at 2/3 of lifetime (the SDK has it) | code | ✅ | `headers`, `sign`, `curl`, `token`, `status --online` renew first when due (lock against parallel runs; warn and continue on failure); `dba renew --if-due` for cron; `--no-renew` / `DBA_AUTO_RENEW=0` |
 | S6 | Issuer signing keys in an external KMS/HSM | ops | ⬜ | |
 
 ## Backlog

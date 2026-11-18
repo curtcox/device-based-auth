@@ -3,9 +3,9 @@
  * the API client and the text it prints. dba.js adds only files, stdin/stdout and processes, so
  * everything here can be tested in-process against the Worker.
  */
-import { signJws, generateKeyPair, exportPublicJwk, importJwk, publicJwk, jwkThumbprint } from '../verify/src/jose.js';
-import { createProof, inspectCredential } from '../verify/src/credential.js';
-import { describeGrant, validateGrants } from '../verify/src/grants.js';
+import {
+  signJws, generateKeyPair, exportPublicJwk, importJwk, publicJwk, jwkThumbprint, createProof, inspectCredential, describeGrant, validateGrants
+} from '@devicebasedauth/verify';
 
 export const DEFAULT_ORIGIN = 'https://devicebasedauth.org';
 export const ENROLL_TYP = 'dba-enroll+jwt';
@@ -55,7 +55,7 @@ export function parseArgs(argv, { values = [], booleans = [], repeatable = [] } 
 }
 
 /**
- * Split the global options (--profile, --origin, --help) that come before the command from the
+ * Split the global options (--profile, --origin, --no-renew, --help) that come before the command from the
  * command and its arguments. `dba curl` passes everything after the command straight to curl,
  * so global options for it must come first; other commands also accept them later.
  */
@@ -64,6 +64,7 @@ export function splitCommand(argv) {
   for (; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') { globals.help = true; continue; }
+    if (arg === '--no-renew') { globals['no-renew'] = true; continue; }
     const match = arg.match(/^--(profile|origin)(?:=(.*))?$/);
     if (!match) break;
     if (match[2] !== undefined) globals[match[1]] = match[2];
@@ -294,4 +295,36 @@ export function describeCredential(payload, now = Math.floor(Date.now() / 1000))
 /** True once two thirds of the lifetime has passed: the point the plan says devices renew. */
 export function shouldRenew(payload, now = Math.floor(Date.now() / 1000)) {
   return Number.isSafeInteger(payload.iat) && Number.isSafeInteger(payload.exp) && now >= payload.iat + ((payload.exp - payload.iat) * 2) / 3;
+}
+
+/**
+ * Whether commands that present the credential renew it first when it is due. On by default (the
+ * browser SDK does the same); `--no-renew` or DBA_AUTO_RENEW=0 turns it off, for example on a
+ * machine whose account owner wants every renewal (25 µ$) to be deliberate.
+ */
+export function autoRenewEnabled({ flag, env = {} } = {}) {
+  if (flag) return false;
+  return !['0', 'false', 'no', 'off'].includes(String(env.DBA_AUTO_RENEW ?? '').trim().toLowerCase());
+}
+
+/**
+ * Renew the device's credential if two thirds of its lifetime have passed and it has not expired.
+ * Returns { renewed: false, reason } or { renewed: true, result } after `save(result)` stored the
+ * new credential. A failure never stops the caller from using the still-valid credential: it comes
+ * back as { renewed: false, reason: 'failed', error } for the caller to warn about. `superseded`
+ * means another process renewed first; the caller should re-read its credential file.
+ */
+export async function renewIfDue({ client, device, save, now = Math.floor(Date.now() / 1000) }) {
+  const { payload } = inspectCredential(device.credential);
+  if (!Number.isSafeInteger(payload.exp) || payload.exp <= now) return { renewed: false, reason: 'expired' };
+  if (!shouldRenew(payload, now)) return { renewed: false, reason: 'not_due' };
+  let result;
+  try {
+    result = await client.request('POST', `/api/v1/credentials/${encodeURIComponent(payload.cid)}/renew`, { device, body: {} });
+  } catch (error) {
+    if (error.code === 'superseded') return { renewed: false, reason: 'superseded' };
+    return { renewed: false, reason: 'failed', error };
+  }
+  await save(result);
+  return { renewed: true, result };
 }

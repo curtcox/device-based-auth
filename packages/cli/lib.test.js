@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN
+  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue
 } from './lib.js';
 import { verifyJws, verifyProof, inspectCredential, jwkThumbprint, sha256b64u } from '../verify/src/index.js';
 import { testEnv, call, worker, ORIGIN } from '../../test-utils/env.js';
@@ -230,5 +230,52 @@ describe('the client against the Worker', () => {
   it('reports unreachable servers as network errors', async () => {
     const offline = createClient({ origin: ORIGIN, fetch: async () => { throw new TypeError('fetch failed', { cause: new Error('ECONNREFUSED') }); } });
     await expect(offline.request('GET', '/health')).rejects.toMatchObject({ code: 'network_error', message: `Could not reach ${ORIGIN}: ECONNREFUSED` });
+  });
+});
+
+describe('automatic renewal', () => {
+  it('is on unless --no-renew or DBA_AUTO_RENEW turns it off', () => {
+    expect(autoRenewEnabled()).toBe(true);
+    expect(autoRenewEnabled({ env: { DBA_AUTO_RENEW: '1' } })).toBe(true);
+    expect(autoRenewEnabled({ flag: true })).toBe(false);
+    for (const value of ['0', 'false', 'OFF', ' no ']) expect(autoRenewEnabled({ env: { DBA_AUTO_RENEW: value } })).toBe(false);
+    expect(splitCommand(['--no-renew', 'token', '--aud', 'x'])).toEqual({ globals: { 'no-renew': true }, command: 'token', rest: ['--aud', 'x'] });
+  });
+
+  let env; let client;
+  beforeEach(async () => {
+    env = await testEnv();
+    client = createClient({ origin: ORIGIN, fetch: (url, init) => worker.fetch(new Request(url, init), env) });
+  });
+
+  async function enrolledDevice() {
+    await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
+    const key = await newDeviceKey();
+    const request = await signEnrollmentRequest(key, enrollmentPayload({ aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], name: 'Renewing', lifetime: 3000 }));
+    const start = await client.request('POST', '/api/v1/enrollments', { body: { request } });
+    await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: start.request } });
+    return { key, credential: (await pollEnrollment(client, start, { sleep: async () => {} })).credential };
+  }
+
+  it('renews only once two thirds of the lifetime has passed, and saves the new version', async () => {
+    const device = await enrolledDevice();
+    const { iat, exp, cid } = inspectCredential(device.credential).payload;
+    const saved = [];
+    const save = async result => { saved.push(result.credential); };
+    expect(await renewIfDue({ client, device, save, now: iat + 10 })).toEqual({ renewed: false, reason: 'not_due' });
+    expect(await renewIfDue({ client, device, save, now: exp })).toEqual({ renewed: false, reason: 'expired' });
+    const outcome = await renewIfDue({ client, device, save, now: iat + 2001 });
+    expect(outcome).toMatchObject({ renewed: true, result: { cid, jti: `${cid}.2`, rotated: false } });
+    expect(saved).toEqual([outcome.result.credential]);
+    // A second process still holding version 1 is told it was superseded, not given an error.
+    expect(await renewIfDue({ client, device, save, now: iat + 2001 })).toEqual({ renewed: false, reason: 'superseded' });
+  });
+
+  it('reports a refused renewal without throwing, so the current credential is still used', async () => {
+    const device = await enrolledDevice();
+    const { iat } = inspectCredential(device.credential).payload;
+    const broke = { request: async () => { throw new ApiError('Balance too low', 'insufficient_balance', 402); } };
+    const outcome = await renewIfDue({ client: broke, device, save: async () => { throw new Error('must not save'); }, now: iat + 2500 });
+    expect(outcome).toMatchObject({ renewed: false, reason: 'failed', error: { code: 'insufficient_balance' } });
   });
 });

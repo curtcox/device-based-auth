@@ -4,15 +4,15 @@
  * Node 22+, no dependencies beyond @devicebasedauth/verify. The logic lives in lib.js; this file
  * only touches files, stdin/stdout and child processes.
  */
-import { mkdir, readFile, writeFile, rename, chmod, rm, rmdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, chmod, rm, rmdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { homedir, hostname } from 'node:os';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, newDeviceKey, keyFile, loadDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime
+  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue
 } from './lib.js';
-import { inspectCredential, createProof } from '../verify/src/index.js';
+import { inspectCredential, createProof } from '@devicebasedauth/verify';
 
 const HELP = `dba — device credentials from devicebasedauth.org
 
@@ -36,15 +36,23 @@ Use the credential:
   dba curl CURL-ARGS...                     Run curl with the headers added.
   dba token --aud SITE                      Print a 10-minute bearer token for SITE:
                                               curl -H "Authorization: Bearer $(dba token --aud hashbin.org)" ...
-  dba renew [--rotate]                      Renew the credential (--rotate: move to a new key).
+  dba renew [--rotate] [--if-due]           Renew the credential (--rotate: move to a new key;
+                                            --if-due: only once 2/3 of its lifetime has passed,
+                                            for a daily cron job on rarely used devices).
   dba revoke                                Revoke this device's credential and delete its files.
 
 Any credential:
   dba inspect CREDENTIAL|- [--json]         Decode it and ask the server about its signature and revocation.
   dba import CREDENTIAL|-                   Save a credential issued for this profile's key.
 
+Renewal:
+  headers, sign, curl, token and status --online renew the credential first once two thirds of
+  its lifetime has passed (25 µ$ from the account's balance). If renewal fails they warn and use
+  the current credential, which is still valid. Turn this off with --no-renew or DBA_AUTO_RENEW=0.
+
 Options:
   --profile NAME   Keep several devices apart (default "default").
+  --no-renew       Never renew automatically.
   --origin URL     Server (default $DBA_ORIGIN, then the origin used at enrollment,
                    then https://devicebasedauth.org).
 
@@ -60,13 +68,15 @@ const COMMANDS = {
   headers: {},
   sign: {},
   token: { values: ['aud'] },
-  renew: { booleans: ['rotate'] },
+  renew: { booleans: ['rotate', 'if-due'] },
   revoke: {},
   help: {}
 };
-const GLOBAL = { values: ['profile', 'origin'], booleans: ['help'] };
+const GLOBAL = { values: ['profile', 'origin'], booleans: ['help', 'no-renew'] };
 
 const out = line => process.stdout.write(`${line}\n`);
+// `dba status | head -2` closes the pipe early; that is the reader's choice, not an error.
+process.stdout.on('error', error => { if (error.code === 'EPIPE') process.exit(process.exitCode ?? 0); else throw error; });
 const note = line => process.stderr.write(`${line}\n`);
 
 // ---- files -------------------------------------------------------------------------------
@@ -105,7 +115,7 @@ async function loadProfile(globals) {
   const paths = configPaths({ env: process.env, home: homedir(), profile: globals.profile });
   const config = await readJsonFile(paths.config) || {};
   const origin = resolveOrigin({ flag: globals.origin, env: process.env, saved: config.origin });
-  return { paths, config, origin, client: createClient({ origin }) };
+  return { paths, config, origin, client: createClient({ origin }), autoRenew: autoRenewEnabled({ flag: globals['no-renew'], env: process.env }) };
 }
 
 /** The saved key and credential; a clear message when this profile has not enrolled yet. */
@@ -114,6 +124,47 @@ async function requireDevice(profile) {
   const credential = await readTextFile(profile.paths.credential);
   if (!file || !credential) throw new UsageError(`No credential in ${profile.paths.dir}. Run \`dba enroll\` first.`);
   return { key: await loadDeviceKey(file), credential };
+}
+
+/**
+ * A lock directory, so two dba processes started together (say, in parallel jobs) do not both
+ * renew: the second would be refused as superseded. A lock older than a minute is left over from
+ * a crash and is taken over. Returns a release function, or null when another process holds it.
+ */
+async function lockProfile(profile) {
+  const path = `${profile.paths.dir}/renew.lock`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { await mkdir(path, { mode: 0o700 }); return () => rmdir(path).catch(() => {}); } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const age = Date.now() - (await stat(path).catch(() => ({ mtimeMs: Date.now() }))).mtimeMs;
+      if (age < 60_000) return null;
+      await rmdir(path).catch(() => {});
+    }
+  }
+  return null;
+}
+
+/**
+ * The device, renewed first when it is due and auto-renewal is on. Never fails because of the
+ * renewal: the current credential is still valid, so the command goes ahead with a warning.
+ */
+async function usableDevice(profile, { force = false } = {}) {
+  const device = await requireDevice(profile);
+  if (!force && !profile.autoRenew) return device;
+  if (!shouldRenew(inspectCredential(device.credential).payload)) return device;
+  const release = await lockProfile(profile);
+  if (!release) return device;
+  try {
+    // Another process may have renewed while this one waited for the lock.
+    const current = await requireDevice(profile);
+    const outcome = await renewIfDue({ client: profile.client, device: current, save: result => writePrivate(profile.paths.credential, `${result.credential}\n`) });
+    if (outcome.renewed) { note(`Renewed ${outcome.result.cid} (now ${outcome.result.jti}); expires ${relativeTime(outcome.result.exp)}.`); return { ...current, credential: outcome.result.credential }; }
+    if (outcome.reason === 'superseded') return requireDevice(profile);
+    if (outcome.reason === 'failed') note(`dba: could not renew the credential (${outcome.error.code || outcome.error.message}); using the current one, which expires ${relativeTime(inspectCredential(current.credential).payload.exp)}.`);
+    return current;
+  } finally {
+    await release();
+  }
 }
 
 async function credentialArgument(value) {
@@ -167,7 +218,7 @@ async function enroll(profile, { options }) {
 }
 
 async function status(profile, { options }) {
-  const { key, credential } = await requireDevice(profile);
+  const { key, credential } = options.online ? await usableDevice(profile) : await requireDevice(profile);
   const { payload } = inspectCredential(credential);
   const server = options.online ? await profile.client.request('GET', '/api/v1/whoami', { device: { key, credential } }) : undefined;
   if (options.json) { out(JSON.stringify({ profile: profile.paths.dir, origin: profile.origin, credential: payload, ...(server ? { server } : {}) }, null, 2)); return; }
@@ -201,19 +252,19 @@ async function importCredential(profile, { positionals }) {
 
 async function headers(profile, { positionals }) {
   const { method, url } = requestTarget(positionals, 'headers');
-  const device = await requireDevice(profile);
+  const device = await usableDevice(profile);
   for (const [name, value] of Object.entries(await deviceHeaders({ ...device, method, url }))) out(`${name}: ${value}`);
 }
 
 async function sign(profile, { positionals }) {
   const { method, url } = requestTarget(positionals, 'sign');
-  const { key, credential } = await requireDevice(profile);
+  const { key, credential } = await usableDevice(profile);
   out(await createProof({ privateKey: key.privateKey, publicJwk: key.publicJwk, method, url, credential }));
 }
 
 async function curl(profile, args) {
   const { method, url } = curlRequest(args);
-  const device = await requireDevice(profile);
+  const device = await usableDevice(profile);
   const child = spawn('curl', curlArgs(args, await deviceHeaders({ ...device, method, url })), { stdio: 'inherit' });
   return new Promise((resolve, reject) => {
     child.on('error', error => reject(error.code === 'ENOENT' ? new UsageError('curl is not installed') : error));
@@ -223,13 +274,23 @@ async function curl(profile, args) {
 
 async function token(profile, { options }) {
   if (!options.aud) throw new UsageError('Usage: dba token --aud SITE');
-  const device = await requireDevice(profile);
+  const device = await usableDevice(profile);
   const result = await profile.client.request('POST', '/api/v1/token', { device, body: { audience: options.aud } });
   // Only the token on stdout, so $(dba token --aud x) works.
   out(result.access_token);
 }
 
 async function renew(profile, { options }) {
+  if (options['if-due']) {
+    if (options.rotate) throw new UsageError('--if-due and --rotate cannot be combined');
+    const before = await requireDevice(profile);
+    const { payload } = inspectCredential(before.credential);
+    if (payload.exp * 1000 <= Date.now()) throw new ApiError('The credential has expired; enroll again with `dba enroll --force`.', 'expired');
+    if (!shouldRenew(payload)) { out(`Not due: ${payload.cid} expires ${relativeTime(payload.exp)}; renewal is due ${relativeTime(Math.ceil(payload.iat + ((payload.exp - payload.iat) * 2) / 3))}.`); return; }
+    const after = await usableDevice(profile, { force: true });
+    if (after.credential === before.credential) throw new ApiError('The credential was not renewed (see the message above, or another dba process is renewing it now).', 'renew_failed');
+    return;
+  }
   const device = await requireDevice(profile);
   const { cid } = inspectCredential(device.credential).payload;
   const next = options.rotate ? await newDeviceKey() : null;
@@ -267,7 +328,7 @@ async function main(argv) {
   if (!spec) throw new UsageError(`Unknown command "${command}"`);
   const parsed = parseArgs(rest, { values: [...(spec.values || []), ...GLOBAL.values], booleans: [...(spec.booleans || []), ...GLOBAL.booleans], repeatable: spec.repeatable || [] });
   if (parsed.options.help) { out(HELP); return 0; }
-  for (const name of GLOBAL.values) if (parsed.options[name] !== undefined) globals[name] = parsed.options[name];
+  for (const name of [...GLOBAL.values, 'no-renew']) if (parsed.options[name] !== undefined) globals[name] = parsed.options[name];
   await HANDLERS[command](await loadProfile(globals), parsed);
   return 0;
 }
