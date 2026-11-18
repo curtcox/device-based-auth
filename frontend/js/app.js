@@ -418,8 +418,74 @@ function settingsForm(settings) {
   return [h('p', { class: 'muted' }, 'Limits on what this account can spend if a session, API key or device misbehaves. Issuing beyond the daily limit and renewing beyond the monthly cap are refused (HTTP 429) without charge. Changes are recorded in the audit trail.'), form, out];
 }
 
+// ---------------------------------------------------------------------------------------------
+// Security notices (Web Push, master plan §10)
+
+const PUSH_ID = 'dba.push.subscription';
+const pushStore = () => { try { return window.localStorage; } catch { return null; } };
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const fromB64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+
+function browserName() {
+  const ua = navigator.userAgent;
+  const name = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  const os = /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? `${name} on ${os}` : name;
+}
+
+/** Subscribe this browser and register it with the account. */
+async function enablePush(name) {
+  if (await Notification.requestPermission() !== 'granted') throw new Error('Notifications are blocked for this site in the browser settings.');
+  const registration = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64u(config.push_public_key) });
+  const added = await api('/api/v1/push-subscriptions', { method: 'POST', body: { subscription: subscription.toJSON(), name } });
+  pushStore()?.setItem(PUSH_ID, added.id);
+  return added;
+}
+
+async function disablePush(item) {
+  await api(`/api/v1/push-subscriptions/${enc(item.id)}`, { method: 'DELETE' });
+  if (pushStore()?.getItem(PUSH_ID) === item.id) {
+    pushStore()?.removeItem(PUSH_ID);
+    try { await (await (await navigator.serviceWorker.getRegistration('/'))?.pushManager.getSubscription())?.unsubscribe(); } catch { /* already gone */ }
+  }
+}
+
+function pushSection(subscriptions) {
+  const intro = h('p', { class: 'muted' }, 'Get a notification in this browser when a credential, API key or enrollment token is issued on your account, so a stolen sign-in cannot add devices unnoticed. Credentials that can act on your account, API keys and enrollment tokens are announced at once; other issuances at most once an hour, with a count. Free, up to 5 browsers.');
+  if (!config.push_public_key) return [intro, h('p', { class: 'muted' }, 'Security notices are not configured on this server.')];
+  const mine = pushStore()?.getItem(PUSH_ID);
+  const out = h('div', { id: 'push-result' });
+  const rows = (subscriptions?.items || []).map(s => [
+    [h('strong', {}, s.name), s.id === mine ? [' ', badge('active', 'this browser')] : null], h('span', { class: 'mono small' }, s.push_service), date(s.created_at),
+    confirmButton('Turn off', `Stop security notices to “${s.name}”? Every subscribed browser is told.`, async () => {
+      await disablePush(s); flash('success', `Security notices to ${s.name} are off.`); await render();
+    })
+  ]);
+  const form = h('form', { class: 'stack', id: 'push-form' },
+    h('label', {}, 'Name for this browser', h('input', { name: 'name', value: browserName(), maxlength: 64, required: true })),
+    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Notify this browser')));
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(form, async () => {
+      try {
+        const added = await enablePush(field(form, 'name'));
+        replace(view, await accountView());
+        flash(added.delivered ? 'success' : 'warn', added.delivered ? `Security notices are on for ${added.name}; a first notice is on its way.` : `${added.name} was added, but the first notice could not be delivered (${added.delivery_error || `HTTP ${added.delivery_status}`}).`);
+      } catch (error) { replace(out, errorBox(error)); }
+    });
+  });
+  return [
+    intro,
+    rows.length ? table(['Browser', 'Push service', 'Added', ''], rows) : h('p', { class: 'muted' }, 'No browser gets security notices yet.'),
+    pushSupported() ? form : h('p', { class: 'muted' }, 'This browser cannot receive push notifications.'),
+    out
+  ];
+}
+
 async function accountView() {
-  const [a, settings] = await Promise.all([api('/api/v1/account'), api('/api/v1/account/settings').catch(() => null)]); accountInfo = a;
+  const [a, settings, subscriptions] = await Promise.all([api('/api/v1/account'), api('/api/v1/account/settings').catch(() => null), api('/api/v1/push-subscriptions').catch(() => null)]); accountInfo = a;
   const kinds = Object.keys(a.month?.by_kind || {});
   const aggregates = Object.entries(a.today?.aggregates || {});
   const deposit = config.local ? localDeposit() : cardDeposit();
@@ -441,6 +507,7 @@ async function accountView() {
     aggregates.length ? table(['Kind', 'Count', 'Amount'], aggregates.map(([k, v]) => [k, num(v.count), money(v.amount)])) : h('p', { class: 'muted' }, 'None today.'),
     h('h2', {}, 'Add credit'), deposit,
     settings ? [h('h2', {}, 'Limits'), settingsForm(settings)] : null,
+    subscriptions ? [h('h2', {}, 'Security notices'), pushSection(subscriptions)] : null,
     h('h2', {}, 'Sign in with this browser'),
     device
       ? h('p', {}, 'This browser is signed in with its own device credential ', h('a', { href: `#credential/${enc(device.payload.cid)}` }, device.payload.cid), '. Every request is signed with a key that never leaves this browser. Signing out revokes it.')
