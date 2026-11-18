@@ -317,3 +317,47 @@ describe('public endpoints', () => {
     expect(JSON.parse(creds.body.result.content[0].text).items).toEqual([]);
   });
 });
+
+describe('account budget guards', () => {
+  it('validates settings, and only a session may change them', async () => {
+    await fund(env, 'alice');
+    expect((await call(env, 'GET', '/api/v1/account/settings', { auth: 'alice' })).body).toMatchObject({ max_issues_per_day: 500, max_renewals_per_credential_per_month: null });
+    for (const body of [{}, { max_issues_per_day: 0 }, { max_issues_per_day: 1.5 }, { max_issues_per_day: null }, { colour: 'red' }]) {
+      expect((await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body })).body.code, JSON.stringify(body)).toBe('invalid_setting');
+    }
+    const key = await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'k', scopes: ['account:read', 'credentials:issue'] } });
+    expect((await call(env, 'PATCH', '/api/v1/account/settings', { auth: `ApiKey ${key.body.secret}`, body: { max_issues_per_day: 9 } })).status).toBe(403);
+    const changed = await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body: { max_renewals_per_credential_per_month: 3 } });
+    expect(changed.body).toMatchObject({ max_issues_per_day: 500, max_renewals_per_credential_per_month: 3 });
+    const audit = await call(env, 'GET', '/api/v1/audit', { auth: 'alice' });
+    expect(audit.body.items[0]).toMatchObject({ type: 'settings.changed', after: { max_renewals_per_credential_per_month: 3 } });
+  });
+
+  it('stops issuing at the daily limit and charges nothing for the refusal', async () => {
+    await fund(env, 'alice');
+    await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body: { max_issues_per_day: 2 } });
+    expect((await enroll(env, 'alice', await newDevice())).approve.status).toBe(200);
+    expect((await enroll(env, 'alice', await newDevice())).approve.status).toBe(200);
+    const third = await enroll(env, 'alice', await newDevice());
+    expect(third.approve.status).toBe(429);
+    expect(third.approve.body).toMatchObject({ code: 'issuance_limit', limit: 2 });
+    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.balance_microdollars).toBe(1_000_000 - 2 * 75);
+    await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body: { max_issues_per_day: 3 } });
+    expect((await enroll(env, 'alice', await newDevice())).approve.status).toBe(200);
+  });
+
+  it('caps renewals per credential per month when the owner sets a cap', async () => {
+    await fund(env, 'alice');
+    await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body: { max_renewals_per_credential_per_month: 2 } });
+    const device = await newDevice();
+    let credential = (await enroll(env, 'alice', device)).approve.body.credential;
+    const path = `/api/v1/credentials/${inspectCredential(credential).payload.cid}/renew`;
+    const renew = async () => call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: {} });
+    for (let i = 0; i < 2; i++) { const r = await renew(); expect(r.status).toBe(200); credential = r.body.credential; }
+    const refused = await renew();
+    expect(refused.status).toBe(429);
+    expect(refused.body).toMatchObject({ code: 'renewal_limit', limit: 2 });
+    await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body: { max_renewals_per_credential_per_month: null } });
+    expect((await renew()).status).toBe(200);
+  });
+});

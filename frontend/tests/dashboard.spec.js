@@ -16,6 +16,14 @@ test('local sign-in, development deposit, and the account page', async ({ page }
   // Signed in survives a reload (localStorage).
   await page.reload();
   await expect(page.locator('#account-balance')).toContainText('2,500,000 µ$');
+  // Budget guards: saved through the API, refused when out of range.
+  await expect(page.getByLabel('Credentials issued per day (UTC)')).toHaveValue('500');
+  await page.getByLabel('Credentials issued per day (UTC)').fill('20');
+  await page.getByLabel(/Renewals per credential per month/).fill('40');
+  await page.getByRole('button', { name: 'Save limits' }).click();
+  await expect(page.locator('#view')).toContainText('Saved.');
+  const settings = await (await page.request.get('/api/v1/account/settings', { headers: { Authorization: `LocalDev ${owner}` } })).json();
+  expect(settings).toMatchObject({ max_issues_per_day: 20, max_renewals_per_credential_per_month: 40 });
   await page.getByRole('link', { name: 'Transactions', exact: true }).click();
   await expect(page.locator('#view table')).toContainText('development credit');
 });

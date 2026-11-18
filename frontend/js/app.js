@@ -354,8 +354,30 @@ async function issue() {
 // ---------------------------------------------------------------------------------------------
 // Account
 
+/** Budget guards (GET/PATCH /api/v1/account/settings). */
+function settingsForm(settings) {
+  const cap = settings.max_renewals_per_credential_per_month;
+  const form = h('form', { class: 'stack', id: 'settings-form' },
+    h('div', { class: 'row' },
+      h('label', {}, 'Credentials issued per day (UTC)', h('input', { name: 'issues', type: 'number', min: 1, max: 100000, step: 1, required: true, value: String(settings.max_issues_per_day) })),
+      h('label', {}, 'Renewals per credential per month', h('span', { class: 'hint' }, ' — empty for no cap'), h('input', { name: 'renewals', type: 'number', min: 1, max: 100000, step: 1, value: cap === null ? '' : String(cap) }))),
+    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Save limits')));
+  const out = h('div', {});
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(form, async () => {
+      const renewals = field(form, 'renewals');
+      try {
+        await api('/api/v1/account/settings', { method: 'PATCH', body: { max_issues_per_day: Number(field(form, 'issues')), max_renewals_per_credential_per_month: renewals === '' ? null : Number(renewals) } });
+        replace(out, notice('success', 'Saved.'));
+      } catch (error) { replace(out, errorBox(error)); }
+    });
+  });
+  return [h('p', { class: 'muted' }, 'Limits on what this account can spend if a session, API key or device misbehaves. Issuing beyond the daily limit and renewing beyond the monthly cap are refused (HTTP 429) without charge. Changes are recorded in the audit trail.'), form, out];
+}
+
 async function accountView() {
-  const a = await api('/api/v1/account'); accountInfo = a;
+  const [a, settings] = await Promise.all([api('/api/v1/account'), api('/api/v1/account/settings').catch(() => null)]); accountInfo = a;
   const kinds = Object.keys(a.month?.by_kind || {});
   const aggregates = Object.entries(a.today?.aggregates || {});
   const deposit = config.local ? localDeposit() : cardDeposit();
@@ -376,6 +398,7 @@ async function accountView() {
     h('p', { class: 'muted small' }, 'Reads, decisions, token exchanges and sign-ins are summed per day and written to the ledger as one row each.'),
     aggregates.length ? table(['Kind', 'Count', 'Amount'], aggregates.map(([k, v]) => [k, num(v.count), money(v.amount)])) : h('p', { class: 'muted' }, 'None today.'),
     h('h2', {}, 'Add credit'), deposit,
+    settings ? [h('h2', {}, 'Limits'), settingsForm(settings)] : null,
     h('h2', {}, 'Sign in with this browser'),
     device
       ? h('p', {}, 'This browser is signed in with its own device credential ', h('a', { href: `#credential/${enc(device.payload.cid)}` }, device.payload.cid), '. Every request is signed with a key that never leaves this browser. Signing out revokes it.')

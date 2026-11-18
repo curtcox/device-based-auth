@@ -19,6 +19,7 @@ const SUMMARIES = {
   'revoke-self': 'A device revokes the credential it presents.', token: 'Exchange the presented device credential for a ≤10-minute bearer access token for one audience. Charges the token price.',
   authorize: 'Online authorization decision for an audience you own: revocation, usage limits, step-up, decision log. Charges the decision price.',
   'step-ups': 'Pending step-up approval requests.', 'step-up-decide': 'Approve or deny a step-up request.', audiences: 'Audiences (relying parties): list, read, register (domain check, charges the audience price) and change.',
+  'account-settings': 'Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap). PATCH changes the members given; dashboard only.',
   'audience-usage': 'Online decisions, sign-ins and spend per month for an audience you own (this month and up to 11 before it).',
   keys: 'Account API keys (dbak_…). The secret is shown once.', checkout: 'Start a Stripe Checkout for prepaid credit. ?dry_run=1 shows the card fee.', 'dev-deposit': 'Local development only: add credit.',
   'oidc-authorize-page': 'OpenID Connect authorization endpoint (redirects to the consent page).', 'oidc-authorize': 'Consent page submission.', 'oidc-token': 'OpenID Connect token endpoint (authorization_code + PKCE S256).',
@@ -35,6 +36,7 @@ const BODIES = {
   authorize: { type: 'object', required: ['credential', 'audience', 'action'], properties: { credential: jws, proof: { ...jws, description: 'The DPoP proof the device sent you (required for device credentials).' }, request: { type: 'object', properties: { method: { type: 'string' }, url: { type: 'string' } } }, audience: { type: 'string' }, action: { type: 'string' }, resource: { type: 'string' }, context: { type: 'object', properties: { network: { type: 'object', properties: { country: { type: 'string' }, region: { type: 'string' }, lat: { type: 'number' }, lon: { type: 'number' }, ip: { type: 'string' } } } } } } },
   inspect: { type: 'object', required: ['credential'], properties: { credential: jws, audience: { type: 'string' }, check: { type: 'object', properties: { action: { type: 'string' }, resource: { type: 'string' }, now: { type: 'integer' }, location: { type: 'object' }, online: { type: 'boolean' } } } } },
   'revoke-all': { type: 'object', required: ['confirm'], properties: { confirm: { const: 'revoke-all' }, audience: { type: 'string' }, reason: { type: 'string' } } },
+  'account-settings': { type: 'object', properties: { max_issues_per_day: { type: 'integer', minimum: 1, maximum: 100000 }, max_renewals_per_credential_per_month: { type: ['integer', 'null'], minimum: 1, maximum: 100000 } } },
   keys: { type: 'object', required: ['scopes'], properties: { name: { type: 'string' }, scopes: { type: 'array', items: { type: 'string' } } } },
   checkout: { type: 'object', required: ['credit_cents'], properties: { credit_cents: { type: 'integer', minimum: 500, maximum: 100000 } } }
 };

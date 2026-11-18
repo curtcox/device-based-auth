@@ -17,6 +17,16 @@ const pad = n => String(n).padStart(15, '0');
  * usage counters, step-up approvals, online decisions and the audit trail.
  * Its storage is the source of truth for revocation; status lists are published copies.
  */
+/**
+ * Budget guards the owner can change in the dashboard (master plan §5.4, §10). A stolen session or
+ * a runaway script can issue at most max_issues_per_day credentials; a device stuck in a renewal
+ * loop stops after max_renewals_per_credential_per_month (null: no cap).
+ */
+export const SETTINGS_DEFAULTS = Object.freeze({ max_issues_per_day: 500, max_renewals_per_credential_per_month: null });
+export const SETTINGS_LIMITS = Object.freeze({ max_issues_per_day: [1, 100000], max_renewals_per_credential_per_month: [1, 100000] });
+
+const monthOf = now => new Date(now).toISOString().slice(0, 7);
+
 export class AccountDO {
   constructor(ctx, env) {
     this.ctx = ctx; this.storage = ctx.storage; this.env = env;
@@ -37,6 +47,21 @@ export class AccountDO {
   async audit(tx, now, type, detail = {}) {
     const id = randomId('evt', 10);
     await tx.put(`audit:${new Date(now).toISOString()}:${id}`, { id, type, at: now, ...detail });
+  }
+
+  async settings(tx) { return { ...SETTINGS_DEFAULTS, ...((await tx.get('settings')) || {}) }; }
+
+  async op_get_settings() { return this.tx(tx => this.settings(tx)); }
+
+  /** Change settings (validated by the caller); audited, because raising a cap matters. */
+  async op_update_settings({ changes }, now) {
+    return this.tx(async tx => {
+      const before = await this.settings(tx);
+      const next = { ...before, ...changes };
+      await tx.put('settings', next);
+      await this.audit(tx, now, 'settings.changed', { before, after: next });
+      return next;
+    });
   }
 
   async op_init({ account }, now) {
@@ -132,6 +157,9 @@ export class AccountDO {
    */
   async op_store_credential({ record, device, price, charge_id, source }, now) {
     return this.tx(async tx => {
+      const settings = await this.settings(tx);
+      const today = (await readBalance(tx, now)).day;
+      assert((today.counts?.issue || 0) < settings.max_issues_per_day, 'issuance_limit', `This account may issue ${settings.max_issues_per_day} credentials a day (UTC); the owner can raise the limit in the dashboard`, 429, { limit: settings.max_issues_per_day });
       await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid } }, now);
       const existing = await tx.get(`device:${device.id}`);
       const stored = existing ? { ...existing, name: device.name || existing.name, last_issued_at: now } : { ...device, created_at: now, last_issued_at: now };
@@ -251,9 +279,12 @@ export class AccountDO {
       assert(cred, 'not_found', 'Credential not found', 404);
       assert(!cred.revoked_at, 'revoked', 'Credential has been revoked', 403);
       assert(cred.jti === from_jti, 'superseded', 'Only the current version of a credential can be renewed', 409);
+      const cap = (await this.settings(tx)).max_renewals_per_credential_per_month;
+      const used = cred.renewals?.period === monthOf(now) ? cred.renewals.count : 0;
+      assert(cap === null || used < cap, 'renewal_limit', `This credential has been renewed ${used} times this month, the account's limit; the owner can raise it in the dashboard`, 429, { limit: cap });
       await charge(tx, { id: charge_id, kind: rotation ? 'rotate' : 'renew', amount: price, detail: { cid } }, now);
       if (rotation) await tx.put(`outbox:${cid}:${cred.status.idx}`, { shard: cred.status.shard, idx: cred.status.idx, at: now });
-      const next = { ...cred, ...update, renewed_at: now, events: [...cred.events, { at: now, type: rotation ? 'rotated' : 'renewed', jti: update.jti }].slice(-EVENTS_KEPT) };
+      const next = { ...cred, ...update, renewed_at: now, renewals: { period: monthOf(now), count: used + 1 }, events: [...cred.events, { at: now, type: rotation ? 'rotated' : 'renewed', jti: update.jti }].slice(-EVENTS_KEPT) };
       await tx.put(`cred:${cid}`, next);
       if (rotation) {
         const device = await tx.get(`device:${cred.device_id}`);

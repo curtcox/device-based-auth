@@ -7,6 +7,7 @@ import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment,
 import { createCredential, listCredentials, getCredential, credentialDecisions, revoke, revokeSelf, renew, token, whoami } from './api/credentials.js';
 import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage } from './api/audiences.js';
+import { accountSettings } from './api/settings.js';
 import { statusList, republishStatusLists } from './api/status.js';
 import { inspect } from './api/inspect.js';
 import { oidcConfiguration, oidcAuthorize, oidcToken, oidcUserinfo } from './api/oidc.js';
@@ -41,6 +42,8 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/enrollments/deny`, access: SESSION, handler: 'enroll-deny' },
   { method: 'GET', path: `${V1}/whoami`, access: AUTHENTICATED, handler: 'whoami' },
   { method: 'GET', path: `${V1}/account`, access: 'account:read', handler: 'account' },
+  { method: 'GET', path: `${V1}/account/settings`, access: SESSION, handler: 'account-settings' },
+  { method: 'PATCH', path: `${V1}/account/settings`, access: SESSION, handler: 'account-settings' },
   { method: 'GET', path: `${V1}/transactions`, access: 'transactions:read', handler: 'transactions' },
   { method: 'GET', path: `${V1}/audit`, access: 'transactions:read', handler: 'audit' },
   { method: 'GET', path: `${V1}/credentials`, access: 'credentials:read', handler: 'credentials-list' },
@@ -133,6 +136,7 @@ async function handle(route, request, env, auth) {
     case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve') });
     case 'audiences': return audiences(route, request, env, auth);
     case 'audience-usage': return audienceUsage(route, request, env, auth);
+    case 'account-settings': return accountSettings(route, request, env, auth);
     case 'keys': return keys(route, request, env, auth);
     case 'checkout': return checkout(request, env, auth, dryRun);
     case 'dev-deposit': {
