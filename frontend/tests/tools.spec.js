@@ -78,6 +78,21 @@ test('the grant builder produces valid JSON, a CLI command and an SDK snippet', 
   await expect(page.locator('#problems')).toContainText('ISO 3166-1');
 });
 
+test('the grant builder warns about areas that pinpoint a place and coarsens them', async ({ page }) => {
+  await page.goto('/tools/builder.html');
+  await page.getByLabel(/hashbin:content:write/).check();
+  await page.getByLabel('Location source').selectOption('device');
+  await page.getByRole('button', { name: 'Add a circular area' }).click();
+  await page.getByLabel('Latitude').fill('38.627123');
+  await page.getByLabel('Longitude').fill('-90.199456');
+  await page.getByLabel('Radius (m)').fill('150');
+  await expect(page.locator('#area-privacy')).toContainText('pinpoints a place');
+  await page.getByRole('button', { name: /Use coarse areas/ }).click();
+  await expect(page.locator('#area-privacy')).toBeEmpty();
+  const grant = JSON.parse(await page.locator('#grant-json').textContent());
+  expect(grant.where).toEqual({ source: 'device', areas: [{ lat: 38.63, lon: -90.2, radius_m: 1000 }] });
+});
+
 test('the request signer shows the DPoP headers for a request', async ({ page }) => {
   await page.goto('/tools/signer.html');
   await expect(page.locator('#jkt')).not.toBeEmpty();

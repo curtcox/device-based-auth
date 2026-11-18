@@ -60,3 +60,19 @@ test('denying tells the device', async ({ page, request }) => {
   const poll = await (await request.get(start.poll_url.replace(/^https?:\/\/[^/]+/, ''))).json();
   expect(poll.status).toBe('denied');
 });
+
+test('the approval page warns about a grant that pinpoints a place and offers a coarse area', async ({ page, request }) => {
+  const owner = uniqueName('placer');
+  await fund(request, owner);
+  const start = await startEnrollment(request, { name: 'Home tablet', grants: [{ actions: ['hashbin:content:write'], where: { source: 'device', areas: [{ lat: 38.627123, lon: -90.199456, radius_m: 150 }] } }] });
+  await signIn(page, owner);
+  await page.goto(`/approve.html#${start.request}`);
+  await expect(page.locator('#area-privacy')).toContainText('pinpoints a place');
+  await page.getByRole('button', { name: /Use coarse areas/ }).click();
+  await expect(page.locator('#area-privacy')).toBeEmpty();
+  await expect(page.locator('#edited-descriptions')).toContainText('within 1 km of 38.63,-90.2');
+  await page.getByRole('button', { name: /^Approve for/ }).click();
+  await expect(page.getByText('Approved — the device will pick up its credential')).toBeVisible();
+  const credentials = await (await request.get('/api/v1/credentials', { headers: { Authorization: `LocalDev ${owner}` } })).json();
+  expect(credentials.items[0].grants[0].where.areas).toEqual([{ lat: 38.63, lon: -90.2, radius_m: 1000 }]);
+});

@@ -8,6 +8,7 @@ import { api } from './api.js';
 import { initAuth, renderSignIn, signedInLabel } from './auth.js';
 import { h, $, replace, usd, money, date, relative, pretty, badge, notice, dl, field, describeKey } from './html.js';
 import { validateGrants, describeGrant } from '/lib/verify/index.js';
+import { preciseAreas, coarsenGrants, PRECISE_AREA_WARNING } from './places.js';
 
 const ticket = location.hash.slice(1);
 const root = $('#approve-root');
@@ -61,6 +62,7 @@ function approvalForm() {
   const grantsText = pretty(info.grants);
   const preview = h('ul', { class: 'english', id: 'edited-descriptions' });
   const problems = h('div', { class: 'problems', role: 'alert' });
+  const privacy = h('div', { id: 'area-privacy' });
   const form = h('form', { class: 'stack panel', id: 'approve-form' },
     h('h3', {}, 'Your decision'),
     h('p', { class: 'small muted' }, 'Signed in as ', signedInLabel(), '. The credential is charged to this account.'),
@@ -71,6 +73,7 @@ function approvalForm() {
     h('details', {}, h('summary', {}, 'Edit the grants (narrow them, add limits)'),
       h('p', { class: 'hint' }, 'You can remove actions or add constraints such as time windows, places or a spend cap. The ', h('a', { href: '/tools/builder.html', target: '_blank', rel: 'noopener' }, 'grant builder'), ' writes them for you.'),
       h('textarea', { name: 'grants', rows: 10, spellcheck: 'false', value: grantsText }), problems, preview),
+    privacy,
     h('p', { class: 'small muted' }, 'The credential is readable by every site it is shown to, including the device name and any places in its grants.'),
     h('div', { class: 'actions' },
       h('button', { type: 'submit', name: 'decision', value: 'approve', id: 'approve-button' }, `Approve for ${usd(info.price_microdollars)}`),
@@ -86,7 +89,19 @@ function approvalForm() {
     replace(preview, found.length ? null : grants.map(g => h('li', {}, describeGrant(g))));
     return found.length ? { error: true } : { grants };
   };
-  form.elements.grants.addEventListener('input', readGrants);
+  // Warn about circles small or precise enough to reveal a home or office, and offer coarser ones.
+  const checkPlaces = () => {
+    let grants; try { grants = JSON.parse(form.elements.grants.value); } catch { grants = null; }
+    if (!preciseAreas(grants).length) { replace(privacy); return; }
+    replace(privacy, notice('warn', h('p', {}, PRECISE_AREA_WARNING),
+      h('button', { type: 'button', class: 'secondary small', id: 'coarsen-areas', onclick: () => {
+        form.elements.grants.value = pretty(coarsenGrants(grants));
+        form.querySelector('details').open = true;
+        readGrants(); checkPlaces();
+      } }, 'Use coarse areas (about 1 km)')));
+  };
+  form.elements.grants.addEventListener('input', () => { readGrants(); checkPlaces(); });
+  checkPlaces();
   const finish = (status, result) => {
     const told = tellOpener(status, result);
     replace(root, describeOutcome(status, result, told));

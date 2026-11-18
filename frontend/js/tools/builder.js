@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { h, $, replace, notice, copyButton, pretty } from '../html.js';
 import { validateGrant, describeGrant, DAYS } from '/lib/verify/index.js';
 import { timeZones, localZone, zonedToEpoch, listOrUndefined, numberOrUndefined } from './common.js';
+import { isPreciseArea, coarsenArea, PRECISE_AREA_WARNING } from '../places.js';
 
 const form = $('#builder-form');
 const catalogBox = $('#catalog');
@@ -91,6 +92,29 @@ function audiencesFor(grant) {
   return [...names];
 }
 
+const areaOf = row => ({ lat: numberOrUndefined(row.querySelector('.lat').value), lon: numberOrUndefined(row.querySelector('.lon').value), radius_m: numberOrUndefined(row.querySelector('.radius').value) });
+
+const preciseRows = () => form.elements.source.value ? [...document.querySelectorAll('#areas .window-row')].filter(row => isPreciseArea(areaOf(row))) : [];
+
+/**
+ * Warn about circles that pinpoint a place (they are readable by every site), and offer coarser
+ * ones. Rendered only when the state changes, so a click is never lost to a re-render on blur.
+ */
+function showAreaPrivacy() {
+  const box = $('#area-privacy');
+  const precise = preciseRows().length > 0;
+  if (precise === !!box.firstChild) return;
+  if (!precise) { replace(box); return; }
+  replace(box, notice('warn', h('p', {}, PRECISE_AREA_WARNING),
+    h('button', { type: 'button', class: 'secondary small', id: 'coarsen-areas', onclick: () => {
+      for (const row of preciseRows()) {
+        const coarse = coarsenArea(areaOf(row));
+        row.querySelector('.lat').value = coarse.lat; row.querySelector('.lon').value = coarse.lon; row.querySelector('.radius').value = coarse.radius_m;
+      }
+      build();
+    } }, 'Use coarse areas (about 1 km)')));
+}
+
 const shellQuote = text => `'${text.replaceAll("'", "'\\''")}'`;
 
 function build() {
@@ -102,6 +126,7 @@ function build() {
     ? notice('error', h('strong', {}, 'Not valid yet: '), h('ul', { id: 'problems' }, problems.map(p => h('li', {}, p))))
     : notice('success', 'Valid grant.'));
   replace($('#english'), h('li', {}, describeGrant(grant)));
+  showAreaPrivacy();
   const aud = audiencesFor(grant);
   const name = form.elements.device_name.value.trim() || 'My device';
   const days = Math.round(Number(form.elements.days.value) || 30);
