@@ -2,6 +2,7 @@ import { assert, readJson } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { price } from '../utils/pricing.js';
 import { AUDIENCE_NAME } from '../durable-objects/registry-do.js';
+import { authenticate } from '../auth/middleware.js';
 
 const ACTION_SUFFIX = /^[a-z0-9_.-]{1,64}(?::[a-z0-9_.-]{1,64})*$/;
 
@@ -45,8 +46,10 @@ async function verifyDomain(env, name, account) {
 export async function audiences(route, request, env, auth) {
   if (request.method === 'GET' && route.params.name) return rpc(env.REGISTRY, 'global', 'get', { name: route.params.name });
   if (request.method === 'GET') {
-    const mine = new URL(request.url).searchParams.get('mine') === '1';
-    return rpc(env.REGISTRY, 'global', 'list', mine ? { owner: auth.account } : {});
+    if (new URL(request.url).searchParams.get('mine') !== '1') return rpc(env.REGISTRY, 'global', 'list', {});
+    // The public list route authenticates only when asked for "my audiences".
+    const caller = auth || await authenticate(request, env);
+    return rpc(env.REGISTRY, 'global', 'list', { owner: caller.account });
   }
   const body = await readJson(request, 65536);
   if (request.method === 'POST') {

@@ -294,6 +294,8 @@ describe('public endpoints', () => {
     expect((await call(env, 'GET', '/.well-known/jwks.json')).body.keys[0].d).toBeUndefined();
     expect((await call(env, 'GET', '/.well-known/openid-configuration')).body.issuer).toBe(ORIGIN);
     expect((await call(env, 'GET', '/api/v1/quote?op=issue')).body.quote_microdollars).toBe(75);
+    expect((await call(env, 'GET', '/api/v1/audiences?mine=1', { auth: 'operator' })).body.items.map(a => a.name)).toContain('hashbin.org');
+    expect((await call(env, 'GET', '/api/v1/audiences?mine=1')).status).toBe(401);
     const list = await call(env, 'GET', '/status/v1/lists/0');
     expect(list.headers.get('Content-Type')).toBe('application/statuslist+jwt');
     expect((await call(env, 'GET', '/status/v1/lists/99')).status).toBe(404);

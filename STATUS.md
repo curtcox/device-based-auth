@@ -49,17 +49,17 @@ A change that finishes, starts or discovers an item updates its row here in the 
 |----|------|-------|--------|-------|
 | L1 | Credential and evaluation spec + conformance vectors | code | ✅ | [spec/](spec/): 46 evaluation and 15 signature vectors, run in CI |
 | L2 | Worker scaffold ported from cronly (route table, local mode, Clerk, Stripe µ$ ledger, API keys, CI) | code | ✅ | `src/`, `.github/workflows/` |
-| L3 | Issuer keys, JWKS, `@devicebasedauth/verify`, inspector + playground | code | 🟨 | Library ✅; pages with the frontend (L13) |
-| L4 | Enrollment (browser SDK, CLI, API), credential registry, dashboard | code | 🟨 | Backend, SDK, CLI ✅; dashboard with L13 |
+| L3 | Issuer keys, JWKS, `@devicebasedauth/verify`, inspector + playground | code | ✅ | Plus grant builder and request signer |
+| L4 | Enrollment (browser SDK, CLI, API), credential registry, dashboard | code | ✅ | Browser enrollment tested end to end in Playwright |
 | L5 | Revocation, status lists on R2, renewal, rotation, delegation limits | code | ✅ | Revoking a credential revokes what it delegated |
 | L6 | Online authorize, usage counters, step-up, audience registry | code | ✅ | |
-| L7 | Docs with CI-executed samples, OpenAPI, CLI, llms.txt, MCP | code | 🟨 | Samples, OpenAPI (drift-tested), CLI, llms.txt, MCP ✅; docs pages with L13 |
-| L8 | OIDC provider; DBA dashboard signs in with DBA credentials | code | 🟨 | Server ✅ (tested); dashboard sign-in button with L13 |
+| L7 | Docs with CI-executed samples, OpenAPI, CLI, llms.txt, MCP | code | ✅ | Docs code blocks marked data-sample are checked against the tested samples |
+| L8 | OIDC provider; DBA dashboard signs in with DBA credentials | code | ✅ | Consent page and "use this browser as a device" tested in Playwright |
 | L9 | Cloudflare zone, R2 bucket + `status.` custom domain, Clerk app, Stripe products, secrets, `DBA_DEPLOY_ENABLED` | ops | ⬜ | [docs/ops/deployment.md](docs/ops/deployment.md) |
 | L10 | Cost-safety brake and monitoring | code/ops | 🟨 | Code ✅; needs analytics token and DO namespace ids (L9) |
-| L11 | Terms, Privacy, acceptable use (no covert tracking) | legal | ⬜ | Draft pages with placeholders; shared operator profile (cronly D7) |
+| L11 | Terms, Privacy, acceptable use (no covert tracking) | legal | 🟨 | DRAFT pages with entity/address/jurisdiction placeholders; owner and legal review needed (shared operator profile, cronly D7) |
 | L12 | Security review of issuance, revocation and verification | code/owner | 🟨 | Self-review done (delegation fixes in 8c68a50); independent review still needed |
-| L13 | Website: dashboard, approval and consent pages, developer tools, pricing, docs; Playwright tests | code | 🚧 | |
+| L13 | Website: dashboard, approval and consent pages, developer tools, pricing, docs; Playwright tests | code | ✅ | 20 Playwright tests in CI; light/dark; 390 px phone width checked |
 | L14 | Publish `@devicebasedauth/verify` (and the CLI) to npm | ops | ⬜ | CLI must import `@devicebasedauth/verify` instead of a relative path before publishing |
 
 ## Soon after launch
