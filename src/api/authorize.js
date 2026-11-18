@@ -5,8 +5,11 @@ import { verifyCredential, verifyProof, VerificationError } from '../../packages
 import { evaluateGrants, actionNamespace } from '../../packages/verify/src/grants.js';
 import { jwks, issuerName } from '../services/issuer.js';
 
-const audienceCache = new Map();
+// Per environment (a Worker has one; tests make many), so a cached record never crosses registries.
+const audienceCaches = new WeakMap();
 async function audience(env, name) {
+  let audienceCache = audienceCaches.get(env);
+  if (!audienceCache) { audienceCache = new Map(); audienceCaches.set(env, audienceCache); }
   const cached = audienceCache.get(name);
   if (cached && cached.expires > Date.now()) return cached.value;
   const value = await rpc(env.REGISTRY, 'global', 'get', { name });
@@ -48,6 +51,8 @@ export async function authorize(request, env, auth) {
   let payload; let proof = null;
   try {
     ({ payload } = await verifyCredential(body.credential, { jwks: jwks(env), issuer: issuerName(env), audience: body.audience, typ: 'any', now }));
+    // An audience that turned access tokens off refuses the ones issued before it did.
+    if (!payload.cnf && registered.accept_access_tokens === false) return deny('access_tokens_refused', `${body.audience} does not accept access tokens`);
     if (payload.cnf) {
       assert(typeof body.proof === 'string' && body.request?.method && body.request?.url, 'proof_required', 'A device credential needs proof, request.method and request.url');
       proof = await verifyProof(body.proof, { method: body.request.method, url: body.request.url, credential: body.credential, jkt: payload.cnf.jkt, now });
@@ -59,7 +64,7 @@ export async function authorize(request, env, auth) {
   const location = { network: body.context?.network, device: proof?.loc };
   const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true, attestation: payload.device?.attestation });
   const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok, uses: r.online.uses, step_up: r.online.step_up })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
-  const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account, country: coarseCountry(location) });
+  const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, status_list: payload.status.status_list, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account, country: coarseCountry(location) });
   const grant = decision.allow ? payload.grants[decision.grant_index] : null;
   return {
     allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, reasons: decision.allow ? [] : (decision.reasons.length ? decision.reasons : evaluation.reasons.flat()),

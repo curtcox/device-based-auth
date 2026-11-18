@@ -7,6 +7,7 @@ import { networkLocation } from '../../packages/verify/src/verifier.js';
 import { jwks, withdrawnJwks, issuerName, appAudience } from '../services/issuer.js';
 import { factorAgeMinutes } from './reverify.js';
 import { isMcpAccessToken, authenticateMcpToken } from '../api/mcp-oauth.js';
+import { sameStatusEntry } from '../durable-objects/account-do.js';
 
 export const API_KEY_PREFIX = 'dbak_';
 
@@ -82,8 +83,8 @@ async function authenticateDevice(request, env, credential, { anyAudience, recov
     assert(proof, 'proof_required', 'A DPoP proof is required with a DBA credential', 401);
     const verifiedProof = await verifyProof(proof, { method: request.method, url: request.url, credential, jkt: payload.cnf.jkt });
     const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid });
-    // The account's own record is authoritative and instant; a rotated credential has a new index.
-    assert(status.exists && !status.revoked && status.status?.idx === payload.status.status_list.idx, 'revoked', 'Credential has been revoked', 401);
+    // The account's own record is authoritative and instant; a rotated credential has a new entry.
+    assert(status.exists && !status.revoked && sameStatusEntry(status.status, payload.status.status_list), 'revoked', 'Credential has been revoked', 401);
     const dba = payload.aud.includes(appAudience(env));
     assert(dba || anyAudience, 'wrong_audience', `Credential is not valid for ${appAudience(env)}`, 401);
     return { account: payload.acct, session: false, kind: 'device', device: { payload, credential, proof: verifiedProof, dba, ...(recovered ? { recovery: true } : {}), location: { network: networkLocation(request), device: verifiedProof.loc } } };

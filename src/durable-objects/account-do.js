@@ -481,7 +481,7 @@ export class AccountDO {
    * Final online checks for one decision: revocation, proof replay, step-up and usage counters.
    * candidates: grant indexes that passed every static check, in order, with their online needs.
    */
-  async op_authorize({ cid, jti, proof_jti, proof_exp, candidates, action, resource, audience, caller, country }, now) {
+  async op_authorize({ cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country }, now) {
     const nowSeconds = Math.floor(now / 1000);
     for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
     return this.tx(async tx => {
@@ -489,24 +489,31 @@ export class AccountDO {
       let decision;
       if (!cred) decision = { allow: false, code: 'unknown_credential', reasons: ['unknown_credential'] };
       else if (cred.revoked_at) decision = { allow: false, code: 'revoked', reasons: ['revoked'] };
+      // Rotation moves the credential to a new status entry and sets the old one: a version (or an
+      // access token) carrying the old entry belongs to the replaced key and is revoked.
+      else if (status_list && !sameStatusEntry(cred.status, status_list)) decision = { allow: false, code: 'revoked', reasons: ['revoked'] };
       else if (proof_jti && this.proofs.has(proof_jti)) decision = { allow: false, code: 'replayed_proof', reasons: ['replayed_proof'] };
       else {
         if (proof_jti) this.proofs.set(proof_jti, proof_exp);
         const reasons = []; let chosen = null; let stepUpNeeded = null;
         for (const candidate of candidates) {
-          if (candidate.step_up) {
-            const approval = await findApproval(tx, { cid, action, resource, audience }, now);
-            if (!approval) { stepUpNeeded ||= candidate; reasons.push('step_up_required'); continue; }
-            approval.used_at = now; await tx.put(`stepup:${approval.id}`, approval);
-          }
+          // Check both before spending either, so a grant that is out of uses does not burn the
+          // owner's step-up approval (nor a step-up refusal count as a use).
+          let usage = null;
           if (candidate.uses) {
             const per = periodSeconds(candidate.uses.per);
             const start = Number.isFinite(per) ? Math.floor(nowSeconds / per) * per : 0;
             const key = `usage:${cid}:${candidate.index}:${start}`;
             const used = (await tx.get(key)) || 0;
             if (used >= candidate.uses.count) { reasons.push('usage_limit_reached'); continue; }
-            await tx.put(key, used + 1);
+            usage = { key, used };
           }
+          if (candidate.step_up) {
+            const approval = await findApproval(tx, { cid, action, resource, audience }, now);
+            if (!approval) { stepUpNeeded ||= candidate; reasons.push('step_up_required'); continue; }
+            approval.used_at = now; await tx.put(`stepup:${approval.id}`, approval);
+          }
+          if (usage) await tx.put(usage.key, usage.used + 1);
           chosen = candidate; break;
         }
         if (chosen) decision = { allow: true, code: 'ok', grant_index: chosen.index, reasons: [] };
@@ -618,3 +625,14 @@ async function findApproval(tx, { cid, action, resource, audience }, now) {
 }
 
 export { money, ApiError };
+
+/**
+ * Does a credential's status_list claim name the record's current entry? Indexes are per shard,
+ * so the list URI must match too: a rotated credential can land on the same index in another shard.
+ * @param {{ idx: number, uri: string } | undefined} current the record's status
+ * @param {{ idx: number, uri: string }} claimed payload.status.status_list
+ * @returns {boolean}
+ */
+export function sameStatusEntry(current, claimed) {
+  return !!current && current.idx === claimed?.idx && current.uri === claimed?.uri;
+}

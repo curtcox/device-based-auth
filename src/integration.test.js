@@ -201,6 +201,40 @@ describe('online authorization', () => {
     expect((await call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${key.body.secret}`, body: { ...body, proof: proof2 } })).body.code).toBe('revoked');
   });
 
+  it('refuses a credential version whose key was rotated away (STATUS L12)', async () => {
+    const { ask, credential, device } = await setup([{ actions: ['hashbin:content:write'] }]);
+    const { cid } = inspectCredential(credential).payload;
+    const next = await newDevice();
+    const path = `/api/v1/credentials/${cid}/renew`;
+    const keyProof = await signJws({ typ: 'dba-rotate+jwt', jwk: next.publicJwk }, { cid, iat: Math.floor(Date.now() / 1000) }, next.privateKey);
+    const rotated = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: { new_key_proof: keyProof } });
+    expect(rotated.body.rotated).toBe(true);
+    // The old key (perhaps the reason for rotating) still signs proofs for the old, unexpired version.
+    expect((await ask()).body).toMatchObject({ allow: false, code: 'revoked' });
+  });
+
+  it('refuses access tokens once the audience stops accepting them', async () => {
+    const { credential, device } = await setup([{ actions: ['hashbin:content:write'] }]);
+    const token = (await call(env, 'POST', '/api/v1/token', { headers: await device.headers('POST', '/api/v1/token', credential), body: { audience: 'hashbin.org' } })).body.access_token;
+    const key = await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'k', scopes: ['authorize', 'audiences:write'] } });
+    const body = { credential: token, audience: 'hashbin.org', action: 'hashbin:content:write' };
+    expect(token).toBeTruthy();
+    // (Online decisions cache the audience record for a minute, so this asks only after the change.)
+    expect((await call(env, 'PATCH', '/api/v1/audiences/hashbin.org', { auth: `ApiKey ${key.body.secret}`, body: { accept_access_tokens: false } })).status).toBe(200);
+    const refused = await call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${key.body.secret}`, body });
+    expect(refused.body).toMatchObject({ allow: false, code: 'access_tokens_refused' });
+  });
+
+  it('does not spend a step-up approval, or ask for one, when the grant is out of uses', async () => {
+    const { ask } = await setup([{ actions: ['hashbin:content:delete'], require: { step_up: true }, limits: { uses: { count: 1, per: 'day' } } }]);
+    const first = await ask('hashbin:content:delete');
+    expect(first.body.code).toBe('step_up_required');
+    await call(env, 'POST', `/api/v1/step-ups/${first.body.step_up.id}/approve`, { auth: 'alice', body: {} });
+    expect((await ask('hashbin:content:delete')).body.allow).toBe(true);
+    expect((await ask('hashbin:content:delete')).body).toMatchObject({ allow: false, code: 'forbidden', reasons: ['usage_limit_reached'] });
+    expect((await call(env, 'GET', '/api/v1/step-ups', { auth: 'alice' })).body.items).toHaveLength(0);
+  });
+
   it('requires owner approval for step-up grants', async () => {
     const { ask } = await setup([{ actions: ['hashbin:content:delete'], require: { step_up: true } }]);
     const first = await ask('hashbin:content:delete');
