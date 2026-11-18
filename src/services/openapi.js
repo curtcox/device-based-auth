@@ -72,7 +72,7 @@ export function openapi(routes) {
       }
     };
     if (route.access !== PUBLIC && !SECURITY[route.access]) operation.description = `Requires scope \`${route.access}\` (API key), a signed-in session, or a device credential with \`dba:${route.access}\`.`;
-    if (['POST', 'PATCH', 'DELETE'].includes(route.method) && route.path.startsWith('/api/')) operation.parameters.push({ name: 'Idempotency-Key', in: 'header', schema: { type: 'string', maxLength: 128 } });
+    if (route.idempotent) operation.parameters.push({ name: 'Idempotency-Key', in: 'header', schema: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[\\x21-\\x7e]+$' }, description: 'Retrying with the same key returns what the first request made, charged once. The same key with a different request is refused (422 idempotency_key_reused). Keys are per account.' });
     if (BODIES[route.handler] && route.method !== 'GET' && route.method !== 'DELETE') operation.requestBody = { required: true, content: { 'application/json': { schema: BODIES[route.handler] } } };
     if (route.billable) {
       operation.parameters.push({ name: 'dry_run', in: 'query', schema: { enum: ['1'] }, description: `1: only quote the price (op ${route.billable}) and, for callers with account:read, the balance and whether it suffices. Nothing else happens.` });

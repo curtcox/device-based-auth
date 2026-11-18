@@ -226,22 +226,28 @@ export class AccountDO {
    * Charge and store a newly signed credential (and its device). The Worker signs first so the
    * stored JWS is exactly what the device receives; if the charge fails nothing is kept.
    */
-  async op_store_credential({ record, device, price, charge_id, source, enrollment_token }, now) {
+  async op_store_credential({ record, device, price, charge_id, fingerprint, source, enrollment_token }, now) {
     return this.tx(async tx => {
       const settings = await this.settings(tx);
+      let token = null;
       if (enrollment_token) {
-        // Count the use in the same transaction that stores the credential, so a token can never
-        // issue more than max_uses even under concurrent redemptions.
-        const token = await tx.get(`etok:${enrollment_token.id}`);
+        token = await tx.get(`etok:${enrollment_token.id}`);
         assert(token && token.hash === enrollment_token.hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
+      }
+      const issuedToday = (await readBalance(tx, now)).day.counts?.issue || 0; // before this charge counts
+      const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid }, receipt: { cid: record.cid, ...(fingerprint ? { fingerprint } : {}) } }, now);
+      // The same charge id again (an Idempotency-Key retry, two approvals of one enrollment racing):
+      // hand back what the first request issued. Storing this one would be a credential nobody paid for.
+      if (paid.duplicate) return this.issuedBefore(tx, paid, fingerprint, now);
+      // Count the token use in the same transaction that stores the credential, so a token can never
+      // issue more than max_uses even under concurrent redemptions. A throw below undoes the charge.
+      if (token) {
         assert(enrollmentTokenState(token, now) === 'active', 'enrollment_token_inactive', `Enrollment token is ${enrollmentTokenState(token, now)}`, 403);
         token.uses += 1; token.last_used_at = now;
         await tx.put(`etok:${token.id}`, token);
         record = { ...record, enrollment_token: token.id };
       }
-      const today = (await readBalance(tx, now)).day;
-      assert((today.counts?.issue || 0) < settings.max_issues_per_day, 'issuance_limit', `This account may issue ${settings.max_issues_per_day} credentials a day (UTC); the owner can raise the limit in the dashboard`, 429, { limit: settings.max_issues_per_day });
-      const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid } }, now);
+      assert(issuedToday < settings.max_issues_per_day, 'issuance_limit', `This account may issue ${settings.max_issues_per_day} credentials a day (UTC); the owner can raise the limit in the dashboard`, 429, { limit: settings.max_issues_per_day });
       const existing = await tx.get(`device:${device.id}`);
       const stored = existing ? { ...existing, name: device.name || existing.name, ...(device.attestation ? { attestation: device.attestation, key_protection: device.key_protection } : {}), last_issued_at: now } : { ...device, created_at: now, last_issued_at: now };
       if (stored.revoked_at) { delete stored.revoked_at; stored.reinstated_at = now; }
@@ -251,6 +257,14 @@ export class AccountDO {
       await this.audit(tx, now, 'credential.issued', { cid: record.cid, device_id: device.id, aud: record.aud, source, ...(record.enrollment_token ? { token_id: record.enrollment_token } : {}) });
       return { cid: record.cid, charged: price, balance_microdollars: paid.balance_microdollars };
     });
+  }
+
+  /** The credential a repeated charge id already paid for, if the request is the same one. */
+  async issuedBefore(tx, receipt, fingerprint, now) {
+    assert(receipt.cid && (receipt.fingerprint ?? null) === (fingerprint ?? null), 'idempotency_key_reused', 'This Idempotency-Key was already used for a different request', 422);
+    const cred = await tx.get(`cred:${receipt.cid}`);
+    assert(cred, 'idempotency_key_reused', 'This Idempotency-Key was already used for a different request', 422);
+    return { duplicate: true, cid: cred.cid, jws: cred.jws, device_id: cred.device_id, charged: 0, balance_microdollars: (await readBalance(tx, now)).balance_microdollars };
   }
 
   async op_get_credential({ cid }) {

@@ -448,16 +448,7 @@
         "summary": "Decode and check a credential; optionally evaluate an action. Free.",
         "x-access": "public",
         "security": [],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -558,16 +549,7 @@
         "summary": "Start an enrollment with a request JWS (typ dba-enroll+jwt) signed by the new device key. Returns the approval URL and a poll URL. Free; nothing is stored.",
         "x-access": "public",
         "security": [],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -645,16 +627,7 @@
         "summary": "Describe a pending enrollment ticket for the approval page. Free.",
         "x-access": "public",
         "security": [],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -732,16 +705,7 @@
         "summary": "A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:\"android-key\", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256(\"<challenge>.<JWK thumbprint of the enrolled key>\") and add {format:\"apple-appattest\", challenge, app_id, key_id, object}. TPM 2.0 (Windows): TPM2_Certify the TPM-resident P-256 key with the AIK and qualifyingData SHA-256(\"<challenge>.<JWK thumbprint>\"), and add {format:\"tpm\", challenge, alg, x5c[], sig, cert_info, pub_area}. TPM 2.0 without a Microsoft AIK certificate (Linux): see POST /api/v1/enrollments/tpm-activation. Free; stateless.",
         "x-access": "public",
         "security": [],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -800,16 +764,7 @@
         "summary": "TPM 2.0 attestation by EK credential activation, step 1, for TPMs whose attestation key (AK) has no Microsoft certificate. Send {challenge, ek_certificate (the TPM's RSA-2048 EK certificate, DER base64; NV index 0x01c00002), ek_chain[] (optional CA certificates up to the manufacturer's), ak_pub_area (the restricted signing AK, TPM2B_PUBLIC or TPMT_PUBLIC), pub_area (the TPM-resident P-256 device key), cert_info (TPMS_ATTEST from TPM2_Certify of the device key by the AK), sig (TPMT_SIGNATURE)}. Answers a secret wrapped for that TPM (id_object, encrypted_secret, and credential_blob in tpm2_activatecredential's file format) and an activation token valid 10 minutes. Unwrap with TPM2_ActivateCredential and add attestation {format:\"tpm-ek\", challenge, activation, secret (base64)} to the enrollment request. Free; stateless.",
         "x-access": "public",
         "security": [],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -953,14 +908,6 @@
         ],
         "parameters": [
           {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          },
-          {
             "name": "dry_run",
             "in": "query",
             "schema": {
@@ -1090,16 +1037,7 @@
             "DeviceCredential": []
           }
         ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -1177,14 +1115,6 @@
         "x-access": "public",
         "security": [],
         "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          },
           {
             "name": "dry_run",
             "in": "query",
@@ -1374,16 +1304,7 @@
             "DeviceCredential": []
           }
         ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -1504,14 +1425,6 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
             }
           }
         ],
@@ -1784,16 +1697,7 @@
             "DeviceCredential": []
           }
         ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -2130,8 +2034,11 @@
             "in": "header",
             "schema": {
               "type": "string",
-              "maxLength": 128
-            }
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[\\x21-\\x7e]+$"
+            },
+            "description": "Retrying with the same key returns what the first request made, charged once. The same key with a different request is refused (422 idempotency_key_reused). Keys are per account."
           },
           {
             "name": "dry_run",
@@ -2368,14 +2275,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
           }
         ],
         "responses": {
@@ -2527,14 +2426,6 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
             }
           },
           {
@@ -2807,14 +2698,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
           }
         ],
         "responses": {
@@ -2886,16 +2769,7 @@
             "DeviceCredential": []
           }
         ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -2983,16 +2857,7 @@
             "DeviceCredential": []
           }
         ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -3056,14 +2921,6 @@
           }
         ],
         "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          },
           {
             "name": "dry_run",
             "in": "query",
@@ -3174,14 +3031,6 @@
           }
         ],
         "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          },
           {
             "name": "dry_run",
             "in": "query",
@@ -3297,14 +3146,6 @@
           }
         ],
         "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          },
           {
             "name": "dry_run",
             "in": "query",
@@ -3544,14 +3385,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
           }
         ],
         "responses": {
@@ -3626,14 +3459,6 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
             }
           }
         ],
@@ -3763,14 +3588,6 @@
           }
         ],
         "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          },
           {
             "name": "dry_run",
             "in": "query",
@@ -3942,14 +3759,6 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
             }
           },
           {
@@ -4137,14 +3946,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
           }
         ],
         "responses": {
@@ -4277,16 +4078,7 @@
             "DeviceCredential": []
           }
         ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",
@@ -4384,14 +4176,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
           }
         ],
         "responses": {
@@ -4465,8 +4249,11 @@
             "in": "header",
             "schema": {
               "type": "string",
-              "maxLength": 128
-            }
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[\\x21-\\x7e]+$"
+            },
+            "description": "Retrying with the same key returns what the first request made, charged once. The same key with a different request is refused (422 idempotency_key_reused). Keys are per account."
           }
         ],
         "responses": {
@@ -4554,16 +4341,7 @@
             "DeviceCredential": []
           }
         ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "maxLength": 128
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success. Every JSON response includes cost_microdollars.",

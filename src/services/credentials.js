@@ -3,9 +3,9 @@ import { rpc } from '../utils/rpc.js';
 import { randomId, derivedId } from '../utils/ids.js';
 import { price } from '../utils/pricing.js';
 import { validateGrants, actionNamespace, grantsNarrow } from '../../packages/verify/src/grants.js';
-import { jwkThumbprint, publicJwk, verifyJws, decodeJws } from '../../packages/verify/src/jose.js';
+import { jwkThumbprint, publicJwk, verifyJws, decodeJws, sha256b64u } from '../../packages/verify/src/jose.js';
 import { signCredential, signAccessToken } from '../../packages/verify/src/issuer.js';
-import { CREDENTIAL_TYP } from '../../packages/verify/src/credential.js';
+import { CREDENTIAL_TYP, inspectCredential } from '../../packages/verify/src/credential.js';
 import { activeSigner, issuerName, statusUri } from './issuer.js';
 
 export const DEVICE_KINDS = ['browser', 'phone', 'desktop', 'server', 'cli', 'agent', 'iot', 'other'];
@@ -102,7 +102,11 @@ export async function issueCredential(env, account, request, { source, chargeId,
   const payload = { iss: issuerName(env), sub: deviceId, acct: account, aud, cid, jti: `${cid}.1`, iat, nbf: iat, exp, cnf: { jkt }, device, grants, status: { status_list: { idx: status.idx, uri: status.uri } }, ver: 1 };
   const credential = await signCredential(payload, await activeSigner(env));
   const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}) };
-  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
+  // With a caller's charge id (Idempotency-Key, an enrollment's id) a retry gets the first
+  // credential back; the fingerprint tells a retry from a different request reusing the key.
+  const fingerprint = chargeId ? await sha256b64u(JSON.stringify({ jkt, aud, grants, lifetime, device: cleanDevice(request.device), parentCid: parentCid ?? null })) : undefined;
+  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, fingerprint, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
+  if (stored.duplicate) return { credential: stored.jws, cid: stored.cid, device_id: stored.device_id, payload: inspectCredential(stored.jws).payload, charged: 0, balance_microdollars: stored.balance_microdollars, replay: true };
   return { credential, cid, device_id: deviceId, payload, charged: stored.charged, balance_microdollars: stored.balance_microdollars };
 }
 

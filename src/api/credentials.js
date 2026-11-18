@@ -13,13 +13,15 @@ export async function createCredential(request, env, auth) {
   const parent = auth.device && !canAccess({ ...auth, session: false }, SESSION) ? auth.device.payload : null;
   // A delegating device is bounded by its own grants; anyone acting as the owner must have signed in recently.
   if (!parent && hasDbaAction(body.grants)) requireRecentSignIn(auth, 'issue a credential with permissions on devicebasedauth.org itself (dba:*)');
+  const key = request.headers.get('Idempotency-Key');
+  assert(key === null || /^[\x21-\x7e]{1,128}$/.test(key), 'invalid_idempotency_key', 'Idempotency-Key must be 1–128 printable ASCII characters');
   const issued = await issueCredential(env, auth.account, body, {
     source: parent ? 'delegation' : auth.key_id ? 'api' : 'dashboard',
-    chargeId: request.headers.get('Idempotency-Key') ? `issue-${auth.account}-${request.headers.get('Idempotency-Key')}` : undefined,
+    chargeId: key ? `issue-${auth.account}-${key}` : undefined,
     // A device may only delegate grants narrower than its own, and never past its own expiry.
     parentGrants: parent?.grants, maxExp: parent?.exp, parentCid: parent?.cid
   });
-  return { credential: issued.credential, cid: issued.cid, device_id: issued.device_id, payload: issued.payload, cost_microdollars: issued.charged, balance_microdollars: issued.balance_microdollars };
+  return { credential: issued.credential, cid: issued.cid, device_id: issued.device_id, payload: issued.payload, cost_microdollars: issued.charged, balance_microdollars: issued.balance_microdollars, ...(issued.replay ? { idempotent_replay: true } : {}) };
 }
 
 export async function listCredentials(request, env, auth) {

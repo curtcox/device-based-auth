@@ -31,6 +31,8 @@ const V1 = '/api/v1';
 // The route table is the only dispatch source: an undeclared endpoint cannot execute.
 // `free: true` marks public routes stopped by the cost-safety brake. `billable` names the price a
 // route charges; `?dry_run=1` on it quotes that price and does nothing else (master plan §7.1).
+// `idempotent: true` marks routes that honour an Idempotency-Key: a retry with the same key
+// returns what the first request made (src/idempotency.test.js).
 export const API_ROUTES = [
   { method: 'GET', path: '/health', access: PUBLIC, handler: 'health' },
   { method: 'GET', path: '/.well-known/jwks.json', access: PUBLIC, handler: 'jwks' },
@@ -58,7 +60,7 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/transactions`, access: 'transactions:read', handler: 'transactions' },
   { method: 'GET', path: `${V1}/audit`, access: 'transactions:read', handler: 'audit' },
   { method: 'GET', path: `${V1}/credentials`, access: 'credentials:read', handler: 'credentials-list' },
-  { method: 'POST', path: `${V1}/credentials`, access: 'credentials:issue', handler: 'credentials-create', billable: 'issue' },
+  { method: 'POST', path: `${V1}/credentials`, access: 'credentials:issue', handler: 'credentials-create', billable: 'issue', idempotent: true },
   { method: 'GET', path: `${V1}/credentials/:cid`, access: 'credentials:read', handler: 'credentials-get' },
   { method: 'DELETE', path: `${V1}/credentials/:cid`, access: 'credentials:revoke', handler: 'revoke-credential' },
   { method: 'GET', path: `${V1}/credentials/:cid/decisions`, access: 'credentials:read', handler: 'credentials-decisions' },
@@ -83,7 +85,7 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/keys`, access: SESSION, handler: 'keys' },
   { method: 'POST', path: `${V1}/keys`, access: SESSION, handler: 'keys' },
   { method: 'DELETE', path: `${V1}/keys/:id`, access: SESSION, handler: 'keys' },
-  { method: 'POST', path: `${V1}/payments/checkout`, access: SESSION, handler: 'checkout' },
+  { method: 'POST', path: `${V1}/payments/checkout`, access: SESSION, handler: 'checkout', idempotent: true },
   { method: 'POST', path: `${V1}/dev/deposit`, access: SESSION, handler: 'dev-deposit' },
   { method: 'GET', path: '/.well-known/oauth-authorization-server', access: PUBLIC, handler: 'oidc-configuration' },
   { method: 'GET', path: '/.well-known/oauth-protected-resource', access: PUBLIC, handler: 'oauth-resource' },

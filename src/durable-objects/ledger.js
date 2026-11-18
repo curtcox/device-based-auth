@@ -31,9 +31,11 @@ export async function readBalance(tx, now = Date.now()) {
  * Charge a fixed price inside a storage transaction. Never lets the balance go negative.
  * aggregate=true records the charge in today's summary instead of its own ledger row
  * (used for high-volume small charges: reads, decisions, tokens).
- * Returns { charged, balance_microdollars, duplicate }.
+ * A non-aggregate charge with an id is made once: a second call returns the first receipt with
+ * `duplicate: true` (and charges nothing), so callers must not do the paid-for work again.
+ * Returns { charged, balance_microdollars } or the prior receipt with duplicate: true.
  */
-export async function charge(tx, { id, kind, amount, aggregate = false, detail }, now = Date.now()) {
+export async function charge(tx, { id, kind, amount, aggregate = false, detail, receipt }, now = Date.now()) {
   money(amount);
   if (id && !aggregate) {
     const prior = await tx.get(`receipt:${id}`);
@@ -60,7 +62,8 @@ export async function charge(tx, { id, kind, amount, aggregate = false, detail }
     agg.count += 1; agg.amount += amount;
   } else {
     await tx.put(ledgerKey(now, id), { id, kind, amount_microdollars: -amount, created_at: now, ...(detail ? { detail } : {}) });
-    await tx.put(`receipt:${id}`, { id, charged: amount, created_at: now });
+    // `receipt` adds what a retry needs to find what this charge paid for (no extra write).
+    await tx.put(`receipt:${id}`, { id, charged: amount, created_at: now, ...receipt });
   }
   await tx.put('balance', state);
   return { charged: amount, balance_microdollars: state.balance_microdollars };
