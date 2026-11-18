@@ -21,7 +21,43 @@ rewriting it.
 | Design | [`todo/master_plan.md`](todo/master_plan.md) |
 | Prices, costs and why | [`docs/business/pricing.md`](docs/business/pricing.md) |
 
-## Conventions (planned; enforce them from L2)
+## Repository map
+
+```
+src/                 Worker: index.js (API_ROUTES, the only dispatch table), api/, auth/,
+                     durable-objects/ (AccountDO, StatusListDO, RegistryDO, EnrollmentDO, SafetyDO),
+                     services/ (issuance, issuer keys, first-party audiences, OpenAPI, cost monitor),
+                     utils/ (pricing.js = prices, cost-policy.js = rates and op counts)
+packages/verify/     @devicebasedauth/verify: JOSE, grants, DPoP, status lists, verifier, site helpers
+packages/browser-sdk/ Browser SDK source (bundled to frontend/sdk/dba.js by scripts/build-sdk.mjs)
+packages/cli/        dba CLI (lib.js is the testable part)
+spec/                Credential format, evaluation rules, conformance vectors
+frontend/            Static site (no build step). frontend/lib/verify/ and frontend/sdk/dba.js
+                     are generated; frontend/openapi.json is generated
+docs/samples/        CI-executed samples (scripts/run-samples.mjs)
+docs/business/ docs/ops/   Pricing model; deployment and incident runbooks
+integrations/        Patches/notes for sibling sites (cronly)
+test-utils/          In-memory Durable Object storage, R2, test env and device helpers
+```
+
+## Commands
+
+Node 22+. `npm install` (an `.npmrc` sets `legacy-peer-deps`).
+
+| Command | Use it for |
+|---------|-----------|
+| `npm test` | Unit, integration and conformance tests (Vitest). Run before every commit. |
+| `npm run lint` | ESLint; must be clean. |
+| `npm run dev:local` | Full local stack at http://localhost:8787. `Authorization: LocalDev <name>`; `POST /api/v1/dev/deposit` adds credit. |
+| `npm run test:samples` | Runs docs/samples against a fresh local server on port 8788 (needs python3 with cryptography+requests, and go). |
+| `npm run test:e2e` | Playwright browser tests (starts the local server). |
+| `npm run docs:generate` | Regenerate openapi.json, the browser copy of verify, and the SDK bundle. Tests fail on drift. |
+| `node scripts/build-sdk.mjs --release` | Cut an immutable `frontend/sdk/vX.Y.Z/` release (bump VERSION first). |
+| `npm run vectors:generate` | Rewrite evaluation vectors (signature vectors only with `--resign`). |
+
+Pushing to `main` deploys production only when the owner sets `DBA_DEPLOY_ENABLED` (STATUS L9).
+
+## Conventions
 
 - **JavaScript:** ES modules, async/await, JSDoc on exported functions. Files kebab-case,
   classes PascalCase. Comments explain *why*.

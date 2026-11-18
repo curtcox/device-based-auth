@@ -4,9 +4,11 @@
 with it, this file wins and the other document is stale.
 
 - **Last audited:** 2026-11-18
-- **Production:** not deployed.
-- **Overall:** Planning. Design in [`todo/master_plan.md`](todo/master_plan.md); draft prices in
-  [`docs/business/pricing.md`](docs/business/pricing.md).
+- **Production:** not deployed (owner steps in [docs/ops/deployment.md](docs/ops/deployment.md)).
+- **Overall:** Service, verify library, browser SDK, CLI, samples and OIDC provider implemented and
+  tested locally (`npm test`, `npm run test:samples`, `npm run test:e2e`). Prices implemented at the
+  proposed values pending D6. Open decisions D2, D6–D8 are implemented with the recommended defaults.
+  Design in [`todo/master_plan.md`](todo/master_plan.md); prices in [`docs/business/pricing.md`](docs/business/pricing.md).
 
 ---
 
@@ -33,11 +35,11 @@ A change that finishes, starts or discovers an item updates its row here in the 
 | ID | Decision | Owner | Status | Recommendation |
 |----|----------|-------|--------|----------------|
 | D1 | Who generates device private keys: the device (DBA only ever sees public keys) or DBA (delivers the private key once)? | owner | ✅ Owner chose device-generated 2026-11-18. | Device-generated. DBA never holding private keys removes the biggest breach risk; WebCrypto, keychains, TPMs and Secure Enclave all support it. Master plan §1, §5.1. |
-| D2 | Credential format: compact JWS (JSON after base64url decode), plain JSON with detached signature, or X.509 | owner | ❓ | JWS/ES256, with readable "inspect" views everywhere; X.509 export later (B3). §3.1. |
+| D2 | Credential format: compact JWS (JSON after base64url decode), plain JSON with detached signature, or X.509 | owner | ❓ Implemented as JWS pending approval. | JWS/ES256, with readable "inspect" views everywhere; X.509 export later (B3). §3.1. |
 | D3 | Verification: offline free + online metered, or online-only (every action billed)? Who pays for online decisions? | owner | ✅ Owner chose offline free + online metered, billed to the audience, 2026-11-18. | Offline free; online decisions (instant revocation, usage limits, audit) at ~10 µ$ billed to the audience. §6, pricing.md. |
 | D4 | Location constraints: accept network-observed location, device-reported location in the signed proof, or both? | owner | ✅ Owner chose both, selected per grant, 2026-11-18. | Support both with an explicit `where.source`, and document that neither is tamper-proof without attestation (B5). §3.5. |
 | D5 | Billing across sites: separate balances per site, or one shared wallet usable on all three? | owner | ✅ Owner chose always separate, 2026-11-18. | Each site keeps its own balance and Stripe product. §9.3. |
-| D6 | Draft prices (issue 75 µ$, renew 25 µ$, online decision 10 µ$, API read 21 µ$, $5 minimum deposit) | owner | ❓ | Accept as starting points; recalibrate from measured costs. [pricing.md](docs/business/pricing.md). |
+| D6 | Prices (issue/rotate 75 µ$, renew 25, online decision 10, metered read 5, token 5, OIDC login 10, audience 100; $5 minimum deposit) | owner | ❓ Implemented pending approval. | Accept; decision and login are at their floors. Recalibrate from measured costs (S3). [pricing.md](docs/business/pricing.md). |
 | D7 | Site sign-in: DBA as a custom OIDC provider inside each site's Clerk app first (Stage A), then device-bound sessions (Stage B)? Separate Clerk application for DBA? | owner/ops | ❓ | Yes to both; confirm the Clerk plan allows custom OIDC providers. §9.2. |
 | D8 | Operating entity and dormant accounts: same LLC/Cloudflare account as hashbin and cronly; close zero-balance accounts with no live credentials after 12 months idle? | legal | ❓ | Same entity (as cronly D1); shared operator profile; yes to dormant-account closure after notice. §8.3, §10. |
 
@@ -45,29 +47,32 @@ A change that finishes, starts or discovers an item updates its row here in the 
 
 | ID | Item | Owner | Status | Notes |
 |----|------|-------|--------|-------|
-| L1 | Credential and evaluation spec + conformance vectors | code | ⬜ | Phase 0 |
-| L2 | Scaffold ported from cronly (Worker, local mode, Clerk, Stripe µ$ ledger, API_ROUTES, CI) | code | ⬜ | Phase 1 |
-| L3 | Issuer keys, JWKS, `@devicebasedauth/verify`, inspector + playground | code | ⬜ | Phase 2 |
-| L4 | Enrollment (browser SDK, device code, API), credential registry, dashboard | code | ⬜ | Phase 3 |
-| L5 | Revocation, status lists on R2, renewal, rotation | code | ⬜ | Phase 4 |
-| L6 | Online authorize, usage counters, audience registry | code | ⬜ | Phase 5 |
-| L7 | Docs with CI-executed samples, OpenAPI, CLI, llms.txt, MCP | code | ⬜ | Phase 6 |
-| L8 | OIDC provider; DBA dashboard signs in with DBA credentials | code | ⬜ | Phase 7 |
-| L9 | Cloudflare zone, R2 bucket + custom domain, Clerk app, Stripe product, secrets | ops | ⬜ | |
-| L10 | Cost-safety brake and monitoring | code | ⬜ | Port from hashbin/cronly |
-| L11 | Terms, Privacy, acceptable use (no covert tracking) | legal | ⬜ | Shared operator profile |
-| L12 | Security review of issuance, revocation and verification | code/owner | ⬜ | |
+| L1 | Credential and evaluation spec + conformance vectors | code | ✅ | [spec/](spec/): 46 evaluation and 15 signature vectors, run in CI |
+| L2 | Worker scaffold ported from cronly (route table, local mode, Clerk, Stripe µ$ ledger, API keys, CI) | code | ✅ | `src/`, `.github/workflows/` |
+| L3 | Issuer keys, JWKS, `@devicebasedauth/verify`, inspector + playground | code | 🟨 | Library ✅; pages with the frontend (L13) |
+| L4 | Enrollment (browser SDK, CLI, API), credential registry, dashboard | code | 🟨 | Backend, SDK, CLI ✅; dashboard with L13 |
+| L5 | Revocation, status lists on R2, renewal, rotation, delegation limits | code | ✅ | Revoking a credential revokes what it delegated |
+| L6 | Online authorize, usage counters, step-up, audience registry | code | ✅ | |
+| L7 | Docs with CI-executed samples, OpenAPI, CLI, llms.txt, MCP | code | 🟨 | Samples, OpenAPI (drift-tested), CLI, llms.txt, MCP ✅; docs pages with L13 |
+| L8 | OIDC provider; DBA dashboard signs in with DBA credentials | code | 🟨 | Server ✅ (tested); dashboard sign-in button with L13 |
+| L9 | Cloudflare zone, R2 bucket + `status.` custom domain, Clerk app, Stripe products, secrets, `DBA_DEPLOY_ENABLED` | ops | ⬜ | [docs/ops/deployment.md](docs/ops/deployment.md) |
+| L10 | Cost-safety brake and monitoring | code/ops | 🟨 | Code ✅; needs analytics token and DO namespace ids (L9) |
+| L11 | Terms, Privacy, acceptable use (no covert tracking) | legal | ⬜ | Draft pages with placeholders; shared operator profile (cronly D7) |
+| L12 | Security review of issuance, revocation and verification | code/owner | 🟨 | Self-review done (delegation fixes in 8c68a50); independent review still needed |
+| L13 | Website: dashboard, approval and consent pages, developer tools, pricing, docs; Playwright tests | code | 🚧 | |
+| L14 | Publish `@devicebasedauth/verify` (and the CLI) to npm | ops | ⬜ | CLI must import `@devicebasedauth/verify` instead of a relative path before publishing |
 
 ## Soon after launch
 
-| ID | Item | Owner | Status |
-|----|------|-------|--------|
-| S1 | cronly accepts DBA device keys and "Sign in with devicebasedauth.org" | code | ⬜ |
-| S2 | hashbin accepts DBA device keys and "Sign in with devicebasedauth.org" | code | ⬜ |
-| S3 | Recalibrate prices from a month of measured costs | owner | ⬜ |
-| S4 | Mobile sample apps (iOS Secure Enclave, Android Keystore) | code | ⬜ |
-| S5 | Python and Go verifier packages | code | ⬜ |
-| S6 | Issuer signing keys in an external KMS/HSM | ops | ⬜ |
+| ID | Item | Owner | Status | Notes |
+|----|------|-------|--------|-------|
+| S1 | cronly accepts DBA device keys and "Sign in with devicebasedauth.org" | code | 🚧 | Shared helpers ✅ (`createSiteAuth`, `createOidcClient`); cronly patch in `integrations/cronly/` |
+| S2 | hashbin accepts DBA device keys and "Sign in with devicebasedauth.org" | code | 🚧 | hashbin branch `claude/dba-integration` |
+| S3 | Recalibrate prices from a month of measured costs | owner | ⬜ | |
+| S4 | Mobile sample apps (iOS Secure Enclave, Android Keystore) | code | ⬜ | |
+| S5 | Python and Go verifier packages | code | ⬜ | Python and Go samples exist in docs/samples |
+| S7 | CLI auto-renewal at 2/3 of lifetime (the SDK has it) | code | ⬜ | |
+| S6 | Issuer signing keys in an external KMS/HSM | ops | ⬜ | |
 
 ## Backlog
 
