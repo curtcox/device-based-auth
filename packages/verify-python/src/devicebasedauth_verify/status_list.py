@@ -36,30 +36,31 @@ def inflate(data: bytes, max_bytes: int = MAX_STATUS_LIST_BYTES) -> bytes:
     return out
 
 
-def _int32(value: int) -> int:
-    # JS bitwise operators work on ToInt32(value). Mirroring that keeps every implementation
-    # reading the same bit for the same idx, even for idx >= 2**31 (see the package README).
-    return ((int(value) + 2**31) % 2**32) - 2**31
+MAX_STATUS_INDEX = 2**31 - 1
 
 
 def get_bit(data: bytes, index: int) -> int:
     """Read one status bit (1 = revoked). Indexes beyond the list are 0 (valid)."""
-    i = _int32(index)
-    byte_index = i >> 3
-    if byte_index < 0 or byte_index >= len(data):
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
         return 0
-    return (data[byte_index] >> (i & 7)) & 1
+    byte_index = index // 8
+    if byte_index >= len(data):
+        return 0
+    return (data[byte_index] >> (index % 8)) & 1
 
 
 def set_bit(data, index: int, value: int = 1) -> bytearray:
     """Set one status bit, growing the array when needed. Returns the (possibly new) array."""
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index <= MAX_STATUS_INDEX:
+        raise ValueError("status index out of range")
     out = bytearray(data)
-    if (index >> 3) >= len(out):
-        out.extend(bytes(max((index >> 3) + 1, len(out) * 2) - len(out)))
+    at = index // 8
+    if at >= len(out):
+        out.extend(bytes(max(at + 1, len(out) * 2) - len(out)))
     if value:
-        out[index >> 3] |= 1 << (index & 7)
+        out[at] |= 1 << (index % 8)
     else:
-        out[index >> 3] &= ~(1 << (index & 7)) & 0xFF
+        out[at] &= ~(1 << (index % 8)) & 0xFF
     return out
 
 

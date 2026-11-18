@@ -139,6 +139,10 @@ Status lists follow the IETF OAuth Token Status List draft: 1 bit per credential
 `floor(idx / 8)`, bit `idx mod 8` (least significant first), zlib-compressed and base64url-encoded
 in the `status_list.lst` claim with `bits: 1`. Revocations are published within 60 seconds.
 
+A credential's `idx` is an integer from 0 to 2³¹−1; any other value makes the credential
+`invalid_claims`. Verifiers compute the byte and bit with integer arithmetic, never with 32-bit
+bitwise operators, and read bits past the end of a list as 0.
+
 ## 8. Online authorization
 
 Constraints that need state (`limits.uses`, `require.step_up`, `require.online`) cannot be checked

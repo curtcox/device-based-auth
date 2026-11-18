@@ -14,6 +14,7 @@ from collections import OrderedDict
 from . import _js
 from ._js import get, is_safe_integer
 from .grants import VOCABULARY_VERSION, validate_grants
+from .status_list import MAX_STATUS_INDEX
 from .jose import b64u, decode_jws, export_public_jwk, jwk_thumbprint, public_jwk, sha256_b64u, sign_jws, verify_jws
 
 CREDENTIAL_TYP = "dba-device+jwt"
@@ -82,8 +83,8 @@ def validate_credential_payload(payload: dict, typ: str = CREDENTIAL_TYP) -> lis
         errors.append(f"ver must be {VOCABULARY_VERSION}")
     status = get(get(payload, "status"), "status_list")
     idx = get(status, "idx")
-    if not _js.truthy(status) or not is_safe_integer(idx) or idx < 0 or not isinstance(get(status, "uri"), str):
-        errors.append("status.status_list must have idx and uri")
+    if not _js.truthy(status) or not is_safe_integer(idx) or idx < 0 or idx > MAX_STATUS_INDEX or not isinstance(get(status, "uri"), str):
+        errors.append("status.status_list must have idx (0 to 2^31-1) and uri")
     if typ == CREDENTIAL_TYP and not isinstance(get(get(payload, "cnf"), "jkt"), str):
         errors.append("cnf.jkt is required")
     errors.extend(validate_grants(get(payload, "grants")))

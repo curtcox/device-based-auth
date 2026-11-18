@@ -39,23 +39,24 @@ func Deflate(data []byte) []byte {
 	return buf.Bytes()
 }
 
+// MaxStatusIndex is the largest status-list index a credential may carry (spec/credential.md §7).
+const MaxStatusIndex = 1<<31 - 1
+
 // GetBit reads one status bit (1 = revoked). Indexes beyond the list are 0 (valid).
-//
-// The JavaScript reference computes `index >> 3` and `index & 7`, which first truncate the
-// index to a signed 32-bit integer. This reproduces that so both libraries read the same bit
-// for every index the issuer can assign.
 func GetBit(list []byte, index int64) int {
-	i := int32(uint32(uint64(index)))
-	b := i >> 3
-	if b < 0 || int64(b) >= int64(len(list)) {
+	if index < 0 || index/8 >= int64(len(list)) {
 		return 0
 	}
-	return int(list[b]>>(uint(i)&7)) & 1
+	return int(list[index/8]>>(uint(index%8))) & 1
 }
 
 // SetBit sets one status bit, growing the slice when needed, and returns the (possibly new) slice.
+// It panics on an index outside 0..MaxStatusIndex, which an issuer never assigns.
 func SetBit(list []byte, index int64, value int) []byte {
-	byteIndex := int(index >> 3)
+	if index < 0 || index > MaxStatusIndex {
+		panic("status index out of range")
+	}
+	byteIndex := int(index / 8)
 	out := list
 	if byteIndex >= len(out) {
 		size := max(byteIndex+1, len(out)*2)
@@ -63,9 +64,9 @@ func SetBit(list []byte, index int64, value int) []byte {
 		copy(out, list)
 	}
 	if value != 0 {
-		out[byteIndex] |= 1 << (index & 7)
+		out[byteIndex] |= 1 << (index % 8)
 	} else {
-		out[byteIndex] &^= 1 << (index & 7)
+		out[byteIndex] &^= 1 << (index % 8)
 	}
 	return out
 }

@@ -118,8 +118,8 @@ func ValidateCredentialPayload(payload *Object, typ string) []string {
 	statusList, _ := get(status, "status_list")
 	idx, _ := get(statusList, "idx")
 	uri, _ := get(statusList, "uri")
-	if _, isString := uri.(string); !truthy(statusList) || !isSafeInteger(idx) || idx.(float64) < 0 || !isString {
-		errs = append(errs, "status.status_list must have idx and uri")
+	if _, isString := uri.(string); !truthy(statusList) || !isSafeInteger(idx) || idx.(float64) < 0 || idx.(float64) > MaxStatusIndex || !isString {
+		errs = append(errs, "status.status_list must have idx (0 to 2^31-1) and uri")
 	}
 	if typ == CredentialTyp {
 		cnf, _ := payload.Get("cnf")

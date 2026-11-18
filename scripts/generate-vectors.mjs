@@ -1,8 +1,8 @@
 // Writes spec/vectors/*.json. Evaluation cases are hand-written in scripts/vectors/;
 // credential vectors are signed once with a published TEST-ONLY key and then frozen.
-import { writeFileSync, existsSync } from 'node:fs';
+import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { cases } from './vectors/evaluation-cases.mjs';
-import { generateKeyPair, exportPublicJwk, jwkThumbprint, issuerSigner, jwksFor, signCredential, createProof, b64u, signStatusList, setBit } from '../packages/verify/src/index.js';
+import { generateKeyPair, exportPublicJwk, jwkThumbprint, issuerSigner, jwksFor, signCredential, createProof, b64u, signStatusList, setBit, decodeJws, signJws, CREDENTIAL_TYP } from '../packages/verify/src/index.js';
 
 writeFileSync('spec/vectors/evaluation.json', JSON.stringify({ description: 'Grant evaluation conformance vectors. context.now is in seconds; reasons are listed per grant.', cases }, null, 2) + '\n');
 
@@ -50,4 +50,21 @@ if (existsSync(credentialsPath) && !process.argv.includes('--resign')) {
   };
   writeFileSync(credentialsPath, JSON.stringify(vectors, null, 2) + '\n');
 }
-console.log(`wrote ${cases.length} evaluation cases`);
+
+// Vectors added after the first signing are signed with the published TEST-ONLY issuer key and
+// appended, so existing signatures stay frozen.
+const frozen = JSON.parse(readFileSync(credentialsPath, 'utf8'));
+const { payload: validPayload } = decodeJws(frozen.credentials.find(c => c.name === 'valid credential').jws);
+const appendSigner = await issuerSigner({ kid: frozen.jwks.keys[0].kid, jwk: frozen.test_only_issuer_private_jwk });
+const appended = [
+  ['status index above 2^31-1', { ...validPayload, status: { status_list: { ...validPayload.status.status_list, idx: 2 ** 32 + 3 } } }, { valid: false, code: 'invalid_claims' }],
+  ['status index 2^31-1 is allowed', { ...validPayload, status: { status_list: { ...validPayload.status.status_list, idx: 2 ** 31 - 1 } } }, { valid: true }]
+];
+let added = 0;
+for (const [name, payload, expected] of appended) {
+  if (frozen.credentials.some(c => c.name === name)) continue;
+  frozen.credentials.push({ name, jws: await signJws({ typ: CREDENTIAL_TYP, kid: appendSigner.kid }, payload, appendSigner.key), audience: 'hashbin.org', now: validPayload.nbf + 10, expected });
+  added++;
+}
+if (added) writeFileSync(credentialsPath, JSON.stringify(frozen, null, 2) + '\n');
+console.log(`wrote ${cases.length} evaluation cases; appended ${added} credential vectors`);

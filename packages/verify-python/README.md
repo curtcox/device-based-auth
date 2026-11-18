@@ -58,8 +58,8 @@ Fetching is injectable — `create_verifier(audience, fetch=my_fetch, now=my_clo
 Decisions must not depend on which language verifies a credential, so JSON values are judged with
 JavaScript semantics (`true` is not `1`, a present `null` is not an absent member, `[]` is truthy,
 regexes are ASCII-only), IP addresses use the reference parser rather than `ipaddress`, `htu`
-reproduces WHATWG URL serialization, and status-list bit indexes wrap at 32 bits as JS bitwise
-operators do. Time zone names come from the system tz database (or the `tzdata` package):
+reproduces WHATWG URL serialization, and status-list indexes above 2³¹−1 make a credential
+invalid in every implementation. Time zone names come from the system tz database (or the `tzdata` package):
 install `tzdata` where the system has none, e.g. on Windows.
 
 ## Tests

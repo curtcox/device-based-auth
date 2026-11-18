@@ -18,6 +18,9 @@ export const PROOF_MAX_AGE = 60;
 export class VerificationError extends Error {
   constructor(code, message = code) { super(message); this.code = code; }
 }
+/** Largest status-list index a credential may carry (spec/credential.md §7). */
+export const MAX_STATUS_INDEX = 2 ** 31 - 1;
+
 const fail = (code, message) => { throw new VerificationError(code, message); };
 
 /** Decode a credential or access token for display. Does NOT verify anything. */
@@ -36,7 +39,7 @@ export function validateCredentialPayload(payload, { typ = CREDENTIAL_TYP } = {}
   if (payload.exp <= payload.nbf) errors.push('exp must be after nbf');
   if (payload.ver !== VOCABULARY_VERSION) errors.push(`ver must be ${VOCABULARY_VERSION}`);
   const status = payload.status?.status_list;
-  if (!status || !Number.isSafeInteger(status.idx) || status.idx < 0 || typeof status.uri !== 'string') errors.push('status.status_list must have idx and uri');
+  if (!status || !Number.isSafeInteger(status.idx) || status.idx < 0 || status.idx > MAX_STATUS_INDEX || typeof status.uri !== 'string') errors.push('status.status_list must have idx (0 to 2^31-1) and uri');
   if (typ === CREDENTIAL_TYP && typeof payload.cnf?.jkt !== 'string') errors.push('cnf.jkt is required');
   errors.push(...validateGrants(payload.grants));
   return errors;

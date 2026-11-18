@@ -73,11 +73,13 @@ class StatusListTest(unittest.TestCase):
         self.assertEqual([i for i in range(1000) if get_bit(decoded, i)], [3, 700])
         self.assertEqual(get_bit(decoded, 10**6), 0)
 
-    def test_bit_index_wraps_like_javascript(self):
-        # JS evaluates index >> 3 on a 32-bit integer, so 2**32 + 3 reads bit 3. Mirror it so all
-        # implementations agree on revocation for any idx the issuer could assign.
-        self.assertEqual(get_bit(bytes([8]), 2**32 + 3), 1)
+    def test_large_indexes_do_not_wrap(self):
+        # Credentials may only carry idx <= 2**31 - 1; past the list end every bit reads 0.
+        self.assertEqual(get_bit(bytes([8]), 2**32 + 3), 0)
         self.assertEqual(get_bit(bytes([0xFF]), 2**31), 0)
+        self.assertEqual(get_bit(bytes([0xFF]), -1), 0)
+        with self.assertRaises(ValueError):
+            set_bit(b"", 2**31)
 
     def test_decompression_bomb_is_refused(self):
         with self.assertRaises(ValueError):

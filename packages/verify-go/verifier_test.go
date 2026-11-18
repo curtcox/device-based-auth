@@ -481,15 +481,21 @@ func TestReplayCache(t *testing.T) {
 	}
 }
 
-func TestGetBitTruncatesLikeJavaScript(t *testing.T) {
+func TestGetBitDoesNotWrap(t *testing.T) {
 	bits := SetBit(nil, 3, 1)
 	if GetBit(bits, 3) != 1 || GetBit(bits, 4) != 0 || GetBit(bits, 1000) != 0 {
 		t.Fatal("basic bits")
 	}
-	// JavaScript's `index >> 3` works on int32, so 2^32 + 3 aliases index 3.
-	if GetBit(bits, 1<<32+3) != 1 || GetBit(bits, 1<<31) != 0 {
-		t.Fatal("int32 truncation")
+	// Credentials may only carry idx <= 2^31-1; past the list end every bit reads 0.
+	if GetBit(bits, 1<<32+3) != 0 || GetBit(bits, 1<<31) != 0 || GetBit(bits, -1) != 0 {
+		t.Fatal("large or negative indexes must read 0")
 	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("SetBit past MaxStatusIndex must panic")
+		}
+	}()
+	SetBit(nil, MaxStatusIndex+1, 1)
 }
 
 func TestVerifyCredentialTypes(t *testing.T) {

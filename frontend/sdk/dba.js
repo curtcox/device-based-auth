@@ -335,6 +335,7 @@ function describeGrant(grant) {
 
 // packages/verify/src/credential.js
 var PROOF_TYP = "dpop+jwt";
+var MAX_STATUS_INDEX = 2 ** 31 - 1;
 function inspectCredential(jws) {
   const { header, payload } = decodeJws(jws);
   return { header, payload };
