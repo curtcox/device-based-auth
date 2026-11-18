@@ -6,6 +6,8 @@ const WED_1500Z = t('2026-11-18T15:00:00Z'); // Wednesday 09:00 in America/Chica
 const ctx = (extra = {}) => ({ now: WED_1500Z, action: 'hashbin:content:write', resource: 'doc-1', ...extra });
 const stl = { lat: 38.627, lon: -90.199 };
 const area = { lat: stl.lat, lon: stl.lon, radius_m: 50000 };
+const APP = 'V8H6LQ9448.io.example.app';
+const APPLE = { format: 'apple-appattest', security_level: 'secure_enclave', app_id: APP, environment: 'production' };
 
 export const cases = [
   ['empty grant list denies', [], ctx(), false, null, []],
@@ -63,5 +65,15 @@ export const cases = [
   ['verified boot false does not require anything', [{ actions: W, require: { verified_boot: false } }], ctx(), true, 0, [[]]],
   ['unknown attestation level is an invalid grant', [{ actions: W, require: { attestation: 'tpm' } }], ctx(), false, null, [['invalid_grant']]],
   ['attestation must be an object to count', [{ actions: W, require: { attestation: 'hardware' } }], ctx({ attestation: 'strongbox' }), false, null, [['attestation_required']]],
+  ['an Apple app attestation does not count without the app pinned', [{ actions: W, require: { attestation: 'hardware' } }], ctx({ attestation: APPLE }), false, null, [['attestation_required']]],
+  ['an Apple app attestation counts for a pinned app', [{ actions: W, require: { attestation: 'hardware', app_ids: [APP, 'ABCDE12345.com.example.other'] } }], ctx({ attestation: APPLE }), true, 0, [[]]],
+  ['an Apple app attestation from another app is refused', [{ actions: W, require: { attestation: 'hardware', app_ids: ['ABCDE12345.com.example.other'] } }], ctx({ attestation: APPLE }), false, null, [['attestation_required', 'attested_app_required']]],
+  ['a development App Attest build never counts', [{ actions: W, require: { attestation: 'hardware', app_ids: [APP] } }], ctx({ attestation: { ...APPLE, environment: 'development' } }), false, null, [['attestation_required']]],
+  ['a secure enclave is not a StrongBox', [{ actions: W, require: { attestation: 'strongbox', app_ids: [APP] } }], ctx({ attestation: APPLE }), false, null, [['attestation_required']]],
+  ['app_ids alone pins the attested app', [{ actions: W, require: { app_ids: [APP] } }], ctx({ attestation: { ...APPLE, environment: 'development' } }), true, 0, [[]]],
+  ['app_ids needs an attestation naming an app', [{ actions: W, require: { app_ids: [APP] } }], ctx({ attestation: { format: 'android-key', security_level: 'strongbox' } }), false, null, [['attested_app_required']]],
+  ['App Attest reports no verified boot', [{ actions: W, require: { verified_boot: true, app_ids: [APP] } }], ctx({ attestation: APPLE }), false, null, [['verified_boot_required']]],
+  ['app ids must be TEAMID.bundle.id', [{ actions: W, require: { app_ids: ['com.example.app'] } }], ctx({ attestation: APPLE }), false, null, [['invalid_grant']]],
+  ['app_ids may not be empty', [{ actions: W, require: { app_ids: [] } }], ctx({ attestation: APPLE }), false, null, [['invalid_grant']]],
   ['all failing reasons are reported', [{ actions: ['x:y'], resources: ['other'] }], ctx(), false, null, [['action_not_granted', 'resource_not_granted']]]
 ].map(([name, grants, context, allow, grant_index, reasons]) => ({ name, grants, context, expected: { allow, grant_index, reasons } }));

@@ -98,7 +98,8 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 <tr><td><code>limits.spend_usd_per_month</code></td><td>Returned as a caveat for the site to enforce on its own spending.</td><td>The audience</td></tr>
 <tr><td><code>require.online</code></td><td>Every use goes through online authorization.</td><td>Online only</td></tr>
 <tr><td><code>require.step_up</code></td><td>The owner approves each use in the dashboard.</td><td>Online only</td></tr>
-<tr><td><code>require.attestation</code></td><td><code>"hardware"</code> (TEE or StrongBox) or <code>"strongbox"</code>: the credential's <code>device.attestation</code> must show the key there (<a href="#android">Android key attestation</a>); otherwise <code>attestation_required</code>.</td><td>Verifier (offline)</td></tr>
+<tr><td><code>require.attestation</code></td><td><code>"hardware"</code> (TEE, StrongBox or Secure Enclave) or <code>"strongbox"</code>: the credential's <code>device.attestation</code> must show the key there (<a href="#android">Android key attestation</a>, <a href="#ios">Apple App Attest</a>); otherwise <code>attestation_required</code>. Apple App Attest counts only for production builds of apps listed in <code>require.app_ids</code>.</td><td>Verifier (offline)</td></tr>
+<tr><td><code>require.app_ids</code></td><td>Apple app ids (<code>TEAMID.bundle.id</code>): the credential must carry an App Attest attestation from one of them; otherwise <code>attested_app_required</code>.</td><td>Verifier (offline)</td></tr>
 <tr><td><code>require.verified_boot</code></td><td>The attestation must report verified boot and a locked bootloader; otherwise <code>verified_boot_required</code>.</td><td>Verifier (offline)</td></tr>
 </tbody></table>
 <p>Build grants with the <a href="/tools/builder.html">grant builder</a> and try them in the <a href="/tools/playground.html">policy playground</a>.</p>

@@ -14,8 +14,11 @@ const WHERE_KEYS = new Set(['source', 'countries', 'regions', 'areas', 'networks
 const AREA_KEYS = new Set(['lat', 'lon', 'radius_m']);
 const LIMIT_KEYS = new Set(['uses', 'spend_usd_per_month']);
 const USES_KEYS = new Set(['count', 'per']);
-const REQUIRE_KEYS = new Set(['online', 'step_up', 'attestation', 'verified_boot']);
-const ATTESTATION_LEVELS = { hardware: ['tee', 'strongbox'], strongbox: ['strongbox'] };
+const REQUIRE_KEYS = new Set(['online', 'step_up', 'attestation', 'verified_boot', 'app_ids']);
+const ATTESTATION_LEVELS = { hardware: ['tee', 'strongbox', 'secure_enclave'], strongbox: ['strongbox'] };
+// An Apple app id: the 10-character team id, a dot, the bundle id.
+const APP_ID = /^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
+const MAX_APP_IDS = 16;
 const ACTION = /^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$/;
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 const DEVICE_LOCATION_MAX_AGE = 300;
@@ -166,6 +169,8 @@ export function validateGrant(grant, path = 'grant') {
   if (grant.require !== undefined && checkKeys(grant.require, REQUIRE_KEYS, `${path}.require`, errors)) {
     for (const key of ['online', 'step_up', 'verified_boot']) if (grant.require[key] !== undefined && typeof grant.require[key] !== 'boolean') errors.push(`${path}.require.${key} must be true or false`);
     if (grant.require.attestation !== undefined && (typeof grant.require.attestation !== 'string' || !Object.hasOwn(ATTESTATION_LEVELS, grant.require.attestation))) errors.push(`${path}.require.attestation must be "hardware" or "strongbox"`);
+    const apps = grant.require.app_ids;
+    if (apps !== undefined && !(Array.isArray(apps) && apps.length >= 1 && apps.length <= MAX_APP_IDS && apps.every(a => typeof a === 'string' && a.length <= 200 && APP_ID.test(a)))) errors.push(`${path}.require.app_ids must list 1–${MAX_APP_IDS} Apple app ids (TEAMID.bundle.id)`);
   }
   return errors;
 }
@@ -247,9 +252,17 @@ export function evaluateGrant(grant, context) {
   }
   // Key attestation is a fact about the credential (device.attestation, signed by the issuer),
   // so it is checked offline like time and place.
-  const attestation = context.attestation;
-  if (grant.require?.attestation !== undefined && !(isObject(attestation) && ATTESTATION_LEVELS[grant.require.attestation].includes(attestation.security_level))) reasons.push('attestation_required');
-  if (grant.require?.verified_boot && !(isObject(attestation) && attestation.verified_boot === 'verified' && attestation.device_locked === true)) reasons.push('verified_boot_required');
+  const attestation = isObject(context.attestation) ? context.attestation : null;
+  const apps = grant.require?.app_ids;
+  const appListed = Boolean(attestation) && Array.isArray(apps) && typeof attestation.app_id === 'string' && apps.includes(attestation.app_id);
+  if (grant.require?.attestation !== undefined) {
+    // Apple App Attest vouches for the app that reported the key, not for the key itself, so it
+    // counts only for production builds of apps the grant names (spec/evaluation.md §3.6).
+    const vouchedByApp = attestation?.format === 'apple-appattest';
+    if (!(attestation && ATTESTATION_LEVELS[grant.require.attestation].includes(attestation.security_level)) || (vouchedByApp && !(appListed && attestation.environment === 'production'))) reasons.push('attestation_required');
+  }
+  if (apps !== undefined && !appListed) reasons.push('attested_app_required');
+  if (grant.require?.verified_boot && !(attestation && attestation.verified_boot === 'verified' && attestation.device_locked === true)) reasons.push('verified_boot_required');
   if (grant.limits?.uses) online.uses = grant.limits.uses;
   if (grant.require?.step_up) online.step_up = true;
   if (grant.require?.online) online.required = true;
@@ -344,6 +357,7 @@ export function describeGrant(grant) {
   if (grant.limits?.spend_usd_per_month !== undefined) parts.push(`spending at most $${grant.limits.spend_usd_per_month.toFixed(2)} per month`);
   if (grant.require?.attestation === 'strongbox') parts.push('only with a key attested to be in a StrongBox secure element');
   else if (grant.require?.attestation === 'hardware') parts.push('only with a key attested to be in secure hardware');
+  if (Array.isArray(grant.require?.app_ids)) parts.push(`only from the attested app${grant.require.app_ids.length > 1 ? 's' : ''} ${grant.require.app_ids.join(', ')}`);
   if (grant.require?.verified_boot) parts.push('only from a device attested to have verified boot and a locked bootloader');
   if (grant.require?.step_up) parts.push('with the owner approving each use');
   if (grant.require?.online) parts.push('checked online with devicebasedauth.org every time');

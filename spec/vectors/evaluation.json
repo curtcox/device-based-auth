@@ -1681,6 +1681,353 @@
       }
     },
     {
+      "name": "an Apple app attestation does not count without the app pinned",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attestation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an Apple app attestation counts for a pinned app",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware",
+            "app_ids": [
+              "V8H6LQ9448.io.example.app",
+              "ABCDE12345.com.example.other"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "an Apple app attestation from another app is refused",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware",
+            "app_ids": [
+              "ABCDE12345.com.example.other"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attestation_required",
+            "attested_app_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a development App Attest build never counts",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware",
+            "app_ids": [
+              "V8H6LQ9448.io.example.app"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "development"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attestation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a secure enclave is not a StrongBox",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "strongbox",
+            "app_ids": [
+              "V8H6LQ9448.io.example.app"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attestation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "app_ids alone pins the attested app",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "V8H6LQ9448.io.example.app"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "development"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "app_ids needs an attestation naming an app",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "V8H6LQ9448.io.example.app"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attested_app_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "App Attest reports no verified boot",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "verified_boot": true,
+            "app_ids": [
+              "V8H6LQ9448.io.example.app"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "verified_boot_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "app ids must be TEAMID.bundle.id",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": [
+              "com.example.app"
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "app_ids may not be empty",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "app_ids": []
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "apple-appattest",
+          "security_level": "secure_enclave",
+          "app_id": "V8H6LQ9448.io.example.app",
+          "environment": "production"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
       "name": "all failing reasons are reported",
       "grants": [
         {

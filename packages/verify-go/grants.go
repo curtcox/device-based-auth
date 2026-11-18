@@ -37,9 +37,13 @@ var (
 	areaKeys    = keySet("lat", "lon", "radius_m")
 	limitKeys   = keySet("uses", "spend_usd_per_month")
 	usesKeys    = keySet("count", "per")
-	requireKeys = keySet("online", "step_up", "attestation", "verified_boot")
+	requireKeys = keySet("online", "step_up", "attestation", "verified_boot", "app_ids")
 
-	attestationLevels = map[string][]string{"hardware": {"tee", "strongbox"}, "strongbox": {"strongbox"}}
+	maxAppIDs = 16
+
+	attestationLevels = map[string][]string{"hardware": {"tee", "strongbox", "secure_enclave"}, "strongbox": {"strongbox"}}
+	// An Apple app id: the 10-character team id, a dot, the bundle id.
+	appIDPattern = regexp.MustCompile(`^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$`)
 
 	actionPattern  = regexp.MustCompile(`^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$`)
 	timePattern    = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$`)
@@ -386,6 +390,9 @@ func ValidateGrant(grant any, path string) []string {
 			if level, isString := v.(string); !isString || attestationLevels[level] == nil {
 				errs = append(errs, path+`.require.attestation must be "hardware" or "strongbox"`)
 			}
+		}
+		if apps, ok := get(require, "app_ids"); ok {
+			checkStringList(apps, path+".require.app_ids", &errs, maxAppIDs, func(a string) bool { return len(a) <= 200 && appIDPattern.MatchString(a) }, "must be an Apple app id (TEAMID.bundle.id)")
 		}
 	}
 	return errs
@@ -849,6 +856,17 @@ func EvaluateGrant(grant any, ctx Context) GrantResult {
 	// so it is checked offline like time and place.
 	require, _ := g.Get("require")
 	_, attested := asObject(ctx.Attestation)
+	apps, hasApps := get(require, "app_ids")
+	appListed := false
+	if appID, _ := get(ctx.Attestation, "app_id"); attested {
+		if list, isList := apps.([]any); isList {
+			if _, isString := appID.(string); isString {
+				for _, a := range list {
+					appListed = appListed || strictEqual(a, appID)
+				}
+			}
+		}
+	}
 	if level, ok := get(require, "attestation"); ok {
 		securityLevel, _ := get(ctx.Attestation, "security_level")
 		allowed := false
@@ -857,9 +875,19 @@ func EvaluateGrant(grant any, ctx Context) GrantResult {
 				allowed = allowed || strictEqual(securityLevel, l)
 			}
 		}
+		// Apple App Attest vouches for the app that reported the key, not for the key itself, so it
+		// counts only for production builds of apps the grant names (spec/evaluation.md §3.6).
+		format, _ := get(ctx.Attestation, "format")
+		environment, _ := get(ctx.Attestation, "environment")
+		if attested && strictEqual(format, "apple-appattest") && !(appListed && strictEqual(environment, "production")) {
+			allowed = false
+		}
 		if !allowed {
 			reasons = append(reasons, "attestation_required")
 		}
+	}
+	if hasApps && !appListed {
+		reasons = append(reasons, "attested_app_required")
 	}
 	if v, _ := get(require, "verified_boot"); truthy(v) {
 		boot, _ := get(ctx.Attestation, "verified_boot")

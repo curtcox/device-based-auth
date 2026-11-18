@@ -52,7 +52,7 @@ A change that finishes, starts or discovers an item updates its row here in the 
 
 | ID | Item | Owner | Status | Notes |
 |----|------|-------|--------|-------|
-| L1 | Credential and evaluation spec + conformance vectors | code | ✅ | [spec/](spec/): 56 evaluation and 17 signature vectors, run in CI |
+| L1 | Credential and evaluation spec + conformance vectors | code | ✅ | [spec/](spec/): 66 evaluation and 17 signature vectors, run in CI |
 | L2 | Worker scaffold ported from cronly (route table, local mode, Clerk, Stripe µ$ ledger, API keys, CI) | code | ✅ | `src/`, `.github/workflows/` |
 | L3 | Issuer keys, JWKS, `@devicebasedauth/verify`, inspector + playground | code | ✅ | Plus grant builder and request signer |
 | L4 | Enrollment (browser SDK, CLI, API), credential registry, dashboard | code | ✅ | Browser enrollment tested end to end in Playwright; credential export as CSV (formula-safe) and JSON |

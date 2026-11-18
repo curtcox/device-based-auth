@@ -435,9 +435,17 @@ honest as the device. See the master plan §3.5.
 - `online: true` — the grant may only be used through online authorization.
 - `step_up: true` — online, and the account owner must approve each use.
 - `attestation: "hardware" | "strongbox"` — the credential's `device.attestation` (credential.md
-  §3a) must show the key in a TEE or StrongBox (`hardware`), or in StrongBox only (`strongbox`);
-  otherwise `attestation_required`. The evaluator reads it from `context.attestation`, which
-  verifiers set to the presented credential's `device.attestation` (never from the request).
+  §3a) must show the key in a TEE, StrongBox or Secure Enclave (`hardware`), or in StrongBox only
+  (`strongbox`); otherwise `attestation_required`. The evaluator reads it from
+  `context.attestation`, which verifiers set to the presented credential's `device.attestation`
+  (never from the request). An `apple-appattest` attestation is Apple vouching for the **app**
+  that reported the key, not for the key, and any developer can ship an app that reports a key it
+  can export; so it satisfies `attestation` only when its `environment` is `production` and
+  `app_ids` (below) lists its `app_id`.
+- `app_ids: ["TEAMID.bundle.id", …]` — 1–16 Apple app ids (10-character team id, a dot, a bundle
+  id of dot-separated letters, digits and hyphens; at most 200 characters). `context.attestation`
+  must be an object whose `app_id` is in the list; otherwise `attested_app_required`. Android
+  attestations carry no `app_id`, so they never satisfy it.
 - `verified_boot: true` — `context.attestation` must report `verified_boot: "verified"` and
   `device_locked: true`; otherwise `verified_boot_required`. `false` requires nothing.
 

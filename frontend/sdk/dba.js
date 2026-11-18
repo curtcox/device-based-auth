@@ -62,8 +62,10 @@ var WHERE_KEYS = /* @__PURE__ */ new Set(["source", "countries", "regions", "are
 var AREA_KEYS = /* @__PURE__ */ new Set(["lat", "lon", "radius_m"]);
 var LIMIT_KEYS = /* @__PURE__ */ new Set(["uses", "spend_usd_per_month"]);
 var USES_KEYS = /* @__PURE__ */ new Set(["count", "per"]);
-var REQUIRE_KEYS = /* @__PURE__ */ new Set(["online", "step_up", "attestation", "verified_boot"]);
-var ATTESTATION_LEVELS = { hardware: ["tee", "strongbox"], strongbox: ["strongbox"] };
+var REQUIRE_KEYS = /* @__PURE__ */ new Set(["online", "step_up", "attestation", "verified_boot", "app_ids"]);
+var ATTESTATION_LEVELS = { hardware: ["tee", "strongbox", "secure_enclave"], strongbox: ["strongbox"] };
+var APP_ID = /^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
+var MAX_APP_IDS = 16;
 var ACTION = /^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$/;
 var TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 var DEVICE_LOCATION_MAX_AGE = 300;
@@ -206,6 +208,8 @@ function validateGrant(grant, path = "grant") {
   if (grant.require !== void 0 && checkKeys(grant.require, REQUIRE_KEYS, `${path}.require`, errors)) {
     for (const key of ["online", "step_up", "verified_boot"]) if (grant.require[key] !== void 0 && typeof grant.require[key] !== "boolean") errors.push(`${path}.require.${key} must be true or false`);
     if (grant.require.attestation !== void 0 && (typeof grant.require.attestation !== "string" || !Object.hasOwn(ATTESTATION_LEVELS, grant.require.attestation))) errors.push(`${path}.require.attestation must be "hardware" or "strongbox"`);
+    const apps = grant.require.app_ids;
+    if (apps !== void 0 && !(Array.isArray(apps) && apps.length >= 1 && apps.length <= MAX_APP_IDS && apps.every((a) => typeof a === "string" && a.length <= 200 && APP_ID.test(a)))) errors.push(`${path}.require.app_ids must list 1\u2013${MAX_APP_IDS} Apple app ids (TEAMID.bundle.id)`);
   }
   return errors;
 }
@@ -276,9 +280,15 @@ function evaluateGrant(grant, context) {
     if (where.source === "network" || where.source === "both") checkSource(where, location2.network, "network", now, reasons);
     if (where.source === "device" || where.source === "both") checkSource(where, location2.device, "device", now, reasons);
   }
-  const attestation = context.attestation;
-  if (grant.require?.attestation !== void 0 && !(isObject(attestation) && ATTESTATION_LEVELS[grant.require.attestation].includes(attestation.security_level))) reasons.push("attestation_required");
-  if (grant.require?.verified_boot && !(isObject(attestation) && attestation.verified_boot === "verified" && attestation.device_locked === true)) reasons.push("verified_boot_required");
+  const attestation = isObject(context.attestation) ? context.attestation : null;
+  const apps = grant.require?.app_ids;
+  const appListed = Boolean(attestation) && Array.isArray(apps) && typeof attestation.app_id === "string" && apps.includes(attestation.app_id);
+  if (grant.require?.attestation !== void 0) {
+    const vouchedByApp = attestation?.format === "apple-appattest";
+    if (!(attestation && ATTESTATION_LEVELS[grant.require.attestation].includes(attestation.security_level)) || vouchedByApp && !(appListed && attestation.environment === "production")) reasons.push("attestation_required");
+  }
+  if (apps !== void 0 && !appListed) reasons.push("attested_app_required");
+  if (grant.require?.verified_boot && !(attestation && attestation.verified_boot === "verified" && attestation.device_locked === true)) reasons.push("verified_boot_required");
   if (grant.limits?.uses) online.uses = grant.limits.uses;
   if (grant.require?.step_up) online.step_up = true;
   if (grant.require?.online) online.required = true;
@@ -335,6 +345,7 @@ function describeGrant(grant) {
   if (grant.limits?.spend_usd_per_month !== void 0) parts.push(`spending at most $${grant.limits.spend_usd_per_month.toFixed(2)} per month`);
   if (grant.require?.attestation === "strongbox") parts.push("only with a key attested to be in a StrongBox secure element");
   else if (grant.require?.attestation === "hardware") parts.push("only with a key attested to be in secure hardware");
+  if (Array.isArray(grant.require?.app_ids)) parts.push(`only from the attested app${grant.require.app_ids.length > 1 ? "s" : ""} ${grant.require.app_ids.join(", ")}`);
   if (grant.require?.verified_boot) parts.push("only from a device attested to have verified boot and a locked bootloader");
   if (grant.require?.step_up) parts.push("with the owner approving each use");
   if (grant.require?.online) parts.push("checked online with devicebasedauth.org every time");

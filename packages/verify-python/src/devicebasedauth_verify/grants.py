@@ -29,8 +29,9 @@ WHERE_KEYS = {"source", "countries", "regions", "areas", "networks"}
 AREA_KEYS = {"lat", "lon", "radius_m"}
 LIMIT_KEYS = {"uses", "spend_usd_per_month"}
 USES_KEYS = {"count", "per"}
-REQUIRE_KEYS = {"online", "step_up", "attestation", "verified_boot"}
-ATTESTATION_LEVELS = {"hardware": ["tee", "strongbox"], "strongbox": ["strongbox"]}
+REQUIRE_KEYS = {"online", "step_up", "attestation", "verified_boot", "app_ids"}
+ATTESTATION_LEVELS = {"hardware": ["tee", "strongbox", "secure_enclave"], "strongbox": ["strongbox"]}
+MAX_APP_IDS = 16
 LIMITS = {"grants": 32, "actions": 64, "resources": 64, "windows": 16, "places": 64, "networks": 64, "resourceLength": 256}
 DEVICE_LOCATION_MAX_AGE = 300
 
@@ -39,6 +40,8 @@ ACTION = re.compile(r"[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64
 TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00", re.ASCII)
 COUNTRY = re.compile(r"[A-Z]{2}", re.ASCII)
 REGION = re.compile(r"[A-Z]{2}-[A-Z0-9]{1,3}", re.ASCII)
+# An Apple app id: the 10-character team id, a dot, the bundle id.
+APP_ID = re.compile(r"[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*", re.ASCII)
 # ECMA-402 accepts UTC offsets as time zones ("+05:30", "-08", "+0530"; U+2212 too).
 OFFSET_ZONE = re.compile("([+\\-−])([01][0-9]|2[0-3])(?::?([0-5][0-9]))?", re.ASCII)
 
@@ -326,6 +329,12 @@ def validate_grant(grant, path: str = "grant") -> list:
         level = get(grant["require"], "attestation")
         if level is not MISSING and not (isinstance(level, str) and level in ATTESTATION_LEVELS):
             errors.append(f'{path}.require.attestation must be "hardware" or "strongbox"')
+        apps = get(grant["require"], "app_ids")
+        if apps is not MISSING and not (
+            isinstance(apps, list) and 1 <= len(apps) <= MAX_APP_IDS
+            and all(isinstance(a, str) and len(a) <= 200 and APP_ID.fullmatch(a) for a in apps)
+        ):
+            errors.append(f"{path}.require.app_ids must list 1–{MAX_APP_IDS} Apple app ids (TEAMID.bundle.id)")
     return errors
 
 
@@ -444,11 +453,22 @@ def evaluate_grant(grant, context: dict) -> dict:
     # Key attestation is a fact about the credential (device.attestation, signed by the issuer),
     # so it is checked offline like time and place.
     attestation = get(context, "attestation")
+    attestation = attestation if is_object(attestation) else None
+    apps = get(require, "app_ids")
+    app_id = get(attestation, "app_id") if attestation is not None else MISSING
+    app_listed = attestation is not None and isinstance(apps, list) and isinstance(app_id, str) and includes(apps, app_id)
     level = get(require, "attestation")
-    if level is not MISSING and not (is_object(attestation) and includes(ATTESTATION_LEVELS[level], get(attestation, "security_level"))):
-        reasons.append("attestation_required")
+    if level is not MISSING:
+        # Apple App Attest vouches for the app that reported the key, not for the key itself, so it
+        # counts only for production builds of apps the grant names (spec/evaluation.md §3.6).
+        vouched_by_app = attestation is not None and _js.strict_eq(get(attestation, "format"), "apple-appattest")
+        level_ok = attestation is not None and includes(ATTESTATION_LEVELS[level], get(attestation, "security_level"))
+        if not level_ok or (vouched_by_app and not (app_listed and _js.strict_eq(get(attestation, "environment"), "production"))):
+            reasons.append("attestation_required")
+    if apps is not MISSING and not app_listed:
+        reasons.append("attested_app_required")
     if truthy(get(require, "verified_boot")) and not (
-        is_object(attestation) and _js.strict_eq(get(attestation, "verified_boot"), "verified") and _js.strict_eq(get(attestation, "device_locked"), True)
+        attestation is not None and _js.strict_eq(get(attestation, "verified_boot"), "verified") and _js.strict_eq(get(attestation, "device_locked"), True)
     ):
         reasons.append("verified_boot_required")
     if truthy(get(limits, "uses")):
