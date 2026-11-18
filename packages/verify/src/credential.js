@@ -95,7 +95,7 @@ export class ReplayCache {
 /**
  * Verify a DPoP proof for a request.
  * options: { method, url, credential (compact string; checks ath), jkt (expected thumbprint),
- *            now, nonce (required value, if any), replay (ReplayCache or {check}) }
+ *            now, nonce (required value, if any), replay (ReplayCache or { check(key, now) → boolean | Promise<boolean> }) }
  * Returns the proof payload (including any device-reported loc).
  */
 export async function verifyProof(proof, { method, url, credential, jkt, now = Math.floor(Date.now() / 1000), nonce, replay }) {
@@ -117,6 +117,7 @@ export async function verifyProof(proof, { method, url, credential, jkt, now = M
   if (typeof payload.jti !== 'string' || payload.jti.length < 8 || payload.jti.length > 128) fail('invalid_proof', 'DPoP proof jti is missing');
   if (credential !== undefined && payload.ath !== await sha256b64u(credential)) fail('invalid_proof', 'DPoP proof ath does not match the credential');
   if (nonce !== undefined && payload.nonce !== nonce) fail('use_dpop_nonce', 'DPoP nonce required');
-  if (replay && !replay.check(`${thumbprint}:${payload.jti}`, now)) fail('replayed_proof', 'DPoP proof was already used');
+  // check may be async (a shared cache such as durableReplayCache).
+  if (replay && !(await replay.check(`${thumbprint}:${payload.jti}`, now))) fail('replayed_proof', 'DPoP proof was already used');
   return { ...payload, jkt: thumbprint };
 }

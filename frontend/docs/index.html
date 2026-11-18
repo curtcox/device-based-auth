@@ -226,6 +226,20 @@ export default {
   }
 };</code></pre>
 <p class="small muted">From <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/worker-middleware.mjs"><code>docs/samples/worker-middleware.mjs</code></a>, which runs in CI against a local server.</p>
+<h3>One replay cache for every isolate</h3>
+<p>The verifier remembers proof ids in memory, per isolate, so a captured proof could be replayed once against another isolate during its two-minute life. To close that, bind the <code>ReplayCacheDO</code> Durable Object in your own Worker and share it. It runs on your Cloudflare account; devicebasedauth.org is not involved and charges nothing. If the object cannot be reached the proof is refused (pass <code>failOpen: true</code> to accept instead).</p>
+<pre class="code"><code>// wrangler.toml
+[[durable_objects.bindings]]
+name = &quot;DBA_REPLAY&quot;
+class_name = &quot;ReplayCacheDO&quot;
+[[migrations]]
+tag = &quot;dba-replay-v1&quot;
+new_sqlite_classes = [&quot;ReplayCacheDO&quot;]
+
+// worker.js
+import { createVerifier, durableReplayCache } from &#39;@devicebasedauth/verify&#39;;
+export { ReplayCacheDO } from &#39;@devicebasedauth/verify&#39;;
+verifier ??= createVerifier({ audience: &#39;hashbin.org&#39;, replay: durableReplayCache(env.DBA_REPLAY) });</code></pre>
 </section>
 
 <section id="authorize">
