@@ -1,4 +1,4 @@
 node_modules/
-frontend/sdk/v*/
+frontend/sdk/
 frontend/lib/
 .wrangler/
