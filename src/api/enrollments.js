@@ -8,7 +8,7 @@ import { describeGrant, validateGrants } from '../../packages/verify/src/grants.
 import { cleanDevice, cleanJwk, issueCredential, withAttestation, LIFETIME } from '../services/credentials.js';
 import { verifyAttestation, createChallenge, checkChallenge, tpmEkAnchorsFor } from '../services/attestation.js';
 import { startTpmActivation, tpmActivationResponse, ACTIVATION_PREFIX } from '../services/tpm-activation.js';
-import { requireRecentSignIn, hasDbaAction } from '../auth/reverify.js';
+import { requireRecentSignIn, hasDbaAction, reinstatingIssue } from '../auth/reverify.js';
 
 export const ENROLL_TYP = 'dba-enroll+jwt';
 const ENROLLMENT_SECONDS = 900;
@@ -108,10 +108,10 @@ export async function approveEnrollment(request, env, auth) {
   const prior = await rpc(env.ENROLLMENTS, data.id, 'get');
   assert(prior.status === 'pending', 'already_decided', `This enrollment was already ${prior.status}`, 409);
   if (hasDbaAction(body.grants ?? data.grants)) requireRecentSignIn(auth, 'approve a device with permissions on devicebasedauth.org itself (dba:*)');
-  const issued = await issueCredential(env, auth.account, {
+  const issued = await reinstatingIssue(auth, reinstate => issueCredential(env, auth.account, {
     public_jwk: data.jwk, device: { ...data.device, ...(body.device_name ? { name: body.device_name } : {}) },
     aud: body.aud ?? data.aud, grants: body.grants ?? data.grants, lifetime_seconds: body.lifetime_seconds ?? data.lifetime
-  }, { source: 'enrollment', chargeId: `enroll-${data.id}`, attestation: data.attestation });
+  }, { source: 'enrollment', chargeId: `enroll-${data.id}`, attestation: data.attestation, reinstate }));
   await rpc(env.ENROLLMENTS, data.id, 'put', { result: { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, account: auth.account } });
   return { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, return_origin: data.return_origin, enrollment_id: data.id, cost_microdollars: issued.charged, balance_microdollars: issued.balance_microdollars };
 }

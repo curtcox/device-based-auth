@@ -226,7 +226,7 @@ export class AccountDO {
    * Charge and store a newly signed credential (and its device). The Worker signs first so the
    * stored JWS is exactly what the device receives; if the charge fails nothing is kept.
    */
-  async op_store_credential({ record, device, price, charge_id, fingerprint, source, enrollment_token }, now) {
+  async op_store_credential({ record, device, price, charge_id, fingerprint, reinstate = false, source, enrollment_token }, now) {
     return this.tx(async tx => {
       const settings = await this.settings(tx);
       let token = null;
@@ -249,12 +249,16 @@ export class AccountDO {
       }
       assert(issuedToday < settings.max_issues_per_day, 'issuance_limit', `This account may issue ${settings.max_issues_per_day} credentials a day (UTC); the owner can raise the limit in the dashboard`, 429, { limit: settings.max_issues_per_day });
       const existing = await tx.get(`device:${device.id}`);
+      // A revoked device stays revoked unless a person who signed in recently issues to it again
+      // (master plan §10); a fleet token or a delegating device never brings it back.
+      assert(!existing?.revoked_at || reinstate, 'device_revoked', 'This device was revoked. Only the account owner, signed in within the last few minutes, can issue to it again', 403, { device_id: device.id });
       const stored = existing ? { ...existing, name: device.name || existing.name, ...(device.attestation ? { attestation: device.attestation, key_protection: device.key_protection } : {}), last_issued_at: now } : { ...device, created_at: now, last_issued_at: now };
       if (stored.revoked_at) { delete stored.revoked_at; stored.reinstated_at = now; }
       await tx.put(`device:${device.id}`, stored);
       const cred = { ...record, created_at: now, events: [{ at: now, type: 'issued', jti: record.jti, source }] };
       await tx.put(`cred:${record.cid}`, cred);
       await this.audit(tx, now, 'credential.issued', { cid: record.cid, device_id: device.id, aud: record.aud, source, ...(record.enrollment_token ? { token_id: record.enrollment_token } : {}) });
+      if (existing?.revoked_at) await this.audit(tx, now, 'device.reinstated', { device_id: device.id, cid: record.cid });
       return { cid: record.cid, charged: price, balance_microdollars: paid.balance_microdollars };
     });
   }

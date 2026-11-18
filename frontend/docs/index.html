@@ -382,7 +382,7 @@ const tokens = await fetch(&#39;https://devicebasedauth.org/oauth/token&#39;, {
 <section id="revocation">
 <h2>Revocation and status lists</h2>
 <ul>
-<li>Revoke one credential (<code>DELETE /api/v1/credentials/{cid}</code>), every credential of a device (<code>POST /api/v1/devices/{id}/revoke</code>), everything — optionally for one audience — (<code>POST /api/v1/revoke-all</code> with <code>{"confirm": "revoke-all"}</code>), or let a device revoke itself (<code>POST /api/v1/self/revoke</code>). Credentials a device delegated are revoked with it.</li>
+<li>Revoke one credential (<code>DELETE /api/v1/credentials/{cid}</code>), every credential of a device (<code>POST /api/v1/devices/{id}/revoke</code>), everything — optionally for one audience — (<code>POST /api/v1/revoke-all</code> with <code>{"confirm": "revoke-all"}</code>), or let a device revoke itself (<code>POST /api/v1/self/revoke</code>). Credentials a device delegated are revoked with it. A revoked device stays revoked: an enrollment token or a delegating device cannot issue to its key again (<code>403 device_revoked</code>); only the account owner, signed in within the last 10 minutes (or with an API key), can, which reinstates it.</li>
 <li>Revocation is free: its cost is prepaid in the issue price, so it works at a zero balance.</li>
 <li>Online checks (<code>/api/v1/authorize</code>, and this service's own API) see a revocation immediately.</li>
 <li>Offline verifiers see it through the credential's status list, republished within about a minute and cached by verifiers for at most their TTL (we publish 60 s; verifiers should cache ≤ 5 minutes). Short credential lifetimes with automatic renewal bound the window further.</li>

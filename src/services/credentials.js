@@ -84,7 +84,7 @@ export async function requireFunds(env, account, amount) {
  * Issue a credential: validate, check funds, allocate a status index, sign, then charge and store
  * atomically in the account. Returns { credential, cid, payload, charged }.
  */
-export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, parentCid, enrollmentToken, attestation, now = Date.now() }) {
+export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, parentCid, enrollmentToken, attestation, reinstate = false, now = Date.now() }) {
   const jwk = cleanJwk(request.public_jwk);
   // `attestation` comes only from a verified key attestation (services/attestation.js), never
   // from a request body: cleanDevice drops anything else the caller put in device.
@@ -105,7 +105,7 @@ export async function issueCredential(env, account, request, { source, chargeId,
   // With a caller's charge id (Idempotency-Key, an enrollment's id) a retry gets the first
   // credential back; the fingerprint tells a retry from a different request reusing the key.
   const fingerprint = chargeId ? await sha256b64u(JSON.stringify({ jkt, aud, grants, lifetime, device: cleanDevice(request.device), parentCid: parentCid ?? null })) : undefined;
-  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, fingerprint, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
+  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, fingerprint, reinstate, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
   if (stored.duplicate) return { credential: stored.jws, cid: stored.cid, device_id: stored.device_id, payload: inspectCredential(stored.jws).payload, charged: 0, balance_microdollars: stored.balance_microdollars, replay: true };
   return { credential, cid, device_id: deviceId, payload, charged: stored.charged, balance_microdollars: stored.balance_microdollars };
 }
