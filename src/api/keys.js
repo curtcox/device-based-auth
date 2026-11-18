@@ -4,11 +4,13 @@ import { randomId } from '../utils/ids.js';
 import { parseScopes } from '../auth/scopes.js';
 import { signToken, digest } from '../auth/tokens.js';
 import { API_KEY_PREFIX } from '../auth/middleware.js';
+import { requireRecentSignIn } from '../auth/reverify.js';
 
 /** Account API keys (session only). The secret is shown once; only its digest is stored. */
 export async function keys(route, request, env, auth) {
   if (request.method === 'GET') return rpc(env.ACCOUNTS, auth.account, 'list-keys');
   if (request.method === 'DELETE') return rpc(env.ACCOUNTS, auth.account, 'revoke-key', { id: route.params.id });
+  requireRecentSignIn(auth, 'create an API key');
   const body = await readJson(request);
   const scopes = parseScopes(body.scopes);
   assert(scopes, 'invalid_scopes', 'scopes must list known scopes');

@@ -1,6 +1,7 @@
 import { assert, readJson } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { SETTINGS_LIMITS } from '../durable-objects/account-do.js';
+import { requireRecentSignIn } from '../auth/reverify.js';
 
 /**
  * Account budget guards (dashboard only): GET returns them, PATCH changes the members given.
@@ -18,5 +19,9 @@ export async function accountSettings(route, request, env, auth) {
     changes[name] = value;
   }
   assert(Object.keys(changes).length, 'invalid_setting', 'Give at least one setting to change');
+  // Lowering a limit is always allowed; raising one is what a thief would do.
+  const current = await rpc(env.ACCOUNTS, auth.account, 'get-settings');
+  const raises = Object.entries(changes).some(([name, value]) => current[name] !== null && (value === null || value > current[name]));
+  if (raises) requireRecentSignIn(auth, 'raise a budget limit');
   return rpc(env.ACCOUNTS, auth.account, 'update-settings', { changes });
 }

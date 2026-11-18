@@ -3,6 +3,7 @@ import { rpc } from '../utils/rpc.js';
 import { describeGrant } from '../../packages/verify/src/grants.js';
 import { issueCredential, renewCredential, exchangeToken } from '../services/credentials.js';
 import { canAccess, SESSION } from '../auth/scopes.js';
+import { requireRecentSignIn, hasDbaAction } from '../auth/reverify.js';
 
 /** Issue by API (fleets, CI, agents provisioned by a trusted device). */
 export async function createCredential(request, env, auth) {
@@ -10,6 +11,8 @@ export async function createCredential(request, env, auth) {
   // A device signed in to the dashboard (dba:session) acts as its owner; any other device
   // delegates, so it can only issue grants narrower than its own and never past its own expiry.
   const parent = auth.device && !canAccess({ ...auth, session: false }, SESSION) ? auth.device.payload : null;
+  // A delegating device is bounded by its own grants; anyone acting as the owner must have signed in recently.
+  if (!parent && hasDbaAction(body.grants)) requireRecentSignIn(auth, 'issue a credential with permissions on devicebasedauth.org itself (dba:*)');
   const issued = await issueCredential(env, auth.account, body, {
     source: parent ? 'delegation' : auth.key_id ? 'api' : 'dashboard',
     chargeId: request.headers.get('Idempotency-Key') ? `issue-${auth.account}-${request.headers.get('Idempotency-Key')}` : undefined,

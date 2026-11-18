@@ -6,6 +6,7 @@ import { canAccess, SESSION } from '../auth/scopes.js';
 import { grantsNarrow } from '../../packages/verify/src/grants.js';
 import { cleanDevice, issueCredential, validateIssue } from '../services/credentials.js';
 import { readEnrollRequest } from './enrollments.js';
+import { requireRecentSignIn, hasDbaAction } from '../auth/reverify.js';
 
 export const ENROLLMENT_TOKEN_PREFIX = 'dbae_';
 const MAX_USES = 10000;
@@ -24,6 +25,7 @@ export async function enrollmentTokens(route, request, env, auth) {
   assert(!auth.device || canAccess({ ...auth, session: false }, SESSION), 'forbidden', 'Only the account owner or an API key can create enrollment tokens', 403);
   const body = await readJson(request, 65536);
   const { aud, grants, lifetime } = await validateIssue(env, body);
+  if (hasDbaAction(grants)) requireRecentSignIn(auth, 'create an enrollment token with permissions on devicebasedauth.org itself (dba:*)');
   const maxUses = body.max_uses ?? 1;
   assert(Number.isSafeInteger(maxUses) && maxUses >= 1 && maxUses <= MAX_USES, 'invalid_max_uses', `max_uses must be 1–${MAX_USES}`);
   const days = body.expires_in_days ?? 7;

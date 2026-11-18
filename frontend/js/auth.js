@@ -132,6 +132,18 @@ export async function handleUnauthorized() {
   return mode !== null;
 }
 
+/**
+ * Sign in again for an operation that needs a recent sign-in (403 reverification_required).
+ * Only a Clerk session can do that: sign out of Clerk and come back to the sign-in panel.
+ * Returns false when this sign-in mode cannot re-verify.
+ */
+export async function reauthenticate() {
+  if (mode !== 'clerk' || !clerk) return false;
+  await clerk.signOut();
+  location.reload();
+  return true;
+}
+
 /** Sign out. A device-credential session revokes its own credential (free) and forgets the key. */
 export async function signOut() {
   if (mode === 'device' && device) { try { await device.revoke(); } catch { await device.forget().catch(() => {}); } }

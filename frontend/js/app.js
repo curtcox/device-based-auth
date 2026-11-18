@@ -4,7 +4,7 @@
  * is built with h(), which only ever sets text and attributes.
  */
 import { api } from './api.js';
-import { initAuth, renderSignIn, signOut, authMode, signedInLabel, enrollDashboardDevice, preloadSdk, currentDevice } from './auth.js';
+import { initAuth, renderSignIn, signOut, reauthenticate, authMode, signedInLabel, enrollDashboardDevice, preloadSdk, currentDevice } from './auth.js';
 import { h, $, replace, usd, money, num, date, relative, duration, pretty, jsonBlock, copyButton, badge, notice, table, dl, field, splitList } from './html.js';
 import { inspectCredential, validateGrants, evaluateGrants } from '/lib/verify/index.js';
 import { credentialsCsv, credentialsJson } from './export.js';
@@ -42,6 +42,10 @@ function errorBox(error) {
   if (error.status === 402) {
     const needed = error.details?.needed_microdollars;
     return notice('error', h('strong', {}, 'Insufficient balance. '), needed ? `This needs ${money(needed)} more. ` : '', h('a', { href: '#account' }, 'Add credit on the Account page'), '.');
+  }
+  if (error.code === 'reverification_required') {
+    return notice('warn', h('strong', {}, 'Please confirm it is you. '), `${error.message}. `,
+      authMode() === 'clerk' ? h('button', { type: 'button', class: 'link', onclick: () => reauthenticate() }, 'Sign in again') : null);
   }
   if (error.status === 401) return notice('error', `${error.message}. `, h('button', { type: 'button', class: 'link', onclick: () => location.reload() }, 'Sign in again'));
   return notice('error', error.message || String(error), error.code ? h('span', { class: 'muted small' }, ` (${error.code})`) : null);

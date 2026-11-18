@@ -5,6 +5,7 @@ import { digest, verifyToken } from './tokens.js';
 import { verifyCredential, verifyProof, VerificationError, ACCESS_TYP } from '../../packages/verify/src/credential.js';
 import { networkLocation } from '../../packages/verify/src/verifier.js';
 import { jwks, issuerName, appAudience } from '../services/issuer.js';
+import { factorAgeMinutes } from './reverify.js';
 
 export const API_KEY_PREFIX = 'dbak_';
 
@@ -27,10 +28,12 @@ export async function authenticate(request, env, { anyAudience = false } = {}) {
     const token = header.slice(7).trim();
     assert(env.CLERK_SECRET_KEY, 'invalid_auth', 'Session sign-in is not configured', 401);
     let claims;
-    try { claims = await verifyClerkToken(token, { secretKey: env.CLERK_SECRET_KEY, authorizedParties: [env.APP_ORIGIN] }); } catch { claims = null; }
+    // env.CLERK_VERIFY_TOKEN replaces Clerk's verifier in tests only.
+    const verify = env.CLERK_VERIFY_TOKEN || verifyClerkToken;
+    try { claims = await verify(token, { secretKey: env.CLERK_SECRET_KEY, authorizedParties: [env.APP_ORIGIN] }); } catch { claims = null; }
     assert(claims?.sub && claims.sid, 'invalid_auth', 'Invalid session', 401);
     await rpc(env.ACCOUNTS, claims.sub, 'init', { account: claims.sub });
-    return { account: claims.sub, session: true, kind: 'clerk' };
+    return { account: claims.sub, session: true, kind: 'clerk', factor_age_minutes: factorAgeMinutes(claims) };
   }
   if (header.startsWith('ApiKey ')) {
     const token = header.slice(7).trim();

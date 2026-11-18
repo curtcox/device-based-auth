@@ -6,6 +6,7 @@ import { signToken, verifyToken } from '../auth/tokens.js';
 import { decodeJws, verifyJws, jwkThumbprint } from '../../packages/verify/src/jose.js';
 import { describeGrant, validateGrants } from '../../packages/verify/src/grants.js';
 import { cleanDevice, cleanJwk, issueCredential, LIFETIME } from '../services/credentials.js';
+import { requireRecentSignIn, hasDbaAction } from '../auth/reverify.js';
 
 export const ENROLL_TYP = 'dba-enroll+jwt';
 const ENROLLMENT_SECONDS = 900;
@@ -81,6 +82,7 @@ export async function approveEnrollment(request, env, auth) {
   const data = await readTicket(env, body.request);
   const prior = await rpc(env.ENROLLMENTS, data.id, 'get');
   assert(prior.status === 'pending', 'already_decided', `This enrollment was already ${prior.status}`, 409);
+  if (hasDbaAction(body.grants ?? data.grants)) requireRecentSignIn(auth, 'approve a device with permissions on devicebasedauth.org itself (dba:*)');
   const issued = await issueCredential(env, auth.account, {
     public_jwk: data.jwk, device: { ...data.device, ...(body.device_name ? { name: body.device_name } : {}) },
     aud: body.aud ?? data.aud, grants: body.grants ?? data.grants, lifetime_seconds: body.lifetime_seconds ?? data.lifetime

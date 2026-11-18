@@ -36,6 +36,12 @@ secret as `DBA_CLERK_WEBHOOK_SECRET`. Set the GitHub variable `DBA_OPERATOR_ACCO
 Clerk user id: that account owns the first-party audiences (devicebasedauth.org, hashbin.org,
 cronly.org) and pays for their online decisions and OpenID Connect sign-ins, so keep it funded.
 
+Use session token version 2 (the default for new Clerk applications): its `fva` claim says how many
+minutes ago the user last verified a factor. Creating API keys, approving or issuing `dba:*`
+credentials, and raising budget limits need `fva` within 10 minutes (STATUS S8); without the claim
+those operations are refused. Check after deploying: sign in, wait 11 minutes, try to create an API
+key (expect "Please confirm it is you"), sign in again, and it succeeds.
+
 ## 4. Stripe
 
 Reuse the shared Stripe account. Create two products ("devicebasedauth.org prepaid credit" and
