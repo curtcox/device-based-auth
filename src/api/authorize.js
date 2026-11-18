@@ -42,7 +42,7 @@ export async function authorize(request, env, auth) {
     throw error;
   }
   const location = { network: body.context?.network, device: proof?.loc };
-  const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true });
+  const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true, attestation: payload.device?.attestation });
   const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok, uses: r.online.uses, step_up: r.online.step_up })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
   const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account });
   const grant = decision.allow ? payload.grants[decision.grant_index] : null;

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { testEnv, call, newDevice } from '../test-utils/env.js';
-import { inspectCredential, signJws } from '../packages/verify/src/index.js';
+import { inspectCredential, signJws, createVerifier, createProof } from '../packages/verify/src/index.js';
+import { ORIGIN, worker } from '../test-utils/env.js';
 import { attestationAuthority, attestationChain } from '../test-utils/android-attestation.js';
 import { resetRevocationCache, createChallenge, verifyAttestation } from './services/attestation.js';
 
@@ -18,10 +19,10 @@ afterEach(() => { vi.unstubAllGlobals(); resetRevocationCache(); });
 const publicKeyOf = device => crypto.subtle.importKey('jwk', device.publicJwk, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']);
 
 /** Get a challenge, attest the device key with it, and start an enrollment. */
-async function attestedStart(device, { description, challengeOverride } = {}) {
+async function attestedStart(device, { description, challengeOverride, grants = [{ actions: ['hashbin:content:write'] }] } = {}) {
   const { body: { challenge } } = await call(env, 'POST', '/api/v1/enrollments/attestation-challenge');
   const x5c = await attestationChain(authority, await publicKeyOf(device), { challenge: new TextEncoder().encode(challengeOverride ?? challenge), description });
-  const request = await device.enrollRequest({ aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], device: { name: 'Pixel', kind: 'phone', key_protection: 'software' }, attestation: { format: 'android-key', challenge, x5c } });
+  const request = await device.enrollRequest({ aud: ['hashbin.org'], grants, device: { name: 'Pixel', kind: 'phone', key_protection: 'software' }, attestation: { format: 'android-key', challenge, x5c } });
   return call(env, 'POST', '/api/v1/enrollments', { body: { request } });
 }
 
@@ -50,6 +51,32 @@ describe('attested enrollment (B5, Android)', () => {
     const after = inspectCredential(rotated.body.credential).payload.device;
     expect(after.attestation).toBeUndefined();
     expect(after.name).toBe('Pixel');
+  });
+
+  it('lets grants require an attested key, checked offline and online', async () => {
+    const grants = [{ actions: ['hashbin:content:write'], require: { attestation: 'strongbox', verified_boot: true } }];
+    const verifier = createVerifier({ issuer: ORIGIN, audience: 'hashbin.org', fetch: (url, init) => worker.fetch(new Request(url, init), env) });
+    const attempt = async (device, credential) => verifier.verifyRequest(new Request('https://hashbin.org/api/content', { method: 'POST', headers: { Authorization: `DBA ${credential}`, DPoP: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url: 'https://hashbin.org/api/content', credential }) } }), { action: 'hashbin:content:write' });
+
+    const strong = await newDevice();
+    const start = await attestedStart(strong, { grants });
+    const credential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: start.body.request } })).body.credential;
+    expect((await attempt(strong, credential)).allow).toBe(true);
+    await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'operator', body: { amount_microdollars: 1_000_000 } });
+    const url = 'https://hashbin.org/api/content';
+    const proof = await createProof({ privateKey: strong.privateKey, publicJwk: strong.publicJwk, method: 'POST', url, credential });
+    const online = await call(env, 'POST', '/api/v1/authorize', { auth: 'operator', body: { credential, proof, request: { method: 'POST', url }, action: 'hashbin:content:write', audience: 'hashbin.org' } });
+    expect(online.body, JSON.stringify(online.body)).toMatchObject({ allow: true });
+
+    // A TEE key on an unlocked phone, and a key with no attestation at all, are refused offline.
+    const tee = await newDevice();
+    const teeStart = await attestedStart(tee, { grants, description: { securityLevel: 1, locked: false } });
+    const teeCredential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: teeStart.body.request } })).body.credential;
+    expect(await attempt(tee, teeCredential)).toMatchObject({ allow: false, status: 403, reasons: [['attestation_required', 'verified_boot_required']] });
+    const plain = await newDevice();
+    const plainStart = await call(env, 'POST', '/api/v1/enrollments', { body: { request: await plain.enrollRequest({ aud: ['hashbin.org'], grants }) } });
+    const plainCredential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: plainStart.body.request } })).body.credential;
+    expect((await attempt(plain, plainCredential)).reasons).toEqual([['attestation_required', 'verified_boot_required']]);
   });
 
   it('carries the attestation through enrollment-token redemption', async () => {

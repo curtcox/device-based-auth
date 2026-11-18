@@ -37,7 +37,9 @@ var (
 	areaKeys    = keySet("lat", "lon", "radius_m")
 	limitKeys   = keySet("uses", "spend_usd_per_month")
 	usesKeys    = keySet("count", "per")
-	requireKeys = keySet("online", "step_up")
+	requireKeys = keySet("online", "step_up", "attestation", "verified_boot")
+
+	attestationLevels = map[string][]string{"hardware": {"tee", "strongbox"}, "strongbox": {"strongbox"}}
 
 	actionPattern  = regexp.MustCompile(`^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$`)
 	timePattern    = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$`)
@@ -373,11 +375,16 @@ func ValidateGrant(grant any, path string) []string {
 		}
 	}
 	if require, ok := g.Get("require"); ok && checkKeys(require, requireKeys, path+".require", &errs) {
-		for _, key := range []string{"online", "step_up"} {
+		for _, key := range []string{"online", "step_up", "verified_boot"} {
 			if v, ok := get(require, key); ok {
 				if _, isBool := v.(bool); !isBool {
 					errs = append(errs, path+".require."+key+" must be true or false")
 				}
+			}
+		}
+		if v, ok := get(require, "attestation"); ok {
+			if level, isString := v.(string); !isString || attestationLevels[level] == nil {
+				errs = append(errs, path+`.require.attestation must be "hardware" or "strongbox"`)
 			}
 		}
 	}
@@ -618,6 +625,8 @@ type Context struct {
 	Resource string   // audience-defined; "" means none (matches only "*")
 	Location Location // observed network location and device-reported location
 	Online   bool     // true only when devicebasedauth.org itself evaluates (it enforces counters)
+	// Attestation is the presented credential's device.attestation (a JSON object), or nil.
+	Attestation any
 }
 
 func finite(p *float64) bool { return p != nil && !math.IsNaN(*p) && !math.IsInf(*p, 0) }
@@ -836,11 +845,34 @@ func EvaluateGrant(grant any, ctx Context) GrantResult {
 		}
 	}
 
+	// Key attestation is a fact about the credential (device.attestation, signed by the issuer),
+	// so it is checked offline like time and place.
+	require, _ := g.Get("require")
+	_, attested := asObject(ctx.Attestation)
+	if level, ok := get(require, "attestation"); ok {
+		securityLevel, _ := get(ctx.Attestation, "security_level")
+		allowed := false
+		if name, isString := level.(string); isString && attested {
+			for _, l := range attestationLevels[name] {
+				allowed = allowed || strictEqual(securityLevel, l)
+			}
+		}
+		if !allowed {
+			reasons = append(reasons, "attestation_required")
+		}
+	}
+	if v, _ := get(require, "verified_boot"); truthy(v) {
+		boot, _ := get(ctx.Attestation, "verified_boot")
+		locked, _ := get(ctx.Attestation, "device_locked")
+		if !attested || !strictEqual(boot, "verified") || !strictEqual(locked, true) {
+			reasons = append(reasons, "verified_boot_required")
+		}
+	}
+
 	limits, _ := g.Get("limits")
 	if uses, _ := get(limits, "uses"); truthy(uses) {
 		online.Uses = uses
 	}
-	require, _ := g.Get("require")
 	if v, _ := get(require, "step_up"); truthy(v) {
 		online.StepUp = true
 	}

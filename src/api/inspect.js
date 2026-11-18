@@ -31,7 +31,7 @@ export async function inspect(request, env) {
   if (Array.isArray(decoded.payload.grants)) result.descriptions = decoded.payload.grants.map(describeGrant);
   if (body.check?.action) {
     const now = body.check.now ?? Math.floor(Date.now() / 1000);
-    const evaluation = evaluateGrants(decoded.payload.grants, { now, action: body.check.action, resource: body.check.resource, location: body.check.location, online: !!body.check.online });
+    const evaluation = evaluateGrants(decoded.payload.grants, { now, action: body.check.action, resource: body.check.resource, location: body.check.location, online: !!body.check.online, attestation: decoded.payload.device?.attestation });
     result.evaluation = { allow: evaluation.allow && result.valid, grant_index: evaluation.grant_index, reasons: evaluation.reasons, online_required: evaluation.online_required };
   }
   return result;

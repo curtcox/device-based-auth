@@ -54,5 +54,14 @@ export const cases = [
   ['unknown nested key denies', [{ actions: W, when: { tz: 'UTC', moon: 'full' } }], ctx(), false, null, [['unknown_constraint:when.moon']]],
   ['invalid grant denies', [{ actions: ['not an action'] }], ctx(), false, null, [['invalid_grant']]],
   ['window times must be strings, not lists', [{ actions: W, when: { tz: 'UTC', windows: [{ from: ['08:00'], to: '23:00' }] } }], ctx(), false, null, [['invalid_grant']]],
+  ['attestation required but the credential has none', [{ actions: W, require: { attestation: 'hardware' } }], ctx(), false, null, [['attestation_required']]],
+  ['hardware attestation satisfied by a TEE key, offline', [{ actions: W, require: { attestation: 'hardware' } }], ctx({ attestation: { format: 'android-key', security_level: 'tee' } }), true, 0, [[]]],
+  ['strongbox attestation not satisfied by a TEE key', [{ actions: W, require: { attestation: 'strongbox' } }], ctx({ attestation: { format: 'android-key', security_level: 'tee' } }), false, null, [['attestation_required']]],
+  ['strongbox attestation satisfied', [{ actions: W, require: { attestation: 'strongbox' } }], ctx({ attestation: { format: 'android-key', security_level: 'strongbox' } }), true, 0, [[]]],
+  ['verified boot needs a locked bootloader too', [{ actions: W, require: { verified_boot: true } }], ctx({ attestation: { format: 'android-key', security_level: 'tee', verified_boot: 'verified', device_locked: false } }), false, null, [['verified_boot_required']]],
+  ['verified boot satisfied', [{ actions: W, require: { attestation: 'hardware', verified_boot: true } }], ctx({ attestation: { format: 'android-key', security_level: 'strongbox', verified_boot: 'verified', device_locked: true } }), true, 0, [[]]],
+  ['verified boot false does not require anything', [{ actions: W, require: { verified_boot: false } }], ctx(), true, 0, [[]]],
+  ['unknown attestation level is an invalid grant', [{ actions: W, require: { attestation: 'tpm' } }], ctx(), false, null, [['invalid_grant']]],
+  ['attestation must be an object to count', [{ actions: W, require: { attestation: 'hardware' } }], ctx({ attestation: 'strongbox' }), false, null, [['attestation_required']]],
   ['all failing reasons are reported', [{ actions: ['x:y'], resources: ['other'] }], ctx(), false, null, [['action_not_granted', 'resource_not_granted']]]
 ].map(([name, grants, context, allow, grant_index, reasons]) => ({ name, grants, context, expected: { allow, grant_index, reasons } }));

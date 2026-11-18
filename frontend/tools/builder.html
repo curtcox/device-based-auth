@@ -63,7 +63,9 @@
 </div>
 <label class="check"><input type="checkbox" name="online"> Check online every time (instant revocation, decision log)</label>
 <label class="check"><input type="checkbox" name="step_up"> The owner approves each use (step-up)</label>
-<p class="hint">Usage limits, online checks and step-up need online authorization; offline verifiers deny these grants with <code>online_required</code>.</p>
+<label>Key attestation<select name="attestation"><option value="">not required</option><option value="hardware">key attested in secure hardware (TEE or StrongBox)</option><option value="strongbox">key attested in StrongBox</option></select></label>
+<label class="check"><input type="checkbox" name="verified_boot"> Only from an attested device with verified boot and a locked bootloader</label>
+<p class="hint">Usage limits, online checks and step-up need online authorization; offline verifiers deny these grants with <code>online_required</code>. Attestation is checked offline from the credential (Android devices that sent a Keystore attestation chain).</p>
 </fieldset>
 <fieldset><legend>Device</legend>
 <div class="row">

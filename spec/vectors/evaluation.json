@@ -1420,6 +1420,267 @@
       }
     },
     {
+      "name": "attestation required but the credential has none",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attestation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "hardware attestation satisfied by a TEE key, offline",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "tee"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "strongbox attestation not satisfied by a TEE key",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "strongbox"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "tee"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attestation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "strongbox attestation satisfied",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "strongbox"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "verified boot needs a locked bootloader too",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "verified_boot": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "tee",
+          "verified_boot": "verified",
+          "device_locked": false
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "verified_boot_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "verified boot satisfied",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware",
+            "verified_boot": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": {
+          "format": "android-key",
+          "security_level": "strongbox",
+          "verified_boot": "verified",
+          "device_locked": true
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "verified boot false does not require anything",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "verified_boot": false
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "unknown attestation level is an invalid grant",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "tpm"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "attestation must be an object to count",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "attestation": "hardware"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "attestation": "strongbox"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "attestation_required"
+          ]
+        ]
+      }
+    },
+    {
       "name": "all failing reasons are reported",
       "grants": [
         {

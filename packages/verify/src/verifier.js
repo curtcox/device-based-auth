@@ -165,7 +165,7 @@ export function createVerifier(options = {}) {
   /** Evaluate grants for an already-verified payload. */
   function decide(payload, check, { request, proof } = {}) {
     const location = { network: check.location?.network ?? (request ? networkLocation(request) : undefined), device: check.location?.device ?? proof?.loc };
-    const result = evaluateGrants(payload.grants, { now: clock(), action: check.action, resource: check.resource, location, online: false });
+    const result = evaluateGrants(payload.grants, { now: clock(), action: check.action, resource: check.resource, location, online: false, attestation: payload.device?.attestation });
     return {
       allow: result.allow, status: result.allow ? 200 : 403, code: result.allow ? 'ok' : result.online_required ? 'online_required' : 'forbidden',
       reasons: result.reasons, grant_index: result.grant_index, grant: result.grant, caveats: result.caveats, online_required: result.online_required,

@@ -73,7 +73,7 @@ export class DBA {
    */
   allows(action, { resource, location } = {}) {
     const p = this.payload; if (!p || this.expiresIn() <= 0) return false;
-    return evaluateGrants(p.grants, { now: Math.floor(Date.now() / 1000), action, resource, location, online: false }).allow;
+    return evaluateGrants(p.grants, { now: Math.floor(Date.now() / 1000), action, resource, location, online: false, attestation: p.device?.attestation }).allow;
   }
 
   async key() {

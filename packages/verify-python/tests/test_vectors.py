@@ -75,3 +75,19 @@ for _i, _case in enumerate(CREDENTIALS["proofs"]):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JavaScriptCrosscheck(unittest.TestCase):
+    """Edge cases beyond spec/vectors, decided by the JavaScript reference (shared with the Go port)."""
+
+    def test_crosscheck_cases(self):
+        import json
+        import pathlib
+        path = pathlib.Path(__file__).resolve().parents[2] / "verify-go" / "testdata" / "crosscheck.json"
+        cases = json.loads(path.read_text())["cases"]
+        self.assertGreater(len(cases), 0)
+        for case in cases:
+            with self.subTest(case["name"]):
+                result = evaluate_grants(case["grants"], case["context"])
+                got = {k: result.get(k) for k in ("allow", "grant_index", "reasons", "online_required")}
+                self.assertEqual(got, {k: case["result"].get(k) for k in got})

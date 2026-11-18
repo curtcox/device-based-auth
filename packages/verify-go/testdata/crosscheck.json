@@ -344,6 +344,133 @@
    }
   },
   {
+   "name": "attestation level as a list",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "attestation": [
+       "hardware"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "attestation": {
+     "security_level": "tee"
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "attestation level inherited name",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "attestation": "toString"
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "attestation": {
+     "security_level": "tee"
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "attestation as array",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "attestation": "hardware"
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "attestation": [
+     "tee"
+    ]
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "attestation_required"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "attestation locked as 1",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "verified_boot": true
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "attestation": {
+     "verified_boot": "verified",
+     "device_locked": 1
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "verified_boot_required"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
    "name": "spend caveat",
    "grants": [
     {

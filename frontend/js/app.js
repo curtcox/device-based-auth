@@ -242,7 +242,7 @@ async function credential(cid) {
   const checkResult = h('div', {});
   check.addEventListener('submit', event => {
     event.preventDefault();
-    const result = evaluateGrants(cred.grants, { now: Math.floor(Date.now() / 1000), action: field(check, 'action'), resource: field(check, 'resource') || undefined, online: false });
+    const result = evaluateGrants(cred.grants, { now: Math.floor(Date.now() / 1000), action: field(check, 'action'), resource: field(check, 'resource') || undefined, online: false, attestation: cred.device?.attestation });
     replace(checkResult, h('p', {}, h('span', { class: `verdict ${result.allow ? 'allow' : 'deny'}` }, result.allow ? 'Allowed' : 'Denied'), ' ',
       h('span', { class: 'muted small' }, result.allow ? `by grant ${result.grant_index + 1}` : result.reasons.map((r, i) => `grant ${i + 1}: ${r.join(', ')}`).join('; ')),
       cred.state !== 'active' ? h('span', { class: 'muted small' }, ` — but the credential is ${cred.state}.`) : null));

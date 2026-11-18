@@ -22,7 +22,7 @@ MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorizati
 A credential is a compact JWS (ES256), header `{"typ":"dba-device+jwt","alg":"ES256","kid":…}`. Decode the middle segment (base64url JSON) to read it:
 `iss`, `sub` (device id), `acct` (issuing account), `aud` (site names), `cid` (credential id), `jti`, `iat`/`nbf`/`exp`, `cnf.jkt` (device key thumbprint), `device`, `grants`, `status.status_list {idx, uri}`, `ver`.
 
-A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "require": {"online","step_up"} }`. Deny by default; any passing grant allows; unknown constraints deny.
+A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "require": {"online","step_up","attestation":"hardware|strongbox","verified_boot"} }`. Deny by default; any passing grant allows; unknown constraints deny.
 
 Present it as `Authorization: DBA <credential>` plus `DPoP: <proof>` (RFC 9449 proof JWT signed by the device key with htm, htu, iat, jti, ath).
 

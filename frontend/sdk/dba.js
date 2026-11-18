@@ -62,7 +62,8 @@ var WHERE_KEYS = /* @__PURE__ */ new Set(["source", "countries", "regions", "are
 var AREA_KEYS = /* @__PURE__ */ new Set(["lat", "lon", "radius_m"]);
 var LIMIT_KEYS = /* @__PURE__ */ new Set(["uses", "spend_usd_per_month"]);
 var USES_KEYS = /* @__PURE__ */ new Set(["count", "per"]);
-var REQUIRE_KEYS = /* @__PURE__ */ new Set(["online", "step_up"]);
+var REQUIRE_KEYS = /* @__PURE__ */ new Set(["online", "step_up", "attestation", "verified_boot"]);
+var ATTESTATION_LEVELS = { hardware: ["tee", "strongbox"], strongbox: ["strongbox"] };
 var ACTION = /^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$/;
 var TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 var DEVICE_LOCATION_MAX_AGE = 300;
@@ -203,7 +204,8 @@ function validateGrant(grant, path = "grant") {
     if (spend !== void 0 && !(Number.isFinite(spend) && spend >= 0 && spend <= 1e6)) errors.push(`${path}.limits.spend_usd_per_month must be a number from 0 to 1,000,000`);
   }
   if (grant.require !== void 0 && checkKeys(grant.require, REQUIRE_KEYS, `${path}.require`, errors)) {
-    for (const key of ["online", "step_up"]) if (grant.require[key] !== void 0 && typeof grant.require[key] !== "boolean") errors.push(`${path}.require.${key} must be true or false`);
+    for (const key of ["online", "step_up", "verified_boot"]) if (grant.require[key] !== void 0 && typeof grant.require[key] !== "boolean") errors.push(`${path}.require.${key} must be true or false`);
+    if (grant.require.attestation !== void 0 && (typeof grant.require.attestation !== "string" || !Object.hasOwn(ATTESTATION_LEVELS, grant.require.attestation))) errors.push(`${path}.require.attestation must be "hardware" or "strongbox"`);
   }
   return errors;
 }
@@ -274,6 +276,9 @@ function evaluateGrant(grant, context) {
     if (where.source === "network" || where.source === "both") checkSource(where, location2.network, "network", now, reasons);
     if (where.source === "device" || where.source === "both") checkSource(where, location2.device, "device", now, reasons);
   }
+  const attestation = context.attestation;
+  if (grant.require?.attestation !== void 0 && !(isObject(attestation) && ATTESTATION_LEVELS[grant.require.attestation].includes(attestation.security_level))) reasons.push("attestation_required");
+  if (grant.require?.verified_boot && !(isObject(attestation) && attestation.verified_boot === "verified" && attestation.device_locked === true)) reasons.push("verified_boot_required");
   if (grant.limits?.uses) online.uses = grant.limits.uses;
   if (grant.require?.step_up) online.step_up = true;
   if (grant.require?.online) online.required = true;
@@ -328,6 +333,9 @@ function describeGrant(grant) {
   const uses = grant.limits?.uses;
   if (uses) parts.push(uses.per === "total" ? `at most ${uses.count} time${uses.count === 1 ? "" : "s"} in total` : `at most ${uses.count} time${uses.count === 1 ? "" : "s"} per ${uses.per}`);
   if (grant.limits?.spend_usd_per_month !== void 0) parts.push(`spending at most $${grant.limits.spend_usd_per_month.toFixed(2)} per month`);
+  if (grant.require?.attestation === "strongbox") parts.push("only with a key attested to be in a StrongBox secure element");
+  else if (grant.require?.attestation === "hardware") parts.push("only with a key attested to be in secure hardware");
+  if (grant.require?.verified_boot) parts.push("only from a device attested to have verified boot and a locked bootloader");
   if (grant.require?.step_up) parts.push("with the owner approving each use");
   if (grant.require?.online) parts.push("checked online with devicebasedauth.org every time");
   return `${parts.join(", ")}.`;
@@ -429,7 +437,7 @@ var DBA = class {
   allows(action, { resource, location: location2 } = {}) {
     const p = this.payload;
     if (!p || this.expiresIn() <= 0) return false;
-    return evaluateGrants(p.grants, { now: Math.floor(Date.now() / 1e3), action, resource, location: location2, online: false }).allow;
+    return evaluateGrants(p.grants, { now: Math.floor(Date.now() / 1e3), action, resource, location: location2, online: false, attestation: p.device?.attestation }).allow;
   }
   async key() {
     if (!this.state?.privateKey) {

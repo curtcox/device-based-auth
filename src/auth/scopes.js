@@ -18,7 +18,7 @@ export function parseScopes(input) {
 /** Does a device credential's grants allow "dba:<action>" right now? */
 function deviceAllows(auth, action) {
   if (!auth.device?.dba) return false;
-  const result = evaluateGrants(auth.device.payload.grants, { now: Math.floor(Date.now() / 1000), action, location: auth.device.location, online: true });
+  const result = evaluateGrants(auth.device.payload.grants, { now: Math.floor(Date.now() / 1000), action, location: auth.device.location, online: true, attestation: auth.device.payload.device?.attestation });
   return result.allow;
 }
 

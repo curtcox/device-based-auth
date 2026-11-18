@@ -67,9 +67,11 @@ test('the grant builder produces valid JSON, a CLI command and an SDK snippet', 
   await page.getByLabel(/Countries/).fill('US, CA');
   await page.getByLabel('Spend cap (USD / month)').fill('3');
   await page.getByLabel(/owner approves each use/).check();
+  await page.getByLabel('Key attestation').selectOption('strongbox');
   const grant = JSON.parse(await page.locator('#grant-json').textContent());
-  expect(grant).toEqual({ actions: ['hashbin:content:write'], where: { source: 'network', countries: ['US', 'CA'] }, limits: { spend_usd_per_month: 3 }, require: { step_up: true } });
+  expect(grant).toEqual({ actions: ['hashbin:content:write'], where: { source: 'network', countries: ['US', 'CA'] }, limits: { spend_usd_per_month: 3 }, require: { step_up: true, attestation: 'strongbox' } });
   await expect(page.locator('#english')).toContainText('only from US or CA');
+  await expect(page.locator('#english')).toContainText('only with a key attested to be in a StrongBox secure element');
   await expect(page.locator('#cli-command')).toContainText('dba enroll --aud hashbin.org --grant');
   await expect(page.locator('#sdk-snippet')).toContainText("aud: [\"hashbin.org\"]");
   await page.getByLabel(/Countries/).fill('usa');

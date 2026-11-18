@@ -298,6 +298,9 @@ class Verifier:
                    "online": False}
         if resource is not None:
             context["resource"] = resource
+        attestation = payload.get("device", {}).get("attestation") if isinstance(payload.get("device"), dict) else None
+        if attestation is not None:
+            context["attestation"] = attestation
         result = evaluate_grants(payload["grants"], context)
         return {
             "allow": result["allow"], "status": 200 if result["allow"] else 403,

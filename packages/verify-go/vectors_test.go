@@ -44,6 +44,7 @@ func contextFromVector(c any) Context {
 	}
 	device, _ := get(location, "device")
 	ctx.Location.Device = DeviceLocationFromClaim(device)
+	ctx.Attestation, _ = get(c, "attestation")
 	return ctx
 }
 

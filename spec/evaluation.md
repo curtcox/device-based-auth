@@ -15,6 +15,7 @@ in `context` yields `expected.allow`, `expected.grant_index`, and per-grant `exp
   `cf.longitude`, `CF-Connecting-IP`).
 - `location.device` — the `loc` claim from the verified DPoP proof: `{ lat, lon, acc_m, t }`.
 - `online` — true only when devicebasedauth.org itself is evaluating (it can enforce counters).
+- `attestation` — the presented credential's `device.attestation`, if any (credential.md §3a).
 
 ## 2. Decision
 
@@ -84,6 +85,14 @@ honest as the device. See the master plan §3.5.
 
 - `online: true` — the grant may only be used through online authorization.
 - `step_up: true` — online, and the account owner must approve each use.
+- `attestation: "hardware" | "strongbox"` — the credential's `device.attestation` (credential.md
+  §3a) must show the key in a TEE or StrongBox (`hardware`), or in StrongBox only (`strongbox`);
+  otherwise `attestation_required`. The evaluator reads it from `context.attestation`, which
+  verifiers set to the presented credential's `device.attestation` (never from the request).
+- `verified_boot: true` — `context.attestation` must report `verified_boot: "verified"` and
+  `device_locked: true`; otherwise `verified_boot_required`. `false` requires nothing.
+
+Both are checked offline: the attestation is part of the signed credential.
 
 ### 3.7 Online-only constraints
 

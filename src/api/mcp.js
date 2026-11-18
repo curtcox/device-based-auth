@@ -14,7 +14,7 @@ export const MCP_TOOLS = [
   { name: 'revoke_credential', description: 'Revoke a credential immediately (free).', inputSchema: object({ cid: string }, ['cid']), path: '/api/v1/credentials/:cid', method: 'DELETE' },
   { name: 'quote', description: 'Price of an operation in micro-dollars (issue, renew, decision, read, token, login, audience).', inputSchema: object({ op: string }, ['op']), path: '/api/v1/quote' },
   { name: 'inspect_credential', description: 'Decode and verify a credential; optionally check an action.', inputSchema: object({ credential: string, action: string, resource: string }, ['credential']), path: '/api/v1/inspect', method: 'POST', body: a => ({ credential: a.credential, ...(a.action ? { check: { action: a.action, resource: a.resource } } : {}) }) },
-  { name: 'evaluate_grants', description: 'Evaluate grants (JSON array) for an action at a time and location, offline and free. Same evaluator verifiers use.', inputSchema: object({ grants: string, action: string, resource: string, now: { type: 'integer' }, location: { type: 'object' } }, ['grants', 'action']), local: true }
+  { name: 'evaluate_grants', description: 'Evaluate grants (JSON array) for an action at a time and location (and, for require.attestation, the credential\'s device.attestation), offline and free. Same evaluator verifiers use.', inputSchema: object({ grants: string, action: string, resource: string, now: { type: 'integer' }, location: { type: 'object' }, attestation: { type: 'object' } }, ['grants', 'action']), local: true }
 ];
 
 /** Stateless Streamable HTTP MCP endpoint (ported from cronly). */
@@ -37,7 +37,7 @@ export async function mcp(request, env, auth, invoke) {
     if (tool.local) {
       let grants; try { grants = JSON.parse(args.grants); } catch { assert(false, 'invalid_arguments', 'grants must be a JSON array'); }
       const problems = validateGrants(grants);
-      const result = evaluateGrants(grants, { now: args.now ?? Math.floor(Date.now() / 1000), action: args.action, resource: args.resource, location: args.location, online: false });
+      const result = evaluateGrants(grants, { now: args.now ?? Math.floor(Date.now() / 1000), action: args.action, resource: args.resource, location: args.location, online: false, attestation: args.attestation });
       return text({ allow: result.allow, grant_index: result.grant_index, reasons: result.reasons, online_required: result.online_required, problems, descriptions: Array.isArray(grants) ? grants.map(describeGrant) : [] });
     }
     let path = tool.path.replace(/:([a-z_]+)/g, (_, key) => encodeURIComponent(args[key]));

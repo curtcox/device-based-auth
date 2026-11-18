@@ -29,7 +29,8 @@ WHERE_KEYS = {"source", "countries", "regions", "areas", "networks"}
 AREA_KEYS = {"lat", "lon", "radius_m"}
 LIMIT_KEYS = {"uses", "spend_usd_per_month"}
 USES_KEYS = {"count", "per"}
-REQUIRE_KEYS = {"online", "step_up"}
+REQUIRE_KEYS = {"online", "step_up", "attestation", "verified_boot"}
+ATTESTATION_LEVELS = {"hardware": ["tee", "strongbox"], "strongbox": ["strongbox"]}
 LIMITS = {"grants": 32, "actions": 64, "resources": 64, "windows": 16, "places": 64, "networks": 64, "resourceLength": 256}
 DEVICE_LOCATION_MAX_AGE = 300
 
@@ -318,10 +319,13 @@ def validate_grant(grant, path: str = "grant") -> list:
         if spend is not MISSING and not (is_finite(spend) and 0 <= spend <= 1e6):
             errors.append(f"{path}.limits.spend_usd_per_month must be a number from 0 to 1,000,000")
     if present(grant, "require") and _check_keys(grant["require"], REQUIRE_KEYS, f"{path}.require", errors):
-        for key in ("online", "step_up"):
+        for key in ("online", "step_up", "verified_boot"):
             value = get(grant["require"], key)
             if value is not MISSING and not isinstance(value, bool):
                 errors.append(f"{path}.require.{key} must be true or false")
+        level = get(grant["require"], "attestation")
+        if level is not MISSING and not (isinstance(level, str) and level in ATTESTATION_LEVELS):
+            errors.append(f'{path}.require.attestation must be "hardware" or "strongbox"')
     return errors
 
 
@@ -437,6 +441,16 @@ def evaluate_grant(grant, context: dict) -> dict:
         if where["source"] in ("device", "both"):
             _check_source(where, get(location, "device"), "device", now, reasons)
     limits, require = get(grant, "limits"), get(grant, "require")
+    # Key attestation is a fact about the credential (device.attestation, signed by the issuer),
+    # so it is checked offline like time and place.
+    attestation = get(context, "attestation")
+    level = get(require, "attestation")
+    if level is not MISSING and not (is_object(attestation) and includes(ATTESTATION_LEVELS[level], get(attestation, "security_level"))):
+        reasons.append("attestation_required")
+    if truthy(get(require, "verified_boot")) and not (
+        is_object(attestation) and _js.strict_eq(get(attestation, "verified_boot"), "verified") and _js.strict_eq(get(attestation, "device_locked"), True)
+    ):
+        reasons.append("verified_boot_required")
     if truthy(get(limits, "uses")):
         online["uses"] = limits["uses"]
     if truthy(get(require, "step_up")):
@@ -453,7 +467,7 @@ def evaluate_grants(grants, context: dict) -> dict:
     Evaluate every grant; allow when any grant passes (deny by default).
 
     context: {now (seconds, the verifier's clock), action, resource, location: {network, device},
-    online}. Returns {allow, grant_index, grant, online, caveats, reasons, online_required,
+    online, attestation (the credential's device.attestation, if any)}. Returns {allow, grant_index, grant, online, caveats, reasons, online_required,
     results}, where reasons has one list per grant.
     """
     if not isinstance(grants, list):
