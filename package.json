@@ -14,7 +14,7 @@
     "dev": "wrangler dev",
     "dev:local": "wrangler dev --config wrangler.local.toml --local",
     "deploy": "wrangler deploy",
-    "lint": "eslint --ext .js,.mjs src packages scripts spec frontend/js frontend/sdk test-utils --no-error-on-unmatched-pattern",
+    "lint": "eslint --ext .js,.mjs src packages scripts spec docs/samples frontend/js frontend/sdk test-utils --no-error-on-unmatched-pattern",
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
