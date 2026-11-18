@@ -22,10 +22,16 @@ export function oidcConfiguration(env) {
   }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
 }
 
+/** Local development lets first-party sites (hashbin, cronly) run their callbacks on localhost. */
+function localRedirect(env, audience, redirectUri) {
+  if (env.ENVIRONMENT !== 'local' || !audience.first_party) return false;
+  try { const u = new URL(redirectUri); return u.protocol === 'http:' && u.hostname === 'localhost' && !u.hash; } catch { return false; }
+}
+
 async function client(env, clientId, redirectUri) {
   const audience = await rpc(env.REGISTRY, 'global', 'get', { name: String(clientId || '') }).catch(() => null);
   assert(audience, 'invalid_client', 'Unknown client_id (register the site as an audience first)', 400);
-  assert(audience.redirect_uris?.includes(redirectUri), 'invalid_redirect_uri', 'redirect_uri is not registered for this client', 400);
+  assert(audience.redirect_uris?.includes(redirectUri) || localRedirect(env, audience, redirectUri), 'invalid_redirect_uri', 'redirect_uri is not registered for this client', 400);
   return audience;
 }
 

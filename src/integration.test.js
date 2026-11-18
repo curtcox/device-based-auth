@@ -283,6 +283,8 @@ describe('OpenID Connect', () => {
     expect((await call(env, 'GET', '/api/v1/account', { auth: 'operator' })).body.today.aggregates.login).toEqual({ count: 1, amount: 10 });
     const bad = await call(env, 'POST', '/oauth/authorize', { auth: 'alice', body: { client_id: 'cronly.org', redirect_uri: 'https://evil.example/cb', response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', approve: true } });
     expect(bad.body.code).toBe('invalid_redirect_uri');
+    const local = await call(env, 'POST', '/oauth/authorize', { auth: 'alice', body: { client_id: 'hashbin.org', redirect_uri: 'http://localhost:8790/auth/dba/callback', response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', approve: true } });
+    expect(local.body.redirect).toMatch(/^http:\/\/localhost:8790\/auth\/dba\/callback\?code=/);
   });
 });
 

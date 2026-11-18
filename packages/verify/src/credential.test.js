@@ -112,6 +112,20 @@ describe('verifier', () => {
     const revoked = await setup({ revoked: true });
     expect(await revoked.verifier.verifyRequest(await revoked.request(), { action: 'hashbin:content:write' })).toMatchObject({ allow: false, status: 401, code: 'revoked' });
   });
+  it('treats auth schemes case-insensitively and backs off while the issuer is down', async () => {
+    const { verifier, credential, dev } = await setup();
+    const url = 'https://hashbin.org/api/content';
+    const lower = new Request(url, { method: 'POST', headers: { Authorization: `dba ${credential}`, DPoP: await createProof({ ...dev, method: 'POST', url, credential, now: NOW }) } });
+    expect((await verifier.verifyRequest(lower, { action: 'hashbin:content:write' })).allow).toBe(true);
+    let calls = 0;
+    const down = createVerifier({ audience: 'hashbin.org', fetch: async () => { calls++; throw new Error('offline'); }, now: () => NOW });
+    const request = () => new Request(url, { method: 'POST', headers: { Authorization: `DBA ${credential}`, DPoP: 'x' } });
+    expect(await down.verifyRequest(request(), { action: 'hashbin:content:write' })).toMatchObject({ allow: false, status: 503, code: 'jwks_unavailable' });
+    await down.verifyRequest(request(), { action: 'hashbin:content:write' });
+    expect(calls).toBe(1);
+    expect(await down.verifyRequest(new Request(url, { headers: { Authorization: 'DBA not-a-jws' } }), { action: 'x:y' })).toMatchObject({ code: 'invalid_format' });
+    expect(calls).toBe(1);
+  });
   it('accepts access tokens as bearer credentials', async () => {
     const { verifier, signer } = await setup();
     const token = await signAccessToken({ ...payload({ jkt: 'x' }), jti: 'tok_1', exp: NOW + 600, cnf: undefined }, signer);
