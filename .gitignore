@@ -6,3 +6,5 @@ playwright-report/
 build-reports/
 *.log
 .DS_Store
+__pycache__/
+*.pyc

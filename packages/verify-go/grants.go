@@ -1,0 +1,821 @@
+package dbaverify
+
+import (
+	"fmt"
+	"math"
+	"net/netip"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	_ "time/tzdata" // grants name IANA zones; do not depend on the host having zoneinfo installed
+)
+
+// Grant vocabulary v1: validation and evaluation. The normative description is
+// spec/evaluation.md, and spec/vectors/evaluation.json must pass. Grants are untrusted JSON
+// (parsed with ParseJSON), handled dynamically so that unknown members can be detected and
+// reported exactly as the JavaScript evaluator reports them.
+
+// VocabularyVersion is the grant vocabulary version credentials carry in "ver".
+const VocabularyVersion = 1
+
+// Days are the weekday names grants use, Sunday first (time.Weekday order).
+var Days = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
+
+// UsePeriods are the periods of limits.uses.
+var UsePeriods = []string{"minute", "hour", "day", "month", "total"}
+
+// Limits are the size limits on grant lists.
+var Limits = struct{ Grants, Actions, Resources, Windows, Places, Networks, ResourceLength int }{32, 64, 64, 16, 64, 64, 256}
+
+var (
+	grantKeys   = keySet("actions", "resources", "when", "where", "limits", "require")
+	whenKeys    = keySet("tz", "windows", "not_before", "not_after")
+	windowKeys  = keySet("days", "from", "to")
+	whereKeys   = keySet("source", "countries", "regions", "areas", "networks")
+	areaKeys    = keySet("lat", "lon", "radius_m")
+	limitKeys   = keySet("uses", "spend_usd_per_month")
+	usesKeys    = keySet("count", "per")
+	requireKeys = keySet("online", "step_up")
+
+	actionPattern  = regexp.MustCompile(`^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$`)
+	timePattern    = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$`)
+	countryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
+	regionPattern  = regexp.MustCompile(`^[A-Z]{2}-[A-Z0-9]{1,3}$`)
+)
+
+// deviceLocationMaxAge is how old (seconds) a device-reported location may be.
+const deviceLocationMaxAge = 300
+
+func keySet(keys ...string) map[string]bool {
+	m := map[string]bool{}
+	for _, k := range keys {
+		m[k] = true
+	}
+	return m
+}
+
+func contains(list []string, v any) bool {
+	s, ok := v.(string)
+	if !ok {
+		return false
+	}
+	for _, item := range list {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+// listIncludes is Array.prototype.includes on a parsed JSON array.
+func listIncludes(list any, v any) bool {
+	items, ok := list.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		if strictEqual(item, v) {
+			return true
+		}
+	}
+	return false
+}
+
+var zoneCache sync.Map // name -> *time.Location
+
+// loadZone resolves an IANA zone. Only successes are cached; zone names come from
+// issuer-signed grants, so the cache is bounded by what the issuer accepts.
+func loadZone(tz any) (*time.Location, bool) {
+	name, ok := tz.(string)
+	// Go accepts "" (UTC) and "Local" (the host zone); Intl.DateTimeFormat accepts neither.
+	if !ok || name == "" || name == "Local" {
+		return nil, false
+	}
+	if loc, ok := zoneCache.Load(name); ok {
+		return loc.(*time.Location), true
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, false
+	}
+	zoneCache.Store(name, loc)
+	return loc, true
+}
+
+// ValidTimeZone reports whether the IANA zone is known (embedded tzdata is always available).
+func ValidTimeZone(tz string) bool { _, ok := loadZone(tz); return ok }
+
+// parseIP parses an IPv4 or IPv6 address exactly as the JavaScript parseIp does (which is more
+// lenient than net/netip about IPv4 leading zeros and stricter about zones), returning a
+// netip.Addr so that range checks can use net/netip.
+func parseIP(ip string) (netip.Addr, bool) {
+	if ipv4Pattern.MatchString(ip) {
+		var b [4]byte
+		for i, part := range strings.Split(ip, ".") {
+			n, _ := strconv.Atoi(part)
+			if n > 255 {
+				return netip.Addr{}, false
+			}
+			b[i] = byte(n)
+		}
+		return netip.AddrFrom4(b), true
+	}
+	if !ipv6Chars.MatchString(ip) || !strings.Contains(ip, ":") {
+		return netip.Addr{}, false
+	}
+	address := ip
+	if m := ipv4Suffix.FindStringSubmatch(address); m != nil {
+		v4, ok := parseIP(m[1])
+		if !ok {
+			return netip.Addr{}, false
+		}
+		b := v4.As4()
+		hi := uint32(b[0])<<8 | uint32(b[1])
+		lo := uint32(b[2])<<8 | uint32(b[3])
+		address = address[:len(address)-len(m[1])] + strconv.FormatUint(uint64(hi), 16) + ":" + strconv.FormatUint(uint64(lo), 16)
+	}
+	halves := strings.Split(address, "::")
+	if len(halves) > 2 {
+		return netip.Addr{}, false
+	}
+	var head, tail []string
+	if halves[0] != "" {
+		head = strings.Split(halves[0], ":")
+	}
+	if len(halves) == 2 && halves[1] != "" {
+		tail = strings.Split(halves[1], ":")
+	}
+	missing := 8 - len(head) - len(tail)
+	if (len(halves) == 1 && missing != 0) || missing < 0 {
+		return netip.Addr{}, false
+	}
+	groups := append([]string{}, head...)
+	if len(halves) == 2 {
+		for i := 0; i < missing; i++ {
+			groups = append(groups, "0")
+		}
+	}
+	groups = append(groups, tail...)
+	if len(groups) != 8 {
+		return netip.Addr{}, false
+	}
+	var b [16]byte
+	for i, g := range groups {
+		if !hexGroup.MatchString(g) {
+			return netip.Addr{}, false
+		}
+		n, _ := strconv.ParseUint(g, 16, 16)
+		b[2*i] = byte(n >> 8)
+		b[2*i+1] = byte(n)
+	}
+	return netip.AddrFrom16(b), true
+}
+
+var (
+	ipv4Pattern = regexp.MustCompile(`^\d{1,3}(\.\d{1,3}){3}$`)
+	ipv6Chars   = regexp.MustCompile(`^[0-9a-fA-F:.]+$`)
+	ipv4Suffix  = regexp.MustCompile(`(\d{1,3}(?:\.\d{1,3}){3})$`)
+	hexGroup    = regexp.MustCompile(`^[0-9a-fA-F]{1,4}$`)
+	prefixText  = regexp.MustCompile(`^\d{1,3}$`)
+)
+
+// ParseCIDR parses a CIDR range as the JavaScript parseCidr does. Host bits need not be zero.
+func ParseCIDR(cidr string) (netip.Prefix, bool) {
+	parts := strings.Split(cidr, "/")
+	if len(parts) != 2 || !prefixText.MatchString(parts[1]) {
+		return netip.Prefix{}, false
+	}
+	addr, ok := parseIP(parts[0])
+	if !ok {
+		return netip.Prefix{}, false
+	}
+	bits, _ := strconv.Atoi(parts[1])
+	if bits > addr.BitLen() {
+		return netip.Prefix{}, false
+	}
+	return netip.PrefixFrom(addr, bits).Masked(), true
+}
+
+// IPInCIDR reports whether ip is inside the CIDR range. Address families never match each
+// other (an IPv4-mapped IPv6 address does not match an IPv4 range), as in the JavaScript.
+func IPInCIDR(ip, cidr string) bool {
+	addr, ok := parseIP(ip)
+	if !ok {
+		return false
+	}
+	prefix, ok := ParseCIDR(cidr)
+	return ok && prefix.Contains(addr)
+}
+
+// DistanceMeters is the great-circle (haversine) distance between two points in meters.
+func DistanceMeters(lat1, lon1, lat2, lon2 float64) float64 {
+	rad := func(d float64) float64 { return d * math.Pi / 180 }
+	const R = 6371008.8
+	dLat := rad(lat2 - lat1)
+	dLon := rad(lon2 - lon1)
+	sLat, sLon := math.Sin(dLat/2), math.Sin(dLon/2)
+	h := sLat*sLat + math.Cos(rad(lat1))*math.Cos(rad(lat2))*sLon*sLon
+	return 2 * R * math.Asin(math.Min(1, math.Sqrt(h)))
+}
+
+// ActionMatches reports whether an action pattern (exact, or ending in ":*") matches an action.
+// "ns:a:*" matches only actions starting with "ns:a:", so a wildcard needs a segment boundary.
+func ActionMatches(pattern, action string) bool {
+	if pattern == action {
+		return true
+	}
+	return strings.HasSuffix(pattern, ":*") && strings.HasPrefix(action, pattern[:len(pattern)-1])
+}
+
+// ResourceMatches reports whether a resource pattern ("*", "prefix*" or exact) matches a
+// resource. An empty resource (none) matches only "*".
+func ResourceMatches(pattern, resource string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		return resource != "" && strings.HasPrefix(resource, pattern[:len(pattern)-1])
+	}
+	return resource != "" && pattern == resource
+}
+
+// ActionNamespace is the namespace of an action ("hashbin" for "hashbin:content:write").
+func ActionNamespace(action string) string { ns, _, _ := strings.Cut(action, ":"); return ns }
+
+func checkKeys(value any, allowed map[string]bool, path string, errs *[]string) bool {
+	o, ok := asObject(value)
+	if !ok {
+		*errs = append(*errs, path+" must be an object")
+		return false
+	}
+	for _, k := range o.Keys() {
+		if !allowed[k] {
+			*errs = append(*errs, path+"."+k+" is not a known constraint")
+		}
+	}
+	return true
+}
+
+func checkStringList(value any, path string, errs *[]string, max int, test func(string) bool, message string) {
+	list, ok := value.([]any)
+	if !ok || len(list) == 0 || len(list) > max {
+		*errs = append(*errs, fmt.Sprintf("%s must be a list of 1–%d entries", path, max))
+		return
+	}
+	for i, item := range list {
+		s, ok := item.(string)
+		if !ok || !test(s) {
+			*errs = append(*errs, fmt.Sprintf("%s[%d] %s", path, i, message))
+		}
+	}
+}
+
+// ValidateGrant validates one grant (as parsed by ParseJSON) and returns human-readable
+// problems, empty when valid. Issuers reject anything invalid; verifiers deny such grants.
+func ValidateGrant(grant any, path string) []string {
+	errs := []string{}
+	if !checkKeys(grant, grantKeys, path, &errs) {
+		return errs
+	}
+	g, _ := asObject(grant)
+	actions, _ := g.Get("actions")
+	checkStringList(actions, path+".actions", &errs, Limits.Actions, actionPattern.MatchString, `must look like "namespace:verb" or "namespace:*"`)
+	if resources, ok := g.Get("resources"); ok {
+		checkStringList(resources, path+".resources", &errs, Limits.Resources, func(r string) bool { n := jsLength(r); return n > 0 && n <= Limits.ResourceLength },
+			fmt.Sprintf("must be 1–%d characters", Limits.ResourceLength))
+	}
+	if when, ok := g.Get("when"); ok && checkKeys(when, whenKeys, path+".when", &errs) {
+		validateWhen(when, path, &errs)
+	}
+	if where, ok := g.Get("where"); ok && checkKeys(where, whereKeys, path+".where", &errs) {
+		validateWhere(where, path, &errs)
+	}
+	if limits, ok := g.Get("limits"); ok && checkKeys(limits, limitKeys, path+".limits", &errs) {
+		if uses, ok := get(limits, "uses"); ok && checkKeys(uses, usesKeys, path+".limits.uses", &errs) {
+			count, _ := get(uses, "count")
+			if !isSafeInteger(count) || count.(float64) < 1 || count.(float64) > 1e9 {
+				errs = append(errs, path+".limits.uses.count must be an integer from 1 to 1,000,000,000")
+			}
+			if per, _ := get(uses, "per"); !contains(UsePeriods, per) {
+				errs = append(errs, path+".limits.uses.per must be one of "+strings.Join(UsePeriods, ", "))
+			}
+		}
+		if spend, ok := get(limits, "spend_usd_per_month"); ok && !(isFinite(spend) && spend.(float64) >= 0 && spend.(float64) <= 1e6) {
+			errs = append(errs, path+".limits.spend_usd_per_month must be a number from 0 to 1,000,000")
+		}
+	}
+	if require, ok := g.Get("require"); ok && checkKeys(require, requireKeys, path+".require", &errs) {
+		for _, key := range []string{"online", "step_up"} {
+			if v, ok := get(require, key); ok {
+				if _, isBool := v.(bool); !isBool {
+					errs = append(errs, path+".require."+key+" must be true or false")
+				}
+			}
+		}
+	}
+	return errs
+}
+
+func validateWhen(when any, path string, errs *[]string) {
+	tz, _ := get(when, "tz")
+	nb, hasNB := get(when, "not_before")
+	na, hasNA := get(when, "not_after")
+	if windows, ok := get(when, "windows"); ok {
+		if _, valid := loadZone(tz); !valid {
+			*errs = append(*errs, path+".when.tz must be an IANA time zone when windows are given")
+		}
+		list, isList := windows.([]any)
+		if !isList || len(list) == 0 || len(list) > Limits.Windows {
+			*errs = append(*errs, fmt.Sprintf("%s.when.windows must be a list of 1–%d windows", path, Limits.Windows))
+		} else {
+			for i, w := range list {
+				wp := fmt.Sprintf("%s.when.windows[%d]", path, i)
+				if !checkKeys(w, windowKeys, wp, errs) {
+					continue
+				}
+				if days, ok := get(w, "days"); ok {
+					dl, isList := days.([]any)
+					bad := !isList || len(dl) == 0
+					for _, d := range dl {
+						if !contains(Days, d) {
+							bad = true
+						}
+					}
+					if bad {
+						*errs = append(*errs, wp+".days must list days from "+strings.Join(Days, ", "))
+					}
+				}
+				from, _ := get(w, "from")
+				to, _ := get(w, "to")
+				if !timePattern.MatchString(nullishString(from)) || strictEqual(from, "24:00") {
+					*errs = append(*errs, wp+".from must be HH:MM (00:00–23:59)")
+				}
+				if !timePattern.MatchString(nullishString(to)) {
+					*errs = append(*errs, wp+".to must be HH:MM (00:00–24:00)")
+				}
+				if strictEqual(from, to) {
+					*errs = append(*errs, wp+" from and to must differ")
+				}
+			}
+		}
+	} else if _, hasTZ := get(when, "tz"); hasTZ {
+		if _, valid := loadZone(tz); !valid {
+			*errs = append(*errs, path+".when.tz must be an IANA time zone")
+		}
+	}
+	if hasNB && !isSafeInteger(nb) {
+		*errs = append(*errs, path+".when.not_before must be a NumericDate (seconds)")
+	}
+	if hasNA && !isSafeInteger(na) {
+		*errs = append(*errs, path+".when.not_after must be a NumericDate (seconds)")
+	}
+	if isSafeInteger(nb) && isSafeInteger(na) && nb.(float64) >= na.(float64) {
+		*errs = append(*errs, path+".when.not_before must be earlier than not_after")
+	}
+}
+
+// nullishString is `value ?? ''` followed by the String() coercion RegExp.test applies.
+func nullishString(v any) string {
+	if v == nil {
+		return ""
+	}
+	return jsToString(v)
+}
+
+func validateWhere(where any, path string, errs *[]string) {
+	source, _ := get(where, "source")
+	if !contains([]string{"network", "device", "both"}, source) {
+		*errs = append(*errs, path+`.where.source must be "network", "device" or "both"`)
+	}
+	countries, hasCountries := get(where, "countries")
+	regions, hasRegions := get(where, "regions")
+	areas, hasAreas := get(where, "areas")
+	networks, hasNetworks := get(where, "networks")
+	if hasCountries {
+		checkStringList(countries, path+".where.countries", errs, Limits.Places, countryPattern.MatchString, `must be an ISO 3166-1 alpha-2 code like "US"`)
+	}
+	if hasRegions {
+		checkStringList(regions, path+".where.regions", errs, Limits.Places, regionPattern.MatchString, `must be an ISO 3166-2 code like "US-MO"`)
+	}
+	if hasAreas {
+		list, isList := areas.([]any)
+		if !isList || len(list) == 0 || len(list) > Limits.Places {
+			*errs = append(*errs, fmt.Sprintf("%s.where.areas must be a list of 1–%d areas", path, Limits.Places))
+		} else {
+			for i, a := range list {
+				ap := fmt.Sprintf("%s.where.areas[%d]", path, i)
+				if !checkKeys(a, areaKeys, ap, errs) {
+					continue
+				}
+				lat, _ := get(a, "lat")
+				lon, _ := get(a, "lon")
+				radius, _ := get(a, "radius_m")
+				if !(isFinite(lat) && lat.(float64) >= -90 && lat.(float64) <= 90) {
+					*errs = append(*errs, ap+".lat must be between -90 and 90")
+				}
+				if !(isFinite(lon) && lon.(float64) >= -180 && lon.(float64) <= 180) {
+					*errs = append(*errs, ap+".lon must be between -180 and 180")
+				}
+				if !(isFinite(radius) && radius.(float64) >= 10 && radius.(float64) <= 20037508) {
+					*errs = append(*errs, ap+".radius_m must be between 10 and 20,037,508")
+				}
+			}
+		}
+	}
+	if hasNetworks {
+		checkStringList(networks, path+".where.networks", errs, Limits.Networks, func(n string) bool { _, ok := ParseCIDR(n); return ok }, `must be a CIDR range like "203.0.113.0/24"`)
+	}
+	if !hasCountries && !hasRegions && !hasAreas && !hasNetworks {
+		*errs = append(*errs, path+".where needs at least one of countries, regions, areas or networks")
+	}
+	if strictEqual(source, "device") && (truthy(countries) || truthy(regions) || truthy(networks)) {
+		*errs = append(*errs, path+`.where with source "device" can only use areas (a device reports coordinates, not countries or networks)`)
+	}
+}
+
+// ValidateGrants validates a grant list.
+func ValidateGrants(grants any) []string {
+	list, ok := grants.([]any)
+	if !ok || len(list) == 0 || len(list) > Limits.Grants {
+		return []string{fmt.Sprintf("grants must be a list of 1–%d grants", Limits.Grants)}
+	}
+	errs := []string{}
+	for i, g := range list {
+		errs = append(errs, ValidateGrant(g, fmt.Sprintf("grants[%d]", i))...)
+	}
+	return errs
+}
+
+// LocalTime is a weekday (0 = Sunday) and minutes since local midnight.
+type LocalTime struct{ Day, Minutes int }
+
+// LocalTimeAt converts an instant to local weekday and minute in a zone.
+func LocalTimeAt(now int64, loc *time.Location) LocalTime {
+	t := time.Unix(now, 0).In(loc)
+	return LocalTime{Day: int(t.Weekday()), Minutes: t.Hour()*60 + t.Minute()}
+}
+
+// minutes parses "HH:MM". A non-string (which only an array can be after validation, through
+// JavaScript's String() coercion) is NaN, as Number() of an array slice is in JavaScript.
+func minutes(v any) float64 {
+	s, ok := v.(string)
+	if !ok || len(s) < 4 {
+		return math.NaN()
+	}
+	h, err1 := strconv.Atoi(s[:2])
+	m, err2 := strconv.Atoi(s[3:])
+	if err1 != nil || err2 != nil {
+		return math.NaN()
+	}
+	return float64(h*60 + m)
+}
+
+// inWindow reports whether a local time is inside a window. An overnight window (from > to)
+// belongs to the day it starts on, so "mon 22:00–06:00" covers early Tuesday morning.
+func inWindow(window any, local LocalTime) bool {
+	days, ok := get(window, "days")
+	inDays := func(day string) bool {
+		if !ok || days == nil {
+			return true
+		}
+		return listIncludes(days, day)
+	}
+	fromV, _ := get(window, "from")
+	toV, _ := get(window, "to")
+	from := minutes(fromV)
+	to := minutes(toV)
+	if strictEqual(toV, "24:00") {
+		to = 1440
+	}
+	today := Days[local.Day]
+	yesterday := Days[(local.Day+6)%7]
+	m := float64(local.Minutes)
+	if from < to {
+		return inDays(today) && m >= from && m < to
+	}
+	return (inDays(today) && m >= from) || (inDays(yesterday) && m < to)
+}
+
+// NetworkLocation is what the verifier observed about the connection. Empty strings and nil
+// coordinates mean unknown.
+type NetworkLocation struct {
+	Country string   `json:"country,omitempty"`
+	Region  string   `json:"region,omitempty"` // ISO 3166-2, e.g. "US-MO"
+	Lat     *float64 `json:"lat,omitempty"`
+	Lon     *float64 `json:"lon,omitempty"`
+	IP      string   `json:"ip,omitempty"`
+}
+
+// DeviceLocation is the device-reported "loc" claim of a verified DPoP proof. Nil fields were
+// absent or not numbers.
+type DeviceLocation struct {
+	Lat  *float64 `json:"lat,omitempty"`
+	Lon  *float64 `json:"lon,omitempty"`
+	AccM *float64 `json:"acc_m,omitempty"`
+	T    *float64 `json:"t,omitempty"`
+}
+
+// DeviceLocationFromClaim converts a proof's loc claim. A falsy claim (absent, null, 0, "")
+// is no location; any other value is a location whose non-numeric members are unknown.
+func DeviceLocationFromClaim(v any) *DeviceLocation {
+	if !truthy(v) {
+		return nil
+	}
+	num := func(key string) *float64 {
+		x, _ := get(v, key)
+		if f, ok := x.(float64); ok {
+			return &f
+		}
+		return nil
+	}
+	return &DeviceLocation{Lat: num("lat"), Lon: num("lon"), AccM: num("acc_m"), T: num("t")}
+}
+
+// Location carries both location sources.
+type Location struct {
+	Network *NetworkLocation `json:"network,omitempty"`
+	Device  *DeviceLocation  `json:"device,omitempty"`
+}
+
+// Context is what a request is evaluated in.
+type Context struct {
+	Now      int64    // the verifier's clock, seconds; device clocks are never trusted
+	Action   string   // e.g. "hashbin:content:write"
+	Resource string   // audience-defined; "" means none (matches only "*")
+	Location Location // observed network location and device-reported location
+	Online   bool     // true only when devicebasedauth.org itself evaluates (it enforces counters)
+}
+
+func finite(p *float64) bool { return p != nil && !math.IsNaN(*p) && !math.IsInf(*p, 0) }
+
+func placeMatches(where any, lat, lon, accM *float64, country, region string, kind string) bool {
+	if kind == "network" {
+		if countries, _ := get(where, "countries"); country != "" && listIncludes(countries, country) {
+			return true
+		}
+		if regions, _ := get(where, "regions"); region != "" && listIncludes(regions, region) {
+			return true
+		}
+	}
+	areas, _ := get(where, "areas")
+	if truthy(areas) && finite(lat) && finite(lon) {
+		slack := 0.0
+		if kind == "device" {
+			// Accuracy is held against the device; an unknown accuracy never matches.
+			slack = math.Inf(1)
+			if finite(accM) {
+				slack = *accM
+			}
+		}
+		list, _ := areas.([]any)
+		for _, a := range list {
+			alat, _ := get(a, "lat")
+			alon, _ := get(a, "lon")
+			radius, _ := get(a, "radius_m")
+			if DistanceMeters(alat.(float64), alon.(float64), *lat, *lon)+slack <= radius.(float64) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+func hasPlaces(where any) bool {
+	for _, k := range []string{"countries", "regions", "areas"} {
+		if v, _ := get(where, k); truthy(v) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkNetwork(where any, loc *NetworkLocation, reasons *[]string) {
+	if loc == nil {
+		*reasons = append(*reasons, "location_unavailable:network")
+		return
+	}
+	if hasPlaces(where) && !placeMatches(where, loc.Lat, loc.Lon, nil, loc.Country, loc.Region, "network") {
+		*reasons = append(*reasons, "outside_location:network")
+	}
+	if networks, _ := get(where, "networks"); truthy(networks) {
+		list, _ := networks.([]any)
+		matched := false
+		for _, n := range list {
+			if s, ok := n.(string); ok && IPInCIDR(loc.IP, s) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			*reasons = append(*reasons, "network_not_allowed")
+		}
+	}
+}
+
+func checkDevice(where any, loc *DeviceLocation, now int64, reasons *[]string) {
+	if loc == nil {
+		*reasons = append(*reasons, "location_unavailable:device")
+		return
+	}
+	if !(finite(loc.T) && math.Abs(float64(now)-*loc.T) <= deviceLocationMaxAge) {
+		*reasons = append(*reasons, "location_stale:device")
+		return
+	}
+	if hasPlaces(where) && !placeMatches(where, loc.Lat, loc.Lon, loc.AccM, "", "", "device") {
+		*reasons = append(*reasons, "outside_location:device")
+	}
+}
+
+// Online lists the checks of a grant that only devicebasedauth.org can make.
+type Online struct {
+	Uses     any  `json:"uses,omitempty"`     // the grant's limits.uses ({count, per})
+	StepUp   bool `json:"step_up,omitempty"`  // the owner must approve each use
+	Required bool `json:"required,omitempty"` // require.online
+}
+
+// IsEmpty reports whether the grant needs no online checks.
+func (o Online) IsEmpty() bool { return o.Uses == nil && !o.StepUp && !o.Required }
+
+// GrantResult is the outcome for one grant.
+type GrantResult struct {
+	OK      bool     `json:"ok"`
+	Reasons []string `json:"reasons"`
+	Online  Online   `json:"online"`
+}
+
+// Caveats are conditions the audience enforces itself after an allow.
+type Caveats struct {
+	SpendUSDPerMonth *float64 `json:"spend_usd_per_month,omitempty"`
+}
+
+// Result is the decision over a grant list (the JavaScript evaluateGrants result).
+type Result struct {
+	Allow          bool          `json:"allow"`
+	GrantIndex     *int          `json:"grant_index"` // nil when nothing allowed
+	Grant          any           `json:"grant"`       // the allowing grant, or nil
+	Online         Online        `json:"online"`      // online checks of the allowing grant
+	Caveats        Caveats       `json:"caveats"`
+	Reasons        [][]string    `json:"reasons"`         // per grant, in grant order
+	OnlineRequired bool          `json:"online_required"` // denied only because checks need online authorization
+	Results        []GrantResult `json:"results"`
+}
+
+// EvaluateGrant evaluates one grant against a request context.
+func EvaluateGrant(grant any, ctx Context) GrantResult {
+	reasons := []string{}
+	online := Online{}
+	var unknown []string
+	if g, ok := asObject(grant); !ok {
+		unknown = []string{"grant"}
+	} else {
+		for _, k := range g.Keys() {
+			if !grantKeys[k] {
+				unknown = append(unknown, k)
+			}
+		}
+		for _, nested := range []struct {
+			key     string
+			allowed map[string]bool
+		}{{"when", whenKeys}, {"where", whereKeys}, {"limits", limitKeys}, {"require", requireKeys}} {
+			v, _ := g.Get(nested.key)
+			if o, ok := asObject(v); ok {
+				for _, k := range o.Keys() {
+					if !nested.allowed[k] {
+						unknown = append(unknown, nested.key+"."+k)
+					}
+				}
+			}
+		}
+	}
+	if len(unknown) > 0 {
+		for _, k := range unknown {
+			reasons = append(reasons, "unknown_constraint:"+k)
+		}
+		return GrantResult{OK: false, Reasons: reasons, Online: online}
+	}
+	if len(ValidateGrant(grant, "grant")) > 0 {
+		return GrantResult{OK: false, Reasons: []string{"invalid_grant"}, Online: online}
+	}
+	g, _ := asObject(grant)
+	now := ctx.Now
+
+	actions, _ := g.Get("actions")
+	matched := false
+	for _, p := range actions.([]any) {
+		if ActionMatches(p.(string), ctx.Action) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		reasons = append(reasons, "action_not_granted")
+	}
+
+	resources, ok := g.Get("resources")
+	patterns := []any{"*"}
+	if ok && truthy(resources) {
+		patterns = resources.([]any)
+	}
+	matched = false
+	for _, p := range patterns {
+		if ResourceMatches(p.(string), ctx.Resource) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		reasons = append(reasons, "resource_not_granted")
+	}
+
+	if when, _ := g.Get("when"); truthy(when) {
+		if nb, ok := get(when, "not_before"); ok && float64(now) < nb.(float64) {
+			reasons = append(reasons, "before_not_before")
+		}
+		if na, ok := get(when, "not_after"); ok && float64(now) >= na.(float64) {
+			reasons = append(reasons, "after_not_after")
+		}
+		if windows, _ := get(when, "windows"); truthy(windows) {
+			tz, _ := get(when, "tz")
+			zone, _ := loadZone(tz)
+			local := LocalTimeAt(now, zone)
+			inside := false
+			for _, w := range windows.([]any) {
+				if inWindow(w, local) {
+					inside = true
+					break
+				}
+			}
+			if !inside {
+				reasons = append(reasons, "outside_time_window")
+			}
+		}
+	}
+
+	if where, _ := g.Get("where"); truthy(where) {
+		source, _ := get(where, "source")
+		if strictEqual(source, "network") || strictEqual(source, "both") {
+			checkNetwork(where, ctx.Location.Network, &reasons)
+		}
+		if strictEqual(source, "device") || strictEqual(source, "both") {
+			checkDevice(where, ctx.Location.Device, now, &reasons)
+		}
+	}
+
+	limits, _ := g.Get("limits")
+	if uses, _ := get(limits, "uses"); truthy(uses) {
+		online.Uses = uses
+	}
+	require, _ := g.Get("require")
+	if v, _ := get(require, "step_up"); truthy(v) {
+		online.StepUp = true
+	}
+	if v, _ := get(require, "online"); truthy(v) {
+		online.Required = true
+	}
+	if len(reasons) == 0 && !online.IsEmpty() && !ctx.Online {
+		reasons = append(reasons, "online_required")
+	}
+	return GrantResult{OK: len(reasons) == 0, Reasons: reasons, Online: online}
+}
+
+// EvaluateGrants evaluates every grant. The request is allowed when any grant passes; nothing
+// is allowed by default. grants is normally the []any from a verified credential's payload.
+func EvaluateGrants(grants any, ctx Context) Result {
+	list, ok := normalizeGo(grants).([]any)
+	if !ok {
+		return Result{Reasons: [][]string{{"invalid_grants"}}, Results: []GrantResult{}}
+	}
+	results := make([]GrantResult, len(list))
+	index := -1
+	for i, g := range list {
+		results[i] = EvaluateGrant(normalizeGo(g), ctx)
+		if index < 0 && results[i].OK {
+			index = i
+		}
+	}
+	reasons := make([][]string, len(results))
+	onlineRequired := false
+	for i, r := range results {
+		reasons[i] = r.Reasons
+		if index < 0 && len(r.Reasons) == 1 && r.Reasons[0] == "online_required" {
+			onlineRequired = true
+		}
+	}
+	result := Result{Allow: index >= 0, Reasons: reasons, OnlineRequired: onlineRequired, Results: results}
+	if index >= 0 {
+		i := index
+		result.GrantIndex = &i
+		result.Grant = list[index]
+		result.Online = results[index].Online
+		limits, _ := get(list[index], "limits")
+		if spend, ok := get(limits, "spend_usd_per_month"); ok {
+			if f, isNum := spend.(float64); isNum {
+				result.Caveats.SpendUSDPerMonth = &f
+			}
+		}
+	}
+	return result
+}
