@@ -34,3 +34,19 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e -- --trace off
       - run: npx wrangler deploy --dry-run --outdir /tmp/dba-build
+  ios-sample:
+    # The iOS sample (Swift, CryptoKit, DeviceCheck) needs Apple's SDKs: build it, type-check it for
+    # iOS, and run its client against a local server with a software key.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: swift --version
+      - run: npm run test:samples
+        env:
+          DBA_SAMPLES_STRICT: '1'
+          DBA_SAMPLES_ONLY: ios

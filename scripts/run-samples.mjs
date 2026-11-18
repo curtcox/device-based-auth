@@ -6,7 +6,9 @@
 // samples themselves contain no test hooks. Each sample must exit 0 and print what it promises.
 //
 // A sample whose toolchain is missing (python3 with cryptography + requests, go, a JDK; swtpm and
-// tpm2-tools for the TPM sample) is skipped, unless DBA_SAMPLES_STRICT=1, when it fails.
+// tpm2-tools for the TPM sample; Swift for the iOS sample) is skipped, unless DBA_SAMPLES_STRICT=1,
+// when it fails. A sample for another operating system (iOS needs macOS) is always skipped; CI runs
+// it in its own job with DBA_SAMPLES_ONLY=ios (a comma-separated list of sample names).
 //
 // The TPM sample runs on a software TPM whose EK certificate comes from a throwaway CA made here;
 // the server trusts that CA through TPM_EK_TEST_CA, which only a local server reads.
@@ -23,6 +25,8 @@ const PORT = Number(process.env.DBA_SAMPLES_PORT || 8788);
 const ORIGIN = `http://localhost:${PORT}`;
 const OWNER = 'sample-owner';
 const STRICT = process.env.DBA_SAMPLES_STRICT === '1';
+const ONLY = process.env.DBA_SAMPLES_ONLY ? process.env.DBA_SAMPLES_ONLY.split(',').map(name => name.trim()) : null;
+const PLATFORMS = { darwin: 'macOS', linux: 'Linux', win32: 'Windows' };
 const SAMPLE_TIMEOUT_MS = 120_000;
 const APPROVAL_LINK = /\/approve\.html#(enr_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
 
@@ -53,6 +57,11 @@ const SAMPLES = [
   {
     name: 'android', command: ['bash', 'docs/samples/android/run.sh'],
     needs: () => has('javac', ['--version']) || 'a JDK (javac 17+)',
+    expect: [/^Attestation challenge: [\w-]{43}$/m, /^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m, /^Renewed: crd_\w+\.2$/m]
+  },
+  {
+    name: 'ios', command: ['bash', 'docs/samples/ios/run.sh'], platform: 'darwin',
+    needs: () => has('swift', ['--version']) || 'Swift 5.9+ (Xcode 15+)',
     expect: [/^Attestation challenge: [\w-]{43}$/m, /^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m, /^Renewed: crd_\w+\.2$/m]
   },
   {
@@ -203,6 +212,12 @@ async function main() {
     await api('POST', '/api/v1/dev/deposit', { amount_microdollars: 1_000_000 });
     let credential;
     for (const sample of SAMPLES) {
+      if (ONLY && !ONLY.includes(sample.name)) continue;
+      if (sample.platform && sample.platform !== process.platform) {
+        console.log(`skip ${sample.name}: runs only on ${PLATFORMS[sample.platform] ?? sample.platform}`);
+        skipped.push(sample.name);
+        continue;
+      }
       const missing = sample.needs?.();
       if (typeof missing === 'string') {
         console.log(`${STRICT ? 'FAIL' : 'skip'} ${sample.name}: needs ${missing}`);
@@ -237,7 +252,8 @@ async function main() {
     await new Promise(resolve => { if (server.child.exitCode !== null) resolve(); else { server.child.on('exit', resolve); setTimeout(resolve, 5000); } });
     await rm(persistDir, { recursive: true, force: true });
   }
-  console.log(`\n${SAMPLES.length - failures.length - skipped.length} passed, ${failures.length} failed, ${skipped.length} skipped`);
+  const ran = ONLY ? SAMPLES.filter(sample => ONLY.includes(sample.name)).length : SAMPLES.length;
+  console.log(`\n${ran - failures.length - skipped.length} passed, ${failures.length} failed, ${skipped.length} skipped`);
   return failures.length ? 1 : 0;
 }
 
