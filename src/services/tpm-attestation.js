@@ -36,10 +36,10 @@ const TPM_MANUFACTURER = '2.23.133.2.1';
 const TPM_GENERATED = 0xff544347;
 const ST_ATTEST_CERTIFY = 0x8017;
 const ALG = { rsa: 0x0001, ecc: 0x0023, null: 0x0010 };
-const NAME_ALGS = { 0x000b: 'SHA-256', 0x000c: 'SHA-384', 0x000d: 'SHA-512' };
+export const NAME_ALGS = { 0x000b: 'SHA-256', 0x000c: 'SHA-384', 0x000d: 'SHA-512' };
 const ECC_NIST_P256 = 0x0003;
 // TPMA_OBJECT bits: fixedTPM, fixedParent, sensitiveDataOrigin, sign.
-const REQUIRED_ATTRIBUTES = { fixedTPM: 1 << 1, fixedParent: 1 << 4, sensitiveDataOrigin: 1 << 5, sign: 1 << 18 };
+export const REQUIRED_ATTRIBUTES = { fixedTPM: 1 << 1, fixedParent: 1 << 4, sensitiveDataOrigin: 1 << 5, sign: 1 << 18 };
 // The AIK's signature over certInfo. RS1 is what Windows' AIKs produce; SHA-1 is acceptable here
 // because the AIK is a restricted key: the TPM signs only structures it generated itself, and the
 // caller controls at most the 64 bytes of qualifyingData in them, far too little for a collision.
@@ -57,7 +57,7 @@ const digest = async (hash, bytes) => new Uint8Array(await crypto.subtle.digest(
 export function microsoftTpmRootSpki() { return parseCertificate(fromBase64(MICROSOFT_TPM_ROOT)).spki; }
 
 /** A cursor over TPM's big-endian marshalled structures. */
-function reader(bytes) {
+export function reader(bytes) {
   let offset = 0;
   const take = n => {
     if (offset + n > bytes.length) throw new Error('truncated');
@@ -68,11 +68,14 @@ function reader(bytes) {
   return { take, u16, u32, sized: () => take(u16()), done: () => offset === bytes.length };
 }
 
-/** TPMT_PUBLIC of an ECC key: { nameAlg, attributes, curve, x, y }. RSA and others are refused. */
-export function parsePubArea(bytes) {
+/**
+ * TPMT_PUBLIC of an RSA or ECC key: { type: 'rsa'|'ecc', nameAlg, attributes, scheme, and
+ * curve, x, y (ECC) or modulus, exponent (RSA) }. Other key types are refused.
+ */
+export function parseTpmPublic(bytes) {
   const r = reader(bytes);
   const type = r.u16();
-  if (type !== ALG.ecc) throw new Error(type === ALG.rsa ? 'the key is an RSA key, not P-256' : 'the key is not an ECC key');
+  if (type !== ALG.ecc && type !== ALG.rsa) throw new Error('the key is neither an RSA nor an ECC key');
   const nameAlg = r.u16();
   const attributes = r.u32();
   r.sized(); // authPolicy
@@ -80,12 +83,34 @@ export function parsePubArea(bytes) {
   if (symmetric !== ALG.null) { r.u16(); r.u16(); } // keyBits, mode
   const scheme = r.u16();
   if (scheme !== ALG.null) r.u16(); // hashAlg
-  const curve = r.u16();
-  const kdf = r.u16();
-  if (kdf !== ALG.null) r.u16();
-  const x = r.sized(); const y = r.sized();
+  let out;
+  if (type === ALG.ecc) {
+    const curve = r.u16();
+    const kdf = r.u16();
+    if (kdf !== ALG.null) r.u16();
+    out = { type: 'ecc', nameAlg, attributes, scheme, curve, x: r.sized(), y: r.sized() };
+  } else {
+    r.u16(); // keyBits (the modulus says it)
+    const exponent = r.u32();
+    out = { type: 'rsa', nameAlg, attributes, scheme, exponent: exponent || 65537, modulus: r.sized() };
+  }
   if (!r.done()) throw new Error('trailing bytes in pubArea');
-  return { nameAlg, attributes, curve, x, y };
+  return out;
+}
+
+/** TPMT_PUBLIC of an ECC key: { nameAlg, attributes, curve, x, y }. RSA and others are refused. */
+export function parsePubArea(bytes) {
+  if (bytes.length >= 2 && ((bytes[0] << 8) | bytes[1]) === ALG.rsa) throw new Error('the key is an RSA key, not P-256');
+  const pub = parseTpmPublic(bytes);
+  if (pub.type !== 'ecc') throw new Error('the key is not an ECC key');
+  return pub;
+}
+
+/** A TPM object's name: nameAlg ‖ H_nameAlg(TPMT_PUBLIC). */
+export async function tpmObjectName(pubAreaBytes, nameAlg) {
+  const hash = NAME_ALGS[nameAlg];
+  if (!hash) throw new Error('the key name must use SHA-256, SHA-384 or SHA-512');
+  return concat(Uint8Array.of(nameAlg >> 8, nameAlg & 255), await digest(hash, pubAreaBytes));
 }
 
 /** TPMS_ATTEST of a TPM2_Certify: { extraData, name }. */

@@ -14,6 +14,8 @@ import { assert, ApiError } from '../utils/errors.js';
 import { children, parseOne, expectTag, decodeOid, decodeSmallInt, integerHex, decodeTime, concat } from './der.js';
 import { verifyAppleAttestation, appleClientData, appleRootSpki } from './apple-attestation.js';
 import { verifyTpmAttestation, tpmQualifyingData, microsoftTpmRootSpki, tpmRevokedSerials } from './tpm-attestation.js';
+import { tpmEkAnchors, finishTpmActivation, ACTIVATION_PREFIX } from './tpm-activation.js';
+import { verifyToken } from '../auth/tokens.js';
 
 /**
  * SHA-256 of the SubjectPublicKeyInfo of each Google hardware attestation root, from
@@ -56,9 +58,9 @@ export function parseCertificate(der) {
   if (fields[0].cls === 2 && fields[0].tag === 0) i++; // [0] version
   const serial = integerHex(fields[i++]);
   i++; // signature algorithm (repeated in the outer certificate)
-  i++; // issuer
+  const issuer = fields[i++].raw;
   const [notBefore, notAfter] = children(expectTag(fields[i++], 16, 'Validity')).map(decodeTime);
-  i++; // subject
+  const subject = fields[i++].raw;
   const spki = expectTag(fields[i++], 16, 'SubjectPublicKeyInfo');
   const extensions = new Map();
   for (; i < fields.length; i++) {
@@ -72,7 +74,7 @@ export function parseCertificate(der) {
   }
   const signatureBits = expectTag(sigValue, 3, 'BIT STRING').content;
   if (signatureBits[0] !== 0) throw new Error('signature has unused bits');
-  return { serial, notBefore, notAfter, spki: spki.raw, tbs: tbs.raw, signatureAlgorithm: decodeOid(children(sigAlg)[0]), signature: signatureBits.subarray(1), extensions };
+  return { serial, issuer, subject, notBefore, notAfter, spki: spki.raw, tbs: tbs.raw, signatureAlgorithm: decodeOid(children(sigAlg)[0]), signature: signatureBits.subarray(1), extensions };
 }
 
 /** Import a certificate's SubjectPublicKeyInfo for verifying signatures made with `algorithm`. */
@@ -245,14 +247,26 @@ export async function checkChallenge(challenge, secret, now = Date.now()) {
   assert(new DataView(bytes.buffer, bytes.byteOffset).getUint32(0) * 1000 >= now, 'invalid_attestation', 'Key attestation rejected: the challenge has expired; get a new one');
 }
 
+/** The EK CAs this server trusts: the manufacturers', plus TPM_EK_TEST_CA (base64 DER certificate) on a local server. */
+export function tpmEkAnchorsFor(env) {
+  if (env.ENVIRONMENT !== 'local' || !env.TPM_EK_TEST_CA) return tpmEkAnchors();
+  return [...tpmEkAnchors(), { name: 'TPM_EK_TEST_CA', ...parseCertificate(Uint8Array.from(atob(env.TPM_EK_TEST_CA), c => c.charCodeAt(0))) }];
+}
+
 /**
  * Verify the `attestation` member of an enrollment request for `jwk`. Returns the claim to put in
- * `device.attestation`. Formats: android-key, apple-appattest and tpm.
+ * `device.attestation`. Formats: android-key, apple-appattest, tpm and tpm-ek (the second step
+ * of EK credential activation, after POST /api/v1/enrollments/tpm-activation).
  */
 export async function verifyAttestation(attestation, jwk, env, { now = Date.now(), fetcher = fetch } = {}) {
   assert(attestation && typeof attestation === 'object' && !Array.isArray(attestation), 'invalid_attestation', 'attestation must be an object');
-  assert(['android-key', 'apple-appattest', 'tpm'].includes(attestation.format), 'invalid_attestation', 'attestation.format must be android-key, apple-appattest or tpm');
+  assert(['android-key', 'apple-appattest', 'tpm', 'tpm-ek'].includes(attestation.format), 'invalid_attestation', 'attestation.format must be android-key, apple-appattest, tpm or tpm-ek');
   await checkChallenge(attestation.challenge, env.TOKEN_SIGNING_KEY, now);
+  if (attestation.format === 'tpm-ek') {
+    for (const member of ['activation', 'secret']) assert(typeof attestation[member] === 'string', 'invalid_attestation', `attestation.${member} is required for tpm-ek`);
+    const payload = await verifyToken(attestation.activation, ACTIVATION_PREFIX, env.TOKEN_SIGNING_KEY);
+    return finishTpmActivation({ payload, challenge: attestation.challenge, secret: attestation.secret, jkt: await jwkThumbprint(jwk) });
+  }
   // A local server (only) may trust one extra root per platform, so tests can attest with their own chain.
   const local = env.ENVIRONMENT === 'local';
   if (attestation.format === 'tpm') {

@@ -23,7 +23,7 @@
 <li><a href="#cli">Quick start: CLI</a></li>
 <li><a href="#android">Quick start: Android</a></li>
 <li><a href="#ios">iOS: Apple App Attest</a></li>
-<li><a href="#tpm">Windows: TPM key attestation</a></li>
+<li><a href="#tpm">PCs: TPM key attestation</a></li>
 <li><a href="#verify">Verify requests on your server</a></li>
 <li><a href="#workers">Cloudflare Worker middleware</a></li>
 <li><a href="#authorize">Online authorization API</a></li>
@@ -210,7 +210,7 @@ Object result = client.call("POST", "https://hashbin.org/api/content", credentia
 </section>
 
 <section id="tpm">
-<h2>Windows: TPM key attestation</h2>
+<h2>PCs: TPM key attestation</h2>
 <p>On a PC with a TPM 2.0, keep the DBA key in the TPM and have the TPM's attestation identity key (AIK) certify it. Windows gets an AIK certificate from Microsoft after checking the TPM's endorsement certificate, so the issuer can trust it:</p>
 <ol>
 <li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>
@@ -219,6 +219,15 @@ Object result = client.call("POST", "https://hashbin.org/api/content", credentia
 <li>Add <code>attestation: { format: "tpm", challenge, alg, x5c, sig, cert_info, pub_area }</code> to the signed enrollment request: <code>alg</code> <code>-257</code> (RS256) or <code>-65535</code> (RS1), <code>x5c</code> the AIK certificate and its CA (base64 DER), and the signature, <code>TPMS_ATTEST</code> and <code>TPMT_PUBLIC</code> in base64.</li>
 </ol>
 <p>The issuer checks the chain to Microsoft's TPM root and its revocation list, the AIK certificate, the signature, that the certified key is the enrolled key, and that it was generated in the TPM and cannot leave it (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>). It signs <code>{ format: "tpm", security_level: "tpm", tpm_manufacturer }</code> into <code>device.attestation</code>, which satisfies <code>require.attestation: "hardware"</code> (not <code>"strongbox"</code>, and not <code>require.verified_boot</code>).</p>
+<h3>Linux and other TPMs without a Microsoft AIK certificate</h3>
+<p>Here the TPM proves that its attestation key (AK) sits beside its endorsement key (EK), whose certificate the TPM's manufacturer issued. The device key is the same TPM-resident P-256 key; with tpm2-tools that is <code>tpm2_createek</code>, <code>tpm2_createak</code>, <code>tpm2_create</code> with <code>fixedtpm|fixedparent|sensitivedataorigin|sign</code>, and <code>tpm2_certify</code>:</p>
+<ol>
+<li>Get a challenge as above.</li>
+<li><code>POST /api/v1/enrollments/tpm-activation</code> with <code>{ challenge, ek_certificate, ak_pub_area, pub_area, cert_info, sig }</code>, all base64: the RSA-2048 EK certificate (<code>tpm2_nvread 0x01c00002</code>), the AK's public area, the device key's public area, and the certify's <code>TPMS_ATTEST</code> and <code>TPMT_SIGNATURE</code>. Add <code>ek_chain</code> if your EK certificate's CA is not one DBA knows but chains to one.</li>
+<li>The answer holds a secret only your TPM can unwrap, as <code>credential_blob</code> (the file <code>tpm2_activatecredential -i</code> reads) or as <code>id_object</code> and <code>encrypted_secret</code>, and an <code>activation</code> token. Unwrap it with <code>TPM2_ActivateCredential</code> (AK and EK loaded; the EK needs a policy session with <code>tpm2_policysecret -c e</code>).</li>
+<li>Add <code>attestation: { format: "tpm-ek", challenge, activation, secret }</code> (the secret base64) to the signed enrollment request, within 10 minutes.</li>
+</ol>
+<p>The issuer checks the EK certificate against the TPM manufacturers' EK CAs (Infineon, STMicroelectronics, Nuvoton, Intel, Nationz), the AK's attributes and signature, the certified key, and the returned secret, then signs the same <code>{ format: "tpm", security_level: "tpm", tpm_manufacturer }</code>. The EK certificate is not stored. Virtual TPMs (cloud vTPMs, swtpm) are not trusted.</p>
 </section>
 
 <section id="verify">

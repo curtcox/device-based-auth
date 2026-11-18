@@ -6,7 +6,8 @@ import { signToken, verifyToken } from '../auth/tokens.js';
 import { decodeJws, verifyJws, jwkThumbprint } from '../../packages/verify/src/jose.js';
 import { describeGrant, validateGrants } from '../../packages/verify/src/grants.js';
 import { cleanDevice, cleanJwk, issueCredential, withAttestation, LIFETIME } from '../services/credentials.js';
-import { verifyAttestation, createChallenge } from '../services/attestation.js';
+import { verifyAttestation, createChallenge, checkChallenge, tpmEkAnchorsFor } from '../services/attestation.js';
+import { startTpmActivation, tpmActivationResponse, ACTIVATION_PREFIX } from '../services/tpm-activation.js';
 import { requireRecentSignIn, hasDbaAction } from '../auth/reverify.js';
 
 export const ENROLL_TYP = 'dba-enroll+jwt';
@@ -71,6 +72,20 @@ async function readTicket(env, ticket) {
  * enrollment request's `attestation`. Stateless, so anonymous calls cost no storage.
  */
 export function attestationChallenge(env) { return createChallenge(env.TOKEN_SIGNING_KEY); }
+
+/**
+ * Step 1 of TPM attestation by EK credential activation (services/tpm-activation.js), for TPMs
+ * without a Microsoft-certified attestation key: checks the EK certificate, the attestation key and
+ * its certify of the device key, and answers with a secret wrapped for that TPM plus a signed
+ * activation token. The device unwraps the secret with TPM2_ActivateCredential and enrolls with
+ * { format: 'tpm-ek', challenge, activation, secret }. Stateless, like the challenge.
+ */
+export async function tpmActivation(request, env) {
+  const body = await readJson(request, 32768);
+  await checkChallenge(body.challenge, env.TOKEN_SIGNING_KEY);
+  const result = await startTpmActivation({ ekCertificate: body.ek_certificate, ekChain: body.ek_chain ?? [], akPubArea: body.ak_pub_area, pubArea: body.pub_area, certInfo: body.cert_info, sig: body.sig, anchors: tpmEkAnchorsFor(env) });
+  return tpmActivationResponse(result, { challenge: body.challenge, sign: payload => signToken(ACTIVATION_PREFIX, payload, env.TOKEN_SIGNING_KEY) });
+}
 
 /** Describe a pending enrollment for the approval page (no storage). */
 export async function describeEnrollment(request, env) {

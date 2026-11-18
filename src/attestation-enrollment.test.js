@@ -4,16 +4,17 @@ import { inspectCredential, signJws, createVerifier, createProof } from '../pack
 import { ORIGIN, worker } from '../test-utils/env.js';
 import { attestationAuthority, attestationChain } from '../test-utils/android-attestation.js';
 import { appleAuthority, appleAttestation } from '../test-utils/apple-attestation.js';
-import { resetRevocationCache, createChallenge, verifyAttestation } from './services/attestation.js';
+import { resetRevocationCache, createChallenge, verifyAttestation, tpmEkAnchorsFor } from './services/attestation.js';
 import { appleClientData } from './services/apple-attestation.js';
 import { tpmAuthority, tpmAttestation, tpmCrl } from '../test-utils/tpm-attestation.js';
 import { tpmQualifyingData, resetTpmCrlCache, MICROSOFT_TPM_CRL_URL } from './services/tpm-attestation.js';
 import { jwkThumbprint } from '../packages/verify/src/jose.js';
+import { ekAuthority, softwareTpm, activationRequest, activateCredential } from '../test-utils/tpm-ek.js';
 
-let authority; let apple; let tpm; let env; let tpmCrlResponse;
-beforeAll(async () => { authority = await attestationAuthority(); apple = await appleAuthority(); tpm = await tpmAuthority(); });
+let authority; let apple; let tpm; let ekCa; let ekTpm; let env; let tpmCrlResponse;
+beforeAll(async () => { authority = await attestationAuthority(); apple = await appleAuthority(); tpm = await tpmAuthority(); ekCa = await ekAuthority(); ekTpm = await softwareTpm(ekCa); });
 beforeEach(async () => {
-  env = await testEnv({ ANDROID_ATTESTATION_TEST_ROOT: authority.rootPin, APPLE_ATTESTATION_TEST_ROOT: apple.rootSpkiB64u, TPM_ATTESTATION_TEST_ROOT: tpm.rootSpkiB64u });
+  env = await testEnv({ ANDROID_ATTESTATION_TEST_ROOT: authority.rootPin, APPLE_ATTESTATION_TEST_ROOT: apple.rootSpkiB64u, TPM_ATTESTATION_TEST_ROOT: tpm.rootSpkiB64u, TPM_EK_TEST_CA: ekCa.derB64 });
   await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
   resetRevocationCache(); resetTpmCrlCache();
   tpmCrlResponse = async () => new Response(await tpmCrl(tpm, ['7f']));
@@ -241,5 +242,43 @@ describe('attested enrollment (B5, TPM 2.0)', () => {
     await expect(verifyAttestation(attestation, device.publicJwk, local)).resolves.toMatchObject({ format: 'tpm' });
     await expect(verifyAttestation(attestation, device.publicJwk, { ...local, ENVIRONMENT: 'production' })).rejects.toThrow(/Microsoft TPM Root/);
     await expect(verifyAttestation({ ...attestation, cert_info: undefined }, device.publicJwk, local)).rejects.toThrow(/cert_info is required/);
+  });
+});
+
+/** A Linux PC's enrollment: EK credential activation, then the enrollment with the unwrapped secret. */
+async function tpmEkStart(device, { activateWith = device, secretOverride } = {}) {
+  const { body: { challenge } } = await call(env, 'POST', '/api/v1/enrollments/attestation-challenge');
+  const { akName, ...members } = await activationRequest(ekTpm, activateWith.publicJwk);
+  const activation = await call(env, 'POST', '/api/v1/enrollments/tpm-activation', { body: { challenge, ...members } });
+  if (activation.status !== 200) return activation;
+  const fromBase64 = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
+  const secret = await activateCredential(ekTpm, { idObject: fromBase64(activation.body.id_object), encryptedSecret: fromBase64(activation.body.encrypted_secret) }, akName);
+  const attestation = { format: 'tpm-ek', challenge, activation: activation.body.activation, secret: secretOverride ?? btoa(String.fromCharCode(...secret)) };
+  const request = await device.enrollRequest({ aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'], require: { attestation: 'hardware' } }], device: { name: 'Linux desktop', kind: 'desktop', key_protection: 'software' }, attestation });
+  return call(env, 'POST', '/api/v1/enrollments', { body: { request } });
+}
+
+describe('attested enrollment (B5, TPM 2.0 by EK credential activation)', () => {
+  it('signs the TPM attestation into the credential after the TPM unwraps the secret', async () => {
+    const device = await newDevice();
+    const start = await tpmEkStart(device);
+    expect(start.status, JSON.stringify(start.body)).toBe(200);
+    const described = await call(env, 'POST', '/api/v1/enrollments/describe', { body: { request: start.body.request } });
+    expect(described.body.device).toMatchObject({ key_protection: 'tpm', attestation: { format: 'tpm', security_level: 'tpm', tpm_manufacturer: 'IFX' } });
+    const credential = (await call(env, 'POST', '/api/v1/enrollments/approve', { auth: 'alice', body: { request: start.body.request } })).body.credential;
+    expect(inspectCredential(credential).payload.device.attestation).toMatchObject({ format: 'tpm', security_level: 'tpm', tpm_manufacturer: 'IFX' });
+  });
+
+  it('refuses a wrong secret, an activation for another key, and a bad challenge', async () => {
+    const device = await newDevice();
+    expect((await tpmEkStart(device, { secretOverride: btoa('x'.repeat(32)) })).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('secret is wrong') });
+    expect((await tpmEkStart(device, { activateWith: await newDevice() })).body).toMatchObject({ code: 'invalid_attestation', error: expect.stringContaining('another key') });
+    const bad = await call(env, 'POST', '/api/v1/enrollments/tpm-activation', { body: { challenge: 'nope' } });
+    expect(bad.body.code).toBe('invalid_attestation');
+  });
+
+  it('trusts the test EK CA only on a local server', async () => {
+    expect(tpmEkAnchorsFor({ ENVIRONMENT: 'local', TPM_EK_TEST_CA: ekCa.derB64 }).at(-1).name).toBe('TPM_EK_TEST_CA');
+    expect(tpmEkAnchorsFor({ ENVIRONMENT: 'production', TPM_EK_TEST_CA: ekCa.derB64 }).some(a => a.name === 'TPM_EK_TEST_CA')).toBe(false);
   });
 });

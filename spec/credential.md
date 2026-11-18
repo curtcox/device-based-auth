@@ -159,9 +159,35 @@ attestation format (§8.3) and accepts it only when:
 5. `pub_area` is an ECC NIST P-256 key equal to the enrolled key, with `fixedTPM`, `fixedParent`,
    `sensitiveDataOrigin` and `sign` set: generated in this TPM and unable to leave it.
 
-AIK certificates themselves carry no revocation pointer. A TPM whose AIK has no certificate from
-Microsoft (most Linux machines) cannot attest yet: that needs endorsement-key credential
-activation against the manufacturers' roots.
+AIK certificates themselves carry no revocation pointer.
+
+**TPM 2.0 by EK credential activation.** A TPM whose attestation key (AK) has no certificate from
+Microsoft (most Linux machines) proves instead that its AK lives beside its endorsement key (EK),
+whose certificate the TPM manufacturer issued. It takes one extra round trip, and the result is the
+same `{ format: "tpm", security_level: "tpm", tpm_manufacturer }` claim:
+
+1. With a challenge, the device sends `POST /api/v1/enrollments/tpm-activation` with
+   `{ challenge, ek_certificate, ek_chain, ak_pub_area, pub_area, cert_info, sig }`: its RSA-2048
+   EK certificate (DER, base64), optional CA certificates above it, the AK's public area (a
+   restricted signing key with `fixedTPM`, `fixedParent` and `sensitiveDataOrigin`, not a
+   decryption key), and a `TPM2_Certify` of the device key by the AK (`TPMS_ATTEST` and its
+   `TPMT_SIGNATURE`, RSASSA or ECDSA). The issuer checks that the EK certificate chains to a TPM
+   manufacturer's EK CA (Infineon, STMicroelectronics, Nuvoton, Intel, Nationz; the list Keylime
+   keeps), that it names the TPM manufacturer, that the AK signed `cert_info`, and that `cert_info`
+   names exactly `pub_area`, a P-256 key with the attributes above (rule 5). The certify's
+   `extraData` is not checked: freshness comes from step 2.
+2. The issuer answers with a fresh 32-byte secret wrapped by `TPM2_MakeCredential` for that EK and
+   the AK's name (`id_object`, `encrypted_secret`, and both as tpm2-tools' `credential_blob` file),
+   and an `activation` token valid 10 minutes holding the challenge, the device key's thumbprint,
+   the manufacturer and the secret's SHA-256. Only the TPM holding that EK can unwrap the secret, and
+   only while the AK is loaded in it (`TPM2_ActivateCredential`).
+3. The enrollment request carries `attestation: { format: "tpm-ek", challenge, activation, secret }`
+   (the secret base64); the issuer checks the token is for this challenge and the enrolled key and
+   that the secret hashes to the one it wrapped.
+
+EK certificates' validity periods are not checked, since an EK identifies a TPM for its life and
+many genuine EK certificates come from since-expired intermediates; manufacturers' EK revocation
+lists are not checked yet. Only RSA-2048 EKs (TCG template L-1) are supported.
 
 Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
 without attestation omits the member.

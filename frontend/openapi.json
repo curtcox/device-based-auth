@@ -729,7 +729,75 @@
     "/api/v1/enrollments/attestation-challenge": {
       "post": {
         "operationId": "post_api_v1_enrollments_attestation_challenge",
-        "summary": "A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:\"android-key\", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256(\"<challenge>.<JWK thumbprint of the enrolled key>\") and add {format:\"apple-appattest\", challenge, app_id, key_id, object}. TPM 2.0 (Windows): TPM2_Certify the TPM-resident P-256 key with the AIK and qualifyingData SHA-256(\"<challenge>.<JWK thumbprint>\"), and add {format:\"tpm\", challenge, alg, x5c[], sig, cert_info, pub_area}. Free; stateless.",
+        "summary": "A challenge for key attestation, valid 10 minutes. Android: generate the key with setAttestationChallenge(challenge as ASCII bytes), then add attestation {format:\"android-key\", challenge, x5c[]} to the enrollment request. iOS: attestKey with clientDataHash SHA-256(\"<challenge>.<JWK thumbprint of the enrolled key>\") and add {format:\"apple-appattest\", challenge, app_id, key_id, object}. TPM 2.0 (Windows): TPM2_Certify the TPM-resident P-256 key with the AIK and qualifyingData SHA-256(\"<challenge>.<JWK thumbprint>\"), and add {format:\"tpm\", challenge, alg, x5c[], sig, cert_info, pub_area}. TPM 2.0 without a Microsoft AIK certificate (Linux): see POST /api/v1/enrollments/tpm-activation. Free; stateless.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/enrollments/tpm-activation": {
+      "post": {
+        "operationId": "post_api_v1_enrollments_tpm_activation",
+        "summary": "TPM 2.0 attestation by EK credential activation, step 1, for TPMs whose attestation key (AK) has no Microsoft certificate. Send {challenge, ek_certificate (the TPM's RSA-2048 EK certificate, DER base64; NV index 0x01c00002), ek_chain[] (optional CA certificates up to the manufacturer's), ak_pub_area (the restricted signing AK, TPM2B_PUBLIC or TPMT_PUBLIC), pub_area (the TPM-resident P-256 device key), cert_info (TPMS_ATTEST from TPM2_Certify of the device key by the AK), sig (TPMT_SIGNATURE)}. Answers a secret wrapped for that TPM (id_object, encrypted_secret, and credential_blob in tpm2_activatecredential's file format) and an activation token valid 10 minutes. Unwrap with TPM2_ActivateCredential and add attestation {format:\"tpm-ek\", challenge, activation, secret (base64)} to the enrollment request. Free; stateless.",
         "x-access": "public",
         "security": [],
         "parameters": [

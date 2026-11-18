@@ -3,7 +3,7 @@ import { authenticate } from './auth/middleware.js';
 import { clerkWebhook } from './auth/clerk-webhook.js';
 import { checkout, stripeWebhook } from './api/payments.js';
 import { keys } from './api/keys.js';
-import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment, attestationChallenge } from './api/enrollments.js';
+import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment, attestationChallenge, tpmActivation } from './api/enrollments.js';
 import { enrollmentTokens, redeemEnrollmentToken } from './api/enrollment-tokens.js';
 import { caBundle, deviceCertificateFor } from './api/certificates.js';
 import { createCredential, listCredentials, getCredential, credentialDecisions, revoke, revokeSelf, renew, token, whoami } from './api/credentials.js';
@@ -43,6 +43,7 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/enrollments`, access: PUBLIC, handler: 'enroll-start', free: true },
   { method: 'POST', path: `${V1}/enrollments/describe`, access: PUBLIC, handler: 'enroll-describe', free: true },
   { method: 'POST', path: `${V1}/enrollments/attestation-challenge`, access: PUBLIC, handler: 'attestation-challenge', free: true },
+  { method: 'POST', path: `${V1}/enrollments/tpm-activation`, access: PUBLIC, handler: 'tpm-activation', free: true },
   { method: 'GET', path: `${V1}/enrollments/:id`, access: PUBLIC, handler: 'enroll-poll' },
   { method: 'POST', path: `${V1}/enrollments/approve`, access: SESSION, handler: 'enroll-approve', billable: 'issue' },
   { method: 'POST', path: `${V1}/enrollments/deny`, access: SESSION, handler: 'enroll-deny' },
@@ -149,6 +150,7 @@ async function handle(route, request, env, auth) {
     case 'enroll-start': return startEnrollment(request, env);
     case 'enroll-describe': return describeEnrollment(request, env);
     case 'attestation-challenge': return attestationChallenge(env);
+    case 'tpm-activation': return tpmActivation(request, env);
     case 'enroll-poll': return pollEnrollment(route, request, env);
     case 'enroll-approve': return approveEnrollment(request, env, auth);
     case 'enroll-deny': return denyEnrollment(request, env, auth);
