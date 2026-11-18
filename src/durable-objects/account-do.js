@@ -150,15 +150,62 @@ export class AccountDO {
     return { scopes: key.scopes };
   }
 
+  // ---- Enrollment tokens (B2) ---------------------------------------------------
+  // A pre-approved template (audiences, grants, lifetime) with a use count and an expiry. Devices
+  // holding the token enroll without a per-device approval; each use issues and pays like any
+  // other credential. Only the token's digest is stored.
+
+  async op_create_enrollment_token({ id, name, hash, template, max_uses, expires_at }, now) {
+    return this.tx(async tx => {
+      const active = [...(await tx.list({ prefix: 'etok:' })).values()].filter(t => enrollmentTokenState(t, now) === 'active');
+      assert(active.length < 50, 'too_many_tokens', 'At most 50 active enrollment tokens');
+      const token = { id, name, hash, template, max_uses, uses: 0, expires_at, created_at: now };
+      await tx.put(`etok:${id}`, token);
+      await this.audit(tx, now, 'enrollment_token.created', { token_id: id, name, aud: template.aud, max_uses });
+      return visibleToken(token, now);
+    });
+  }
+
+  async op_list_enrollment_tokens(_args, now) {
+    return { items: [...(await this.storage.list({ prefix: 'etok:' })).values()].map(t => visibleToken(t, now)).reverse() };
+  }
+
+  async op_revoke_enrollment_token({ id }, now) {
+    return this.tx(async tx => {
+      const token = await tx.get(`etok:${id}`); assert(token, 'not_found', 'Enrollment token not found', 404);
+      if (!token.revoked_at) { token.revoked_at = now; await tx.put(`etok:${id}`, token); await this.audit(tx, now, 'enrollment_token.revoked', { token_id: id }); }
+      return visibleToken(token, now);
+    });
+  }
+
+  /** Check a presented token before any issuing work (no writes; rate-limited per token in memory). */
+  async op_check_enrollment_token({ id, hash }, now) {
+    const token = await this.storage.get(`etok:${id}`);
+    assert(token && token.hash === hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
+    assert(enrollmentTokenState(token, now) === 'active', 'enrollment_token_inactive', `Enrollment token is ${enrollmentTokenState(token, now)}`, 403);
+    await this.op_rate_limit({ id: `etok:${id}`, limit: 60 }, now);
+    return { template: token.template, name: token.name };
+  }
+
   // ---- Credentials ------------------------------------------------------------
 
   /**
    * Charge and store a newly signed credential (and its device). The Worker signs first so the
    * stored JWS is exactly what the device receives; if the charge fails nothing is kept.
    */
-  async op_store_credential({ record, device, price, charge_id, source }, now) {
+  async op_store_credential({ record, device, price, charge_id, source, enrollment_token }, now) {
     return this.tx(async tx => {
       const settings = await this.settings(tx);
+      if (enrollment_token) {
+        // Count the use in the same transaction that stores the credential, so a token can never
+        // issue more than max_uses even under concurrent redemptions.
+        const token = await tx.get(`etok:${enrollment_token.id}`);
+        assert(token && token.hash === enrollment_token.hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
+        assert(enrollmentTokenState(token, now) === 'active', 'enrollment_token_inactive', `Enrollment token is ${enrollmentTokenState(token, now)}`, 403);
+        token.uses += 1; token.last_used_at = now;
+        await tx.put(`etok:${token.id}`, token);
+        record = { ...record, enrollment_token: token.id };
+      }
       const today = (await readBalance(tx, now)).day;
       assert((today.counts?.issue || 0) < settings.max_issues_per_day, 'issuance_limit', `This account may issue ${settings.max_issues_per_day} credentials a day (UTC); the owner can raise the limit in the dashboard`, 429, { limit: settings.max_issues_per_day });
       await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid } }, now);
@@ -168,7 +215,7 @@ export class AccountDO {
       await tx.put(`device:${device.id}`, stored);
       const cred = { ...record, created_at: now, events: [{ at: now, type: 'issued', jti: record.jti, source }] };
       await tx.put(`cred:${record.cid}`, cred);
-      await this.audit(tx, now, 'credential.issued', { cid: record.cid, device_id: device.id, aud: record.aud, source });
+      await this.audit(tx, now, 'credential.issued', { cid: record.cid, device_id: device.id, aud: record.aud, source, ...(record.enrollment_token ? { token_id: record.enrollment_token } : {}) });
       return { cid: record.cid, charged: price };
     });
   }
@@ -477,6 +524,16 @@ export class AccountDO {
     if (next.length) await this.storage.setAlarm(Math.min(...next));
   }
 }
+
+/** active | expired | revoked | used_up */
+export function enrollmentTokenState(token, now = Date.now()) {
+  if (token.revoked_at) return 'revoked';
+  if (token.expires_at <= now) return 'expired';
+  if (token.uses >= token.max_uses) return 'used_up';
+  return 'active';
+}
+
+function visibleToken({ hash: _hash, ...token }, now) { return { ...token, state: enrollmentTokenState(token, now) }; }
 
 /** active | expired | revoked */
 export function credentialState(cred, now = Date.now()) {

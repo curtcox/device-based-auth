@@ -85,6 +85,10 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `GET /api/v1/enrollments/{id}` (public): Poll an enrollment until it is approved, denied or expired.
 - `POST /api/v1/enrollments/approve` (session): Approve an enrollment (optionally narrowing grants) and issue the credential. Charges the issue price.
 - `POST /api/v1/enrollments/deny` (session): Deny an enrollment.
+- `POST /api/v1/enrollments/redeem` (public): Enroll with an enrollment token instead of a per-device approval: body {request (the dba-enroll+jwt; aud and grants may be left out or narrow the token's), enrollment_token}. Charges the issue price to the token's account.
+- `GET /api/v1/enrollment-tokens` (credentials:issue): Enrollment tokens (dbae_…): a pre-approved template (aud, grants, lifetime_seconds) for up to max_uses devices (1–10000) until expires_in_days (default 7, ≤ 90). The secret is shown once. Not available to delegating devices.
+- `POST /api/v1/enrollment-tokens` (credentials:issue): Enrollment tokens (dbae_…): a pre-approved template (aud, grants, lifetime_seconds) for up to max_uses devices (1–10000) until expires_in_days (default 7, ≤ 90). The secret is shown once. Not available to delegating devices.
+- `DELETE /api/v1/enrollment-tokens/{id}` (credentials:issue): Enrollment tokens (dbae_…): a pre-approved template (aud, grants, lifetime_seconds) for up to max_uses devices (1–10000) until expires_in_days (default 7, ≤ 90). The secret is shown once. Not available to delegating devices.
 - `GET /api/v1/whoami` (authenticated): Who is calling: account, credential kind and (for devices) the grants in plain English.
 - `GET /api/v1/account` (account:read): Balance, this month's spend and today's aggregated charges.
 - `GET /api/v1/account/settings` (session): Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap). PATCH changes the members given; dashboard only.

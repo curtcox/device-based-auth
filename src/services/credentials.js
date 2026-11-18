@@ -69,7 +69,7 @@ export async function requireFunds(env, account, amount) {
  * Issue a credential: validate, check funds, allocate a status index, sign, then charge and store
  * atomically in the account. Returns { credential, cid, payload, charged }.
  */
-export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, parentCid, now = Date.now() }) {
+export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, parentCid, enrollmentToken, now = Date.now() }) {
   const jwk = cleanJwk(request.public_jwk);
   const device = cleanDevice(request.device);
   const { aud, grants, lifetime } = await validateIssue(env, request);
@@ -85,7 +85,7 @@ export async function issueCredential(env, account, request, { source, chargeId,
   const payload = { iss: issuerName(env), sub: deviceId, acct: account, aud, cid, jti: `${cid}.1`, iat, nbf: iat, exp, cnf: { jkt }, device, grants, status: { status_list: { idx: status.idx, uri: status.uri } }, ver: 1 };
   const credential = await signCredential(payload, await activeSigner(env));
   const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}) };
-  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, source, now });
+  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
   return { credential, cid, device_id: deviceId, payload, charged: stored.charged };
 }
 

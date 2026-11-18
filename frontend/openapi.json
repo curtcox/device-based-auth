@@ -947,6 +947,376 @@
         }
       }
     },
+    "/api/v1/enrollments/redeem": {
+      "post": {
+        "operationId": "post_api_v1_enrollments_redeem",
+        "summary": "Enroll with an enrollment token instead of a per-device approval: body {request (the dba-enroll+jwt; aud and grants may be left out or narrow the token's), enrollment_token}. Charges the issue price to the token's account.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request",
+                  "enrollment_token"
+                ],
+                "properties": {
+                  "request": {
+                    "type": "string",
+                    "description": "Compact JWS (ES256)."
+                  },
+                  "enrollment_token": {
+                    "type": "string",
+                    "description": "dbae_… token from POST /api/v1/enrollment-tokens."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/enrollment-tokens": {
+      "get": {
+        "operationId": "get_api_v1_enrollment_tokens",
+        "summary": "Enrollment tokens (dbae_…): a pre-approved template (aud, grants, lifetime_seconds) for up to max_uses devices (1–10000) until expires_in_days (default 7, ≤ 90). The secret is shown once. Not available to delegating devices.",
+        "x-access": "credentials:issue",
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "description": "Requires scope `credentials:issue` (API key), a signed-in session, or a device credential with `dba:credentials:issue`."
+      },
+      "post": {
+        "operationId": "post_api_v1_enrollment_tokens",
+        "summary": "Enrollment tokens (dbae_…): a pre-approved template (aud, grants, lifetime_seconds) for up to max_uses devices (1–10000) until expires_in_days (default 7, ≤ 90). The secret is shown once. Not available to delegating devices.",
+        "x-access": "credentials:issue",
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "description": "Requires scope `credentials:issue` (API key), a signed-in session, or a device credential with `dba:credentials:issue`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "aud",
+                  "grants"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "aud": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "grants": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/Grant"
+                    }
+                  },
+                  "lifetime_seconds": {
+                    "type": "integer"
+                  },
+                  "max_uses": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000
+                  },
+                  "expires_in_days": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 90
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/enrollment-tokens/{id}": {
+      "delete": {
+        "operationId": "delete_api_v1_enrollment_tokens_id",
+        "summary": "Enrollment tokens (dbae_…): a pre-approved template (aud, grants, lifetime_seconds) for up to max_uses devices (1–10000) until expires_in_days (default 7, ≤ 90). The secret is shown once. Not available to delegating devices.",
+        "x-access": "credentials:issue",
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "description": "Requires scope `credentials:issue` (API key), a signed-in session, or a device credential with `dba:credentials:issue`."
+      }
+    },
     "/api/v1/whoami": {
       "get": {
         "operationId": "get_api_v1_whoami",

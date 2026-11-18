@@ -12,18 +12,18 @@ const ENROLLMENT_SECONDS = 900;
 const POLL_INTERVAL = 3;
 
 /**
- * Start an enrollment. The device sends a JWS (typ dba-enroll+jwt) signed with its new key, the
- * public key in the header, asking for audiences and grants. Nothing is stored: the request
- * travels in a signed token inside the approval URL, so anonymous starts cost no storage.
+ * Check a device's enrollment request: a JWS (typ dba-enroll+jwt) signed by the new key, whose
+ * public JWK is in the header. Returns { jwk, payload, lifetime, returnOrigin, lifetimeRequested }.
  */
-export async function startEnrollment(request, env) {
-  const body = await readJson(request, 32768);
+export async function readEnrollRequest(jws, { defaults } = {}) {
   let decoded;
-  try { decoded = decodeJws(body.request); } catch { assert(false, 'invalid_request', 'request must be a compact JWS signed by the device key'); }
-  const { header, payload } = decoded;
+  try { decoded = decodeJws(jws); } catch { assert(false, 'invalid_request', 'request must be a compact JWS signed by the device key'); }
+  const { header } = decoded;
+  // With an enrollment token the template supplies aud and grants the request leaves out.
+  const payload = { ...decoded.payload, aud: decoded.payload.aud ?? defaults?.aud, grants: decoded.payload.grants ?? defaults?.grants };
   assert(header.typ === ENROLL_TYP && header.alg === 'ES256', 'invalid_request', `request must have typ ${ENROLL_TYP} and alg ES256`);
   const jwk = cleanJwk(header.jwk);
-  assert(await verifyJws(body.request, jwk), 'invalid_request', 'request signature does not verify with its jwk');
+  assert(await verifyJws(jws, jwk), 'invalid_request', 'request signature does not verify with its jwk');
   const now = Math.floor(Date.now() / 1000);
   assert(Number.isSafeInteger(payload.iat) && Math.abs(payload.iat - now) <= 600, 'invalid_request', 'request iat must be within 10 minutes');
   assert(Array.isArray(payload.aud) && payload.aud.length >= 1 && payload.aud.length <= 8 && payload.aud.every(a => typeof a === 'string' && a.length <= 253), 'invalid_audience', 'aud must list 1–8 audiences');
@@ -36,6 +36,18 @@ export async function startEnrollment(request, env) {
     try { const u = new URL(payload.return_origin); assert(u.origin === payload.return_origin && (u.protocol === 'https:' || u.hostname === 'localhost'), 'x', 'x'); returnOrigin = u.origin; }
     catch { assert(false, 'invalid_return_origin', 'return_origin must be an https origin'); }
   }
+  return { jwk, payload, lifetime, returnOrigin, lifetimeRequested: payload.lifetime_seconds !== undefined };
+}
+
+/**
+ * Start an enrollment. The device sends a JWS (typ dba-enroll+jwt) signed with its new key, the
+ * public key in the header, asking for audiences and grants. Nothing is stored: the request
+ * travels in a signed token inside the approval URL, so anonymous starts cost no storage.
+ */
+export async function startEnrollment(request, env) {
+  const body = await readJson(request, 32768);
+  const { jwk, payload, lifetime, returnOrigin } = await readEnrollRequest(body.request);
+  const now = Math.floor(Date.now() / 1000);
   const id = randomId('enr');
   const exp = now + ENROLLMENT_SECONDS;
   const ticket = await signToken('enr_', { id, jwk, jkt: await jwkThumbprint(jwk), aud: payload.aud, grants: payload.grants, device: cleanDevice(payload.device), lifetime, return_origin: returnOrigin, exp }, env.TOKEN_SIGNING_KEY);

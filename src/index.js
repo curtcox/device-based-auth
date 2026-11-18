@@ -4,6 +4,7 @@ import { clerkWebhook } from './auth/clerk-webhook.js';
 import { checkout, stripeWebhook } from './api/payments.js';
 import { keys } from './api/keys.js';
 import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment } from './api/enrollments.js';
+import { enrollmentTokens, redeemEnrollmentToken } from './api/enrollment-tokens.js';
 import { createCredential, listCredentials, getCredential, credentialDecisions, revoke, revokeSelf, renew, token, whoami } from './api/credentials.js';
 import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
@@ -40,6 +41,10 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/enrollments/:id`, access: PUBLIC, handler: 'enroll-poll' },
   { method: 'POST', path: `${V1}/enrollments/approve`, access: SESSION, handler: 'enroll-approve' },
   { method: 'POST', path: `${V1}/enrollments/deny`, access: SESSION, handler: 'enroll-deny' },
+  { method: 'POST', path: `${V1}/enrollments/redeem`, access: PUBLIC, handler: 'enroll-redeem' },
+  { method: 'GET', path: `${V1}/enrollment-tokens`, access: 'credentials:issue', handler: 'enrollment-tokens' },
+  { method: 'POST', path: `${V1}/enrollment-tokens`, access: 'credentials:issue', handler: 'enrollment-tokens' },
+  { method: 'DELETE', path: `${V1}/enrollment-tokens/:id`, access: 'credentials:issue', handler: 'enrollment-tokens' },
   { method: 'GET', path: `${V1}/whoami`, access: AUTHENTICATED, handler: 'whoami' },
   { method: 'GET', path: `${V1}/account`, access: 'account:read', handler: 'account' },
   { method: 'GET', path: `${V1}/account/settings`, access: SESSION, handler: 'account-settings' },
@@ -118,6 +123,8 @@ async function handle(route, request, env, auth) {
     case 'enroll-poll': return pollEnrollment(route, request, env);
     case 'enroll-approve': return approveEnrollment(request, env, auth);
     case 'enroll-deny': return denyEnrollment(request, env, auth);
+    case 'enroll-redeem': return redeemEnrollmentToken(request, env);
+    case 'enrollment-tokens': return enrollmentTokens(route, request, env, auth);
     case 'whoami': return whoami(env, auth);
     case 'account': return rpc(env.ACCOUNTS, auth.account, 'account');
     case 'transactions': return rpc(env.ACCOUNTS, auth.account, 'list', { prefix: 'ledger:', cursor: url.searchParams.get('cursor') || undefined });

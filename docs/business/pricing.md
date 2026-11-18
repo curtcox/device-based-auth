@@ -36,8 +36,8 @@ handler adds a Durable Object call or a storage write.
 
 | Operation | Who pays | Counted (per `OPERATIONS`) | Cost µ$ | Floor µ$ | **Price µ$** |
 |-----------|----------|----------------------------|--------:|---------:|-------------:|
-| Issue a credential (enrollment approval or API) | Issuing account | 3 Worker req, 18 DO req, 18 rows, 80 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries | 44 | 72 | **75** |
-| Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 44 | 72 | **75** |
+| Issue a credential (enrollment approval or API) | Issuing account | 3 Worker req, 19 DO req, 19 rows, 80 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries, and an enrollment token's check and use counter | 45 | 74 | **75** |
+| Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 45 | 74 | **75** |
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 5 rows, 10 ms, 1 KB × 13 months | 9 | 15 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 4 rows (balance, usage counter, decision row and its later deletion), 0.5 KB × 3 months | 6 | 10 | **10** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 3 DO req, 1 row (aggregated on the balance row) | 2 | 4 | **5** |
@@ -46,8 +46,9 @@ handler adds a Durable Object call or a storage write.
 | Register or change an audience | Audience owner | 1 Worker req, 3 DO req, 5 rows, 4 KB × 13 months | 17 | 28 | **100** |
 | Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
 
-Decision and login prices sit exactly at their floors (the thinnest margin the rule allows). Any
-upward correction found in an audit must raise those prices.
+Decision and login prices sit exactly at their floors (the thinnest margin the rule allows), and
+issue is 1 µ$ above its floor since it prepays revocation webhooks and enrollment-token redemption.
+Any upward correction found in an audit must raise those prices.
 
 ### Why aggregate small charges
 
@@ -80,7 +81,7 @@ A $5 deposit covers about 66,000 issuances, 200,000 renewals, or 500,000 online 
 
 ## Margin and break-even
 
-Margin per operation (`price × 0.92 − cost`): issue ≈ 25 µ$, renew ≈ 14 µ$, decision ≈ 3 µ$,
+Margin per operation (`price × 0.92 − cost`): issue ≈ 24 µ$, renew ≈ 14 µ$, decision ≈ 3 µ$,
 read/token ≈ 3 µ$, login ≈ 3 µ$. Profit = Σ margins − fixed costs, so it rises with every
 operation (master plan principle 6).
 
@@ -99,7 +100,7 @@ measurements are missing for 36 hours. Paid operations keep working: they are pr
 
 ## Open questions for the owner
 
-1. Approve these prices (D6), or lower issue/renew towards their floors (72 / 15)?
+1. Approve these prices (D6), or lower issue/renew towards their floors (74 / 15)?
 2. Clerk monthly retained users are the one per-user cost not tied to an operation. Mitigations in
    place: dashboard sign-in with a DBA browser credential (no Clerk session). Proposed (D8, not
    built): close zero-balance accounts with no live credentials after 12 idle months.
