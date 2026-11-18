@@ -17,16 +17,23 @@ export const COST_POLICY = Object.freeze({
  * KB-months of storage it prepays, and R2 writes.
  */
 export const OPERATIONS = Object.freeze({
-  // Issue includes the enrollment record, 13 months of records, and a prepaid revocation
-  // (worker + 2 DO requests, 5 row writes, one status-list publish, its alarm).
-  issue: { workerRequests: 3, doRequests: 8, rowWrites: 14, cpuMs: 15, storageKBMonths: 6 * 13, r2ClassA: 1 },
-  renew: { workerRequests: 1, doRequests: 2, rowWrites: 5, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 },
-  // Charge on the audience's balance row, issuer check + usage counter + decision row and
-  // its pruning delete; the decision row is kept 90 days.
-  decision: { workerRequests: 1, doRequests: 3, rowWrites: 4, cpuMs: 5, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
-  read: { workerRequests: 1, doRequests: 2, rowWrites: 1, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 },
-  token: { workerRequests: 1, doRequests: 2, rowWrites: 1, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 },
-  login: { workerRequests: 2, doRequests: 4, rowWrites: 3, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 },
+  // Enrollment approval: rate limit, registry, funds check, status allocation, store, enrollment
+  // get/put and its expiry alarm (8 DO requests); 13 months of device/credential/audit/ledger
+  // records; plus a prepaid revocation (worker request, account + shard DO requests, 5 rows,
+  // one status-list publish to R2).
+  issue: { workerRequests: 3, doRequests: 10, rowWrites: 14, cpuMs: 15, storageKBMonths: 6 * 13, r2ClassA: 1 },
+  // Rate limit, credential status (auth), credential status (renew), funds check, renew.
+  renew: { workerRequests: 1, doRequests: 5, rowWrites: 5, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 },
+  // Rate limit, charge on the audience's balance row, registry (normally cached), issuer check
+  // with usage counter + decision row + its pruning delete; decision rows are kept 90 days.
+  decision: { workerRequests: 1, doRequests: 4, rowWrites: 4, cpuMs: 5, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
+  // Rate limit, charge (aggregated on the balance row), the read itself.
+  read: { workerRequests: 1, doRequests: 3, rowWrites: 1, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 },
+  // Rate limit, credential status (auth), registry, charge.
+  token: { workerRequests: 1, doRequests: 4, rowWrites: 1, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 },
+  // Consent (rate limit, registry, code put, code alarm) + token (take code, registry, charge).
+  login: { workerRequests: 2, doRequests: 7, rowWrites: 4, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 },
+  // Rate limit, charge, registry write; 4 KB of catalog kept 13 months.
   audience: { workerRequests: 1, doRequests: 3, rowWrites: 5, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }
 });
 
