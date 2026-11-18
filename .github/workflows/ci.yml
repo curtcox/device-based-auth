@@ -17,6 +17,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install cryptography==44.0.0 requests==2.32.3
+      - run: python3 -m unittest discover -s packages/verify-python/tests -t packages/verify-python
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'

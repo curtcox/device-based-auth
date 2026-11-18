@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devicebasedauth-verify"
+version = "0.1.0"
+description = "Verify devicebasedauth.org device credentials, DPoP proofs and status lists, and evaluate their grants."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["cryptography>=41"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://devicebasedauth.org"
+Source = "https://github.com/curtcox/device-based-auth/tree/main/packages/verify-python"
+
+[tool.setuptools.packages.find]
+where = ["src"]

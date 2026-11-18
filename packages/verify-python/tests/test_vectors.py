@@ -21,39 +21,56 @@ def outcome(fn):
         return {"valid": False, "code": error.code}
 
 
+def _slug(name):
+    return "".join(c if c.isalnum() else "_" for c in name.lower()).strip("_")
+
+
 class EvaluationVectors(unittest.TestCase):
+    """One test per case in evaluation.json: allow, grant_index and per-grant reasons must match."""
+
     def test_vectors_present(self):
         self.assertGreaterEqual(len(EVALUATION["cases"]), 40)
 
-    def test_every_case(self):
-        for case in EVALUATION["cases"]:
-            with self.subTest(case["name"]):
-                result = evaluate_grants(case["grants"], case["context"])
-                self.assertEqual({"allow": result["allow"], "grant_index": result["grant_index"], "reasons": result["reasons"]}, case["expected"])
-
 
 class CredentialVectors(unittest.TestCase):
-    def test_credentials(self):
-        self.assertTrue(CREDENTIALS["credentials"])
-        for case in CREDENTIALS["credentials"]:
-            with self.subTest(case["name"]):
-                result = outcome(lambda: verify_credential(case["jws"], jwks=CREDENTIALS["jwks"], issuer=CREDENTIALS["issuer"],
-                                                           audience=case.get("audience"), now=case["now"]))
-                self.assertEqual(result, case["expected"])
-
-    def test_proofs(self):
-        self.assertTrue(CREDENTIALS["proofs"])
-        for case in CREDENTIALS["proofs"]:
-            with self.subTest(case["name"]):
-                result = outcome(lambda: verify_proof(case["proof"], method=case["method"], url=case["url"], credential=case.get("credential"),
-                                                      jkt=case.get("jkt"), now=case.get("now"), nonce=case.get("nonce")))
-                self.assertEqual(result, case["expected"])
+    """One test per credential and proof in credentials.json, plus the status list."""
 
     def test_status_list(self):
         decoded = verify_jws(CREDENTIALS["status_list"]["jwt"], CREDENTIALS["jwks"]["keys"][0])
         self.assertIsNotNone(decoded)
         data = decode_status_list(decoded["payload"]["status_list"])
         self.assertEqual([i for i in range(9) if get_bit(data, i)], CREDENTIALS["status_list"]["revoked_indexes"])
+
+
+def _evaluation_test(case):
+    def test(self):
+        result = evaluate_grants(case["grants"], case["context"])
+        self.assertEqual({"allow": result["allow"], "grant_index": result["grant_index"], "reasons": result["reasons"]}, case["expected"])
+    return test
+
+
+def _credential_test(case):
+    def test(self):
+        result = outcome(lambda: verify_credential(case["jws"], jwks=CREDENTIALS["jwks"], issuer=CREDENTIALS["issuer"],
+                                                   audience=case.get("audience"), now=case["now"]))
+        self.assertEqual(result, case["expected"])
+    return test
+
+
+def _proof_test(case):
+    def test(self):
+        result = outcome(lambda: verify_proof(case["proof"], method=case["method"], url=case["url"], credential=case.get("credential"),
+                                              jkt=case.get("jkt"), now=case.get("now"), nonce=case.get("nonce")))
+        self.assertEqual(result, case["expected"])
+    return test
+
+
+for _i, _case in enumerate(EVALUATION["cases"]):
+    setattr(EvaluationVectors, f"test_{_i:03d}_{_slug(_case['name'])}", _evaluation_test(_case))
+for _i, _case in enumerate(CREDENTIALS["credentials"]):
+    setattr(CredentialVectors, f"test_credential_{_i:02d}_{_slug(_case['name'])}", _credential_test(_case))
+for _i, _case in enumerate(CREDENTIALS["proofs"]):
+    setattr(CredentialVectors, f"test_proof_{_i:02d}_{_slug(_case['name'])}", _proof_test(_case))
 
 
 if __name__ == "__main__":

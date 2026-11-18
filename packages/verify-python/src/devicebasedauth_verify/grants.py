@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import functools
 import math
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
-try:
-    import zoneinfo
-except ImportError:  # pragma: no cover - Python < 3.9 is not supported
-    zoneinfo = None
+import zoneinfo
 
 from . import _js
 from ._js import MISSING, get, includes, is_finite, is_object, is_safe_integer, present, truthy
@@ -44,13 +42,45 @@ REGION = re.compile(r"[A-Z]{2}-[A-Z0-9]{1,3}", re.ASCII)
 OFFSET_ZONE = re.compile("([+\\-−])([01][0-9]|2[0-3])(?::?([0-5][0-9]))?", re.ASCII)
 
 
+# Files in a tz database directory that are not zones, and that ICU (hence JS Intl) rejects.
+_NOT_ZONES = {"factory", "localtime", "posixrules"}
+
+
+def _zone_links():
+    """(alias, target) pairs from tzdata.zi, which also lists the "backward" links (US/Pacific,
+    Asia/Calcutta, …). Some distributions ship those links only there, not as files, while ICU
+    always accepts them."""
+    sources = [os.path.join(path, "tzdata.zi") for path in zoneinfo.TZPATH]
+    try:
+        import importlib.resources
+        sources.append(importlib.resources.files("tzdata").joinpath("zoneinfo", "tzdata.zi"))
+    except Exception:
+        pass
+    for source in sources:
+        try:
+            with open(source, encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("L "):
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            yield parts[2], parts[1]
+        except Exception:
+            continue
+
+
 @functools.lru_cache(maxsize=1)
 def _zone_names() -> dict:
-    """Lower-case name → canonical name, because Intl matches IANA names case-insensitively."""
+    """Lower-case name → loadable zone key. Intl matches IANA names case-insensitively."""
+    names: dict = {}
     try:
-        return {name.lower(): name for name in zoneinfo.available_timezones()}
+        names.update((name.lower(), name) for name in zoneinfo.available_timezones())
     except Exception:  # pragma: no cover - no tz database at all
-        return {}
+        pass
+    for alias, target in _zone_links():
+        names.setdefault(alias.lower(), target)
+    for name in _NOT_ZONES:
+        names.pop(name, None)
+    return names
 
 
 @functools.lru_cache(maxsize=512)
@@ -59,14 +89,10 @@ def _zone(tz: str):
     if offset:
         sign = 1 if offset.group(1) == "+" else -1
         return timezone(sign * timedelta(hours=int(offset.group(2)), minutes=int(offset.group(3) or 0)))
-    for name in (tz, _zone_names().get(tz.lower())):
-        if not name:
-            continue
-        try:
-            return zoneinfo.ZoneInfo(name)
-        except Exception:
-            continue
-    raise ValueError(f"unknown time zone {tz!r}")
+    key = _zone_names().get(tz.lower())
+    if key is None:
+        raise ValueError(f"unknown time zone {tz!r}")
+    return zoneinfo.ZoneInfo(key)
 
 
 def valid_time_zone(tz) -> bool:
