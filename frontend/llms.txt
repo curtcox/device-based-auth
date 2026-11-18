@@ -1,0 +1,64 @@
+# devicebasedauth.org
+
+> Revocable, device-bound authentication and authorization as a pay-as-you-go web service. A device (browser, phone, server, CLI, AI agent) keeps its own private key; devicebasedauth.org issues it a signed, human-readable credential listing exactly what it may do, on which site, when and where. Servers verify offline for free or ask online (metered) for instant revocation, usage limits and owner approval. Prepaid balance, no subscription.
+
+Machine-readable API: https://devicebasedauth.org/openapi.json
+Credential format: https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md
+Grant evaluation rules and test vectors: https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md
+Docs: https://devicebasedauth.org/docs/
+MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_… or a device credential)
+
+## Key facts
+
+- Money is integer micro-dollars (µ$; $1 = 1,000,000 µ$). Every JSON response includes `cost_microdollars`. `GET /api/v1/quote?op=<op>` prices an operation before you do it.
+- Prices (µ$): issue 75, renew 25, online decision 10, metered API read 5, token exchange 5, OIDC login 10 (paid by the site), audience registration/change 100. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
+- Errors: `{ "error": "...", "code": "..." }` with HTTP status; 402 = insufficient balance.
+- Private keys never leave the device. The service only ever sees public keys.
+
+## Credentials
+
+A credential is a compact JWS (ES256), header `{"typ":"dba-device+jwt","alg":"ES256","kid":…}`. Decode the middle segment (base64url JSON) to read it:
+`iss`, `sub` (device id), `acct` (issuing account), `aud` (site names), `cid` (credential id), `jti`, `iat`/`nbf`/`exp`, `cnf.jkt` (device key thumbprint), `device`, `grants`, `status.status_list {idx, uri}`, `ver`.
+
+A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "require": {"online","step_up"} }`. Deny by default; any passing grant allows; unknown constraints deny.
+
+Present it as `Authorization: DBA <credential>` plus `DPoP: <proof>` (RFC 9449 proof JWT signed by the device key with htm, htu, iat, jti, ath).
+
+## Verify (relying party)
+
+```js
+import { createVerifier } from '@devicebasedauth/verify';
+const dba = createVerifier({ audience: 'example.com' });
+const result = await dba.verifyRequest(request, { action: 'example:write', resource: 'doc-1' });
+if (!result.allow) return new Response(result.code, { status: result.status });
+// Grants with usage limits / step-up / require.online: dba.verifyOnline(request, check) with createVerifier({ online: { apiKey } }).
+```
+
+Offline verification fetches `https://devicebasedauth.org/.well-known/jwks.json` and status lists (`https://status.devicebasedauth.org/v1/lists/<n>`, signed JWT, bit idx set = revoked), caching both.
+
+## Enroll a device
+
+- Browser: `import { DBA } from 'https://devicebasedauth.org/sdk/dba.js'; const dba = new DBA(); await dba.enroll({ aud: ['example.com'], grants: [{ actions: ['example:write'] }] }); await dba.fetch(url)`.
+- CLI / agent: `dba enroll --aud example.com --action example:write` prints an approval URL for the human owner, then polls. `dba curl …`, `dba token --aud example.com`, `dba renew`, `dba revoke`.
+- HTTP: `POST /api/v1/enrollments {request}` where request is a JWS (typ `dba-enroll+jwt`, the new public key in the header `jwk`) over `{iat, aud, grants, device, lifetime_seconds?}`. Response: `approval_url` (give it to the human), `poll_url`. Poll `GET poll_url` until `status` is `approved` (then `credential` is included), `denied` or `expired`.
+- Pre-approved issuance: `POST /api/v1/credentials {public_jwk, aud, grants, device, lifetime_seconds}` with an API key holding `credentials:issue` (or a device credential holding `dba:credentials:issue`, which can only delegate narrower grants).
+
+## Main endpoints
+
+- `GET /api/v1/whoami` — who is calling.
+- `GET /api/v1/credentials`, `GET /api/v1/credentials/{cid}` (grants in plain English), `DELETE /api/v1/credentials/{cid}` (revoke), `GET /api/v1/credentials/{cid}/decisions`.
+- `GET /api/v1/devices`, `POST /api/v1/devices/{id}/revoke`, `POST /api/v1/revoke-all {"confirm":"revoke-all"}`.
+- `POST /api/v1/credentials/{cid}/renew` (device credential + DPoP; `new_key_proof` to rotate keys), `POST /api/v1/token {audience}` (≤10-minute bearer token), `POST /api/v1/self/revoke`.
+- `POST /api/v1/authorize {credential, proof, request:{method,url}, audience, action, resource, context:{network}}` — online decision for an audience you own.
+- `POST /api/v1/inspect {credential, check?}` — decode, verify, check revocation, evaluate. Free.
+- `GET|POST /api/v1/audiences` — relying parties and their action catalogs; register your domain (prove it with `https://<domain>/.well-known/devicebasedauth.json` = `{"account":"<your account>"}`).
+- `GET /api/v1/account`, `GET /api/v1/transactions`, `GET /api/v1/audit`.
+- OpenID Connect: `/.well-known/openid-configuration` (authorization code + PKCE S256; client_id = audience name).
+
+## API keys and scopes
+
+Create keys in the dashboard (`dbak_…`, shown once). Scopes: `account:read`, `transactions:read`, `credentials:read`, `credentials:issue`, `credentials:revoke`, `audiences:read`, `audiences:write`, `authorize`. Send `Authorization: ApiKey dbak_…`. Key reads are metered (5 µ$); dashboard reads are free.
+
+## First-party audiences
+
+`devicebasedauth.org` (namespace `dba`), `hashbin.org` (`hashbin:*`, mirrors hashbin's API key scopes, e.g. `hashbin:content:write`), `cronly.org` (`cronly:read`, `cronly:run`, `cronly:change`, `cronly:prose`, `cronly:secrets:write`). `<ns>:session` means "may sign in to that site".
