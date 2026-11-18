@@ -6,6 +6,7 @@ import { verifyCredential, verifyProof, VerificationError, ACCESS_TYP } from '..
 import { networkLocation } from '../../packages/verify/src/verifier.js';
 import { jwks, withdrawnJwks, issuerName, appAudience } from '../services/issuer.js';
 import { factorAgeMinutes } from './reverify.js';
+import { isMcpAccessToken, authenticateMcpToken } from '../api/mcp-oauth.js';
 
 export const API_KEY_PREFIX = 'dbak_';
 
@@ -26,6 +27,8 @@ export async function authenticate(request, env, { anyAudience = false, recovery
   if (header.startsWith('DBA ')) return authenticateDevice(request, env, header.slice(4).trim(), { anyAudience, recovery });
   if (header.startsWith('Bearer ')) {
     const token = header.slice(7).trim();
+    // An app connected through the MCP OAuth flow: acts like an API key with the approved scopes.
+    if (isMcpAccessToken(token)) return authenticateMcpToken(token, env);
     assert(env.CLERK_SECRET_KEY, 'invalid_auth', 'Session sign-in is not configured', 401);
     let claims;
     // env.CLERK_VERIFY_TOKEN replaces Clerk's verifier in tests only.

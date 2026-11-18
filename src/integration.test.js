@@ -334,7 +334,8 @@ describe('account budget guards', () => {
     const changed = await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body: { max_renewals_per_credential_per_month: 3 } });
     expect(changed.body).toMatchObject({ max_issues_per_day: 500, max_renewals_per_credential_per_month: 3 });
     const audit = await call(env, 'GET', '/api/v1/audit', { auth: 'alice' });
-    expect(audit.body.items[0]).toMatchObject({ type: 'settings.changed', after: { max_renewals_per_credential_per_month: 3 } });
+    // Events in the same millisecond have no defined order; find this one by type.
+    expect(audit.body.items.find(e => e.type === 'settings.changed')).toMatchObject({ after: { max_renewals_per_credential_per_month: 3 } });
   });
 
   it('stops issuing at the daily limit and charges nothing for the refusal', async () => {

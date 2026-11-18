@@ -8,7 +8,7 @@ Grant evaluation rules and test vectors: https://github.com/curtcox/device-based
 Revocation webhook events: https://github.com/curtcox/device-based-auth/blob/main/spec/events.md
 Docs: https://devicebasedauth.org/docs/
 Everything in one file (this summary, every route, the credential spec, evaluation rules and pricing): https://devicebasedauth.org/llms-full.txt
-MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_… or a device credential)
+MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_…, a device credential, or an OAuth access token: MCP clients discover /.well-known/oauth-protected-resource/mcp, register at /oauth/register, and the owner approves the scopes)
 
 ## Key facts
 
@@ -78,7 +78,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 
 - `GET /health` (public): Service health and deployed commit.
 - `GET /.well-known/jwks.json` (public): Issuer public keys (JWKS).
-- `GET /.well-known/openid-configuration` (public): OpenID Connect discovery document.
+- `GET /.well-known/openid-configuration` (public): OpenID Connect discovery document; also OAuth authorization-server metadata (RFC 8414) for MCP clients.
 - `GET /.well-known/dba-ca.pem` (public): The CA certificates (PEM) that sign device client certificates, one per issuer key. Add them to your mTLS trust store.
 - `GET /status/v1/lists/{shard}` (public): A signed status list (IETF Token Status List). Bit idx = 1 means revoked.
 - `GET /api/public/config` (public): Public configuration and prices.
@@ -128,6 +128,11 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `DELETE /api/v1/keys/{id}` (session): Account API keys (dbak_…). The secret is shown once.
 - `POST /api/v1/payments/checkout` (session): Start a Stripe Checkout for prepaid credit. ?dry_run=1 shows the card fee.
 - `POST /api/v1/dev/deposit` (session): Local development only: add credit.
+- `GET /.well-known/oauth-authorization-server` (public): OpenID Connect discovery document; also OAuth authorization-server metadata (RFC 8414) for MCP clients.
+- `GET /.well-known/oauth-protected-resource` (public): OAuth protected-resource metadata (RFC 9728) for the MCP server at /mcp.
+- `GET /.well-known/oauth-protected-resource/mcp` (public): OAuth protected-resource metadata (RFC 9728) for the MCP server at /mcp.
+- `POST /oauth/register` (public): Register an MCP client (RFC 7591; public clients with PKCE). Stateless and free: the client_id is signed, nothing is stored.
+- `GET /oauth/client` (public): Describe a registered MCP client (name, redirect URIs) for the consent page.
 - `GET /oauth/authorize` (public): OpenID Connect authorization endpoint (redirects to the consent page).
 - `POST /oauth/authorize` (session): Consent page submission.
 - `POST /oauth/token` (public): OpenID Connect token endpoint (authorization_code + PKCE S256).

@@ -4,7 +4,7 @@ const money = { type: 'integer', minimum: 0, description: 'Integer micro-dollars
 const jws = { type: 'string', description: 'Compact JWS (ES256).' };
 const grant = { $ref: '#/components/schemas/Grant' };
 const SUMMARIES = {
-  health: 'Service health and deployed commit.', jwks: 'Issuer public keys (JWKS).', 'oidc-configuration': 'OpenID Connect discovery document.',
+  health: 'Service health and deployed commit.', jwks: 'Issuer public keys (JWKS).', 'oidc-configuration': 'OpenID Connect discovery document; also OAuth authorization-server metadata (RFC 8414) for MCP clients.', 'oauth-resource': 'OAuth protected-resource metadata (RFC 9728) for the MCP server at /mcp.', 'oauth-register': 'Register an MCP client (RFC 7591; public clients with PKCE). Stateless and free: the client_id is signed, nothing is stored.', 'oauth-client': 'Describe a registered MCP client (name, redirect URIs) for the consent page.',
   'status-list': 'A signed status list (IETF Token Status List). Bit idx = 1 means revoked.', 'public-config': 'Public configuration and prices.',
   quote: 'Price of an operation (op = issue, renew, decision, read, token, login, audience).', inspect: 'Decode and check a credential; optionally evaluate an action. Free.',
   'enroll-start': 'Start an enrollment with a request JWS (typ dba-enroll+jwt) signed by the new device key. Returns the approval URL and a poll URL. Free; nothing is stored.',

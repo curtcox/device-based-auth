@@ -121,32 +121,65 @@ export class AccountDO {
 
   // ---- API keys -------------------------------------------------------------
 
-  async op_create_key({ id, name, scopes, hash }, now) {
+  /**
+   * An API key, or (with `oauth`) an app connected through the MCP OAuth flow, whose hash is the
+   * digest of its current refresh token (src/api/mcp-oauth.js). Both count toward the 25.
+   */
+  async op_create_key({ id, name, scopes, hash, oauth }, now) {
     return this.tx(async tx => {
       const keys = await tx.list({ prefix: 'key:' });
-      assert([...keys.values()].filter(k => !k.revoked_at).length < 25, 'too_many_keys', 'At most 25 active API keys');
-      const key = { id, name, scopes, hash, created_at: now };
-      await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.created', { key_id: id, name, scopes });
-      const { hash: _hash, ...visible } = key; return visible;
+      assert([...keys.values()].filter(k => !k.revoked_at).length < 25, 'too_many_keys', 'At most 25 active API keys and connected apps; revoke one in the dashboard');
+      const key = { id, name, scopes, hash, created_at: now, ...(oauth ? { kind: 'oauth', oauth } : {}) };
+      await tx.put(`key:${id}`, key); await this.audit(tx, now, oauth ? 'app.connected' : 'key.created', { key_id: id, name, scopes });
+      return visibleKey(key);
     });
   }
 
   async op_list_keys() {
     const keys = await this.storage.list({ prefix: 'key:' });
-    return { items: [...keys.values()].map(({ hash: _hash, ...k }) => k) };
+    return { items: [...keys.values()].map(visibleKey) };
+  }
+
+  /** A connected app's access token: the record must exist, be an app, and not be revoked. */
+  async op_authenticate_oauth_key({ id }, now) {
+    const key = await this.storage.get(`key:${id}`);
+    assert(key && key.kind === 'oauth' && !key.revoked_at, 'invalid_token', 'This app connection was revoked', 401);
+    if (!key.used_at || now - key.used_at > 3600000) { key.used_at = now; await this.storage.put(`key:${id}`, key); }
+    return { scopes: key.scopes };
+  }
+
+  /**
+   * Rotate a connected app's refresh token. Presenting an old one means a copy leaked (or the app
+   * raced itself): the connection is revoked (OAuth 2.1 §4.3.1) and the caller refused.
+   */
+  async op_rotate_oauth_key({ id, hash, client, new_hash }, now) {
+    const outcome = await this.tx(async tx => {
+      const key = await tx.get(`key:${id}`);
+      if (!key || key.kind !== 'oauth' || key.revoked_at || key.oauth.client !== client) return { refused: true };
+      if (key.hash !== hash) {
+        key.revoked_at = now; key.revoked_reason = 'refresh token reused';
+        await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.revoked', { key_id: id, reason: key.revoked_reason });
+        return { refused: true };
+      }
+      key.hash = new_hash; key.refreshed_at = now;
+      await tx.put(`key:${id}`, key);
+      return { scopes: key.scopes };
+    });
+    assert(!outcome.refused, 'invalid_grant', 'Refresh token is invalid, used or revoked', 400);
+    return outcome;
   }
 
   async op_revoke_key({ id }, now) {
     return this.tx(async tx => {
       const key = await tx.get(`key:${id}`); assert(key, 'not_found', 'API key not found', 404);
       if (!key.revoked_at) { key.revoked_at = now; await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.revoked', { key_id: id }); }
-      const { hash: _hash, ...visible } = key; return visible;
+      return visibleKey(key);
     });
   }
 
   async op_authenticate_key({ id, hash }) {
     const key = await this.storage.get(`key:${id}`);
-    assert(key && !key.revoked_at && key.hash === hash, 'invalid_auth', 'Invalid API key', 401);
+    assert(key && key.kind !== 'oauth' && !key.revoked_at && key.hash === hash, 'invalid_auth', 'Invalid API key', 401);
     return { scopes: key.scopes };
   }
 
@@ -541,6 +574,11 @@ export function enrollmentTokenState(token, now = Date.now()) {
 function visibleToken({ hash: _hash, ...token }, now) { return { ...token, state: enrollmentTokenState(token, now) }; }
 
 /** active | expired | revoked */
+/** What the dashboard sees of an API key or connected app: never the hash. */
+function visibleKey({ hash: _hash, oauth, ...key }) {
+  return oauth ? { ...key, resource: oauth.resource } : key;
+}
+
 export function credentialState(cred, now = Date.now()) {
   if (cred.revoked_at) return 'revoked';
   if (cred.exp * 1000 <= now) return 'expired';

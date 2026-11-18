@@ -14,6 +14,7 @@ import { statusList, republishStatusLists } from './api/status.js';
 import { inspect } from './api/inspect.js';
 import { oidcConfiguration, oidcAuthorize, oidcToken, oidcUserinfo } from './api/oidc.js';
 import { mcp } from './api/mcp.js';
+import { protectedResourceMetadata, registerClient, describeClient, resourceMetadataUrl } from './api/mcp-oauth.js';
 import { runCostMonitor, brakeActive } from './services/cost-monitor.js';
 import { jwks, issuerName, appAudience } from './services/issuer.js';
 import { money } from './durable-objects/ledger.js';
@@ -83,6 +84,11 @@ export const API_ROUTES = [
   { method: 'DELETE', path: `${V1}/keys/:id`, access: SESSION, handler: 'keys' },
   { method: 'POST', path: `${V1}/payments/checkout`, access: SESSION, handler: 'checkout' },
   { method: 'POST', path: `${V1}/dev/deposit`, access: SESSION, handler: 'dev-deposit' },
+  { method: 'GET', path: '/.well-known/oauth-authorization-server', access: PUBLIC, handler: 'oidc-configuration' },
+  { method: 'GET', path: '/.well-known/oauth-protected-resource', access: PUBLIC, handler: 'oauth-resource' },
+  { method: 'GET', path: '/.well-known/oauth-protected-resource/mcp', access: PUBLIC, handler: 'oauth-resource' },
+  { method: 'POST', path: '/oauth/register', access: PUBLIC, handler: 'oauth-register', free: true },
+  { method: 'GET', path: '/oauth/client', access: PUBLIC, handler: 'oauth-client', free: true },
   { method: 'GET', path: '/oauth/authorize', access: PUBLIC, handler: 'oidc-authorize-page' },
   { method: 'POST', path: '/oauth/authorize', access: SESSION, handler: 'oidc-authorize' },
   { method: 'POST', path: '/oauth/token', access: PUBLIC, handler: 'oidc-token' },
@@ -180,6 +186,9 @@ async function handle(route, request, env, auth) {
       return rpc(env.ACCOUNTS, auth.account, 'deposit', { id: request.headers.get('Idempotency-Key') || crypto.randomUUID(), amount: body.amount_microdollars, kind: 'development credit' });
     }
     case 'oidc-configuration': return oidcConfiguration(env);
+    case 'oauth-resource': return protectedResourceMetadata(env);
+    case 'oauth-register': return registerClient(request, env);
+    case 'oauth-client': return describeClient(request, env);
     case 'oidc-authorize-page': return Response.redirect(`${env.APP_ORIGIN}/authorize.html${url.search}`, 302);
     case 'oidc-authorize': return oidcAuthorize(request, env, auth);
     case 'oidc-token': return oidcToken(request, env);
@@ -248,6 +257,8 @@ const worker = {
       const response = errorResponse(error);
       for (const [k, v] of Object.entries(CORS)) response.headers.set(k, v);
       if (error.status === 401 && request.headers.get('DPoP')) response.headers.set('WWW-Authenticate', `DPoP error="${error.code || 'invalid_token'}"`);
+      // MCP clients discover how to get a token from this header (MCP authorization, RFC 9728 §5.1).
+      else if (error.status === 401 && path === '/mcp') response.headers.set('WWW-Authenticate', `Bearer resource_metadata="${resourceMetadataUrl(env)}"${request.headers.get('Authorization') ? ', error="invalid_token"' : ''}`);
       return response;
     }
   }

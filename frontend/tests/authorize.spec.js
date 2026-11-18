@@ -36,3 +36,24 @@ test('the consent page refuses an unregistered redirect', async ({ page }) => {
   await expect(page.locator('#authorize-root')).toContainText('is not registered for cronly.org');
   await expect(page.getByRole('button', { name: /Sign in to/ })).toHaveCount(0);
 });
+
+test('an MCP app registers, the owner sees its permissions and return address, and allows it', async ({ page }) => {
+  const owner = uniqueName('mcp');
+  const redirect = 'https://agent.example/oauth/callback';
+  const registered = await (await page.request.post('/oauth/register', { data: { client_name: 'Helpful <b>Agent</b>', redirect_uris: [redirect] } })).json();
+  await page.route('https://agent.example/**', route => route.fulfill({ status: 200, contentType: 'text/plain', body: 'back at the agent' }));
+  const app = new URLSearchParams({ client_id: registered.client_id, redirect_uri: redirect, response_type: 'code', scope: 'credentials:read credentials:revoke', state: 'st-9', code_challenge: challenge, code_challenge_method: 'S256', resource: 'http://localhost:8787/mcp' });
+  await page.goto(`/oauth/authorize?${app}`);
+  await page.getByLabel('Local account name').fill(owner);
+  await page.getByRole('button', { name: 'Use local account' }).click();
+  // The name is shown as text, never as markup.
+  await expect(page.locator('#client-name')).toHaveText('Helpful <b>Agent</b>');
+  await expect(page.locator('#app-scopes li')).toHaveCount(2);
+  await expect(page.locator('#app-scopes')).toContainText('Revoke credentials and devices.');
+  await expect(page.locator('#return-origin')).toHaveText('https://agent.example');
+  await page.getByRole('button', { name: /^Allow / }).click();
+  await page.waitForURL(url => url.hostname === 'agent.example');
+  const back = new URL(page.url());
+  expect(back.searchParams.get('code')).toMatch(/^dbac_/);
+  expect(back.searchParams.get('state')).toBe('st-9');
+});

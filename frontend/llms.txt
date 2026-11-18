@@ -8,7 +8,7 @@ Grant evaluation rules and test vectors: https://github.com/curtcox/device-based
 Revocation webhook events: https://github.com/curtcox/device-based-auth/blob/main/spec/events.md
 Docs: https://devicebasedauth.org/docs/
 Everything in one file (this summary, every route, the credential spec, evaluation rules and pricing): https://devicebasedauth.org/llms-full.txt
-MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_… or a device credential)
+MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_…, a device credential, or an OAuth access token: MCP clients discover /.well-known/oauth-protected-resource/mcp, register at /oauth/register, and the owner approves the scopes)
 
 ## Key facts
 

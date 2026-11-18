@@ -322,6 +322,7 @@ const tokens = await fetch(&#39;https://devicebasedauth.org/oauth/token&#39;, {
 <section id="mcp">
 <h2>MCP for agents</h2>
 <p>An agent can manage credentials through the Model Context Protocol endpoint <code>POST /mcp</code> (stateless Streamable HTTP, JSON-RPC 2.0). Authenticate with an account API key (<code>Authorization: ApiKey dbak_…</code>) whose scopes cover what the agent should do, or with a device credential. Each tool calls the ordinary API with the caller's own credential, at the ordinary prices.</p>
+<p><strong>MCP clients that support OAuth</strong> (the MCP authorization spec) need no key: add <code>https://devicebasedauth.org/mcp</code> as a remote server. The first call gets a 401 pointing at <code>/.well-known/oauth-protected-resource/mcp</code>; the client registers itself at <code>/oauth/register</code> (public client, PKCE), and you approve it on a consent page that lists the scopes it asked for (read-only <code>account:read credentials:read transactions:read</code> when it names none), after a recent sign-in. The connection then appears under API keys in the dashboard, with the same metered reads as a key, and revoking it there stops it at once. Access tokens last an hour; refresh tokens rotate on every use, and replaying an old one revokes the connection.</p>
 <table><thead><tr><th>Tool</th><th>Does</th></tr></thead><tbody>
 <tr><td><code>whoami</code></td><td>Describe the credential the agent is using.</td></tr>
 <tr><td><code>balance</code></td><td>Prepaid balance and this month's spend.</td></tr>

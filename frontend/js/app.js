@@ -559,7 +559,7 @@ async function keys() {
     });
   });
   const rows = data.items.map(k => [
-    h('strong', {}, k.name), h('span', { class: 'mono small' }, k.scopes.join(' ')), date(k.created_at),
+    [h('strong', {}, k.name), k.kind === 'oauth' ? [' ', badge('active', 'connected app')] : null], h('span', { class: 'mono small' }, k.scopes.join(' ')), date(k.created_at),
     k.revoked_at ? badge('revoked') : confirmButton('Revoke', `Revoke “${k.name}”?`, async () => {
       await api(`/api/v1/keys/${enc(k.id)}`, { method: 'DELETE' });
       flash('success', `Revoked ${k.name}.`); await render();
@@ -567,7 +567,7 @@ async function keys() {
   ]);
   return [
     h('h1', {}, 'API keys'),
-    h('p', { class: 'muted' }, 'Account API keys for servers and scripts that act for your account: listing credentials, issuing, revoking, and asking for online decisions for your audiences. For a key bound to one device, enroll the device instead.'),
+    h('p', { class: 'muted' }, 'Account API keys for servers and scripts that act for your account: listing credentials, issuing, revoking, and asking for online decisions for your audiences. For a key bound to one device, enroll the device instead. Apps you connected to the MCP server (OAuth) are listed here too; revoking one cuts it off at once.'),
     created,
     rows.length ? table(['Name', 'Scopes', 'Created', ''], rows) : h('p', { class: 'muted' }, 'No API keys yet.'),
     h('h2', {}, 'Create an API key'), form
