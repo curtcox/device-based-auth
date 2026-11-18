@@ -52,6 +52,11 @@ export async function validateIssue(env, { aud, grants, lifetime_seconds }) {
   const audiences = await rpc(env.REGISTRY, 'global', 'get-many', { names: [...new Set(aud)] });
   const problems = validateGrants(grants);
   assert(!problems.length, 'invalid_grants', problems.join('; '));
+  // devicebasedauth.org checks dba:* grants itself, per request, with no counters or approvals.
+  for (const [i, grant] of grants.entries()) {
+    const dba = grant.actions.some(a => a === '*' || a.startsWith('dba:'));
+    assert(!dba || (grant.limits?.uses === undefined && !grant.require?.step_up), 'invalid_grants', `grants[${i}]: dba:* actions cannot have limits.uses or require.step_up; put them in a grant of their own without these`);
+  }
   const namespaces = new Map(Object.values(audiences).map(a => [a.namespace, a]));
   for (const [i, grant] of grants.entries()) for (const action of grant.actions) {
     const audience = namespaces.get(actionNamespace(action));

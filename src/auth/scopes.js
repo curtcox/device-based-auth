@@ -15,11 +15,15 @@ export function parseScopes(input) {
   return [...new Set(input)];
 }
 
-/** Does a device credential's grants allow "dba:<action>" right now? */
+/**
+ * Does a device credential's grants allow "dba:<action>" right now? Only a grant that needs no
+ * usage counter or step-up approval counts: this check cannot enforce either, and treating such
+ * a grant as unlimited would ignore the limit its owner wrote (issuance refuses them too).
+ */
 function deviceAllows(auth, action) {
   if (!auth.device?.dba) return false;
   const result = evaluateGrants(auth.device.payload.grants, { now: Math.floor(Date.now() / 1000), action, location: auth.device.location, online: true, attestation: auth.device.payload.device?.attestation });
-  return result.allow;
+  return result.results.some(r => r.ok && !r.online?.uses && !r.online?.step_up);
 }
 
 /** Check route access; undeclared access always denies. */
