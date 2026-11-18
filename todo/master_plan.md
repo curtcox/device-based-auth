@@ -373,15 +373,18 @@ per-checkout cap, unused credit never expires while the account exists.
 
 `price × revenueKept (0.92) ≥ 1.5 × worst-case marginal cost`, enforced by a unit test over every
 price constant, with rates in `src/utils/cost-policy.js` and prices in `src/utils/pricing.js`
-only. Draft prices and the cost derivation are in
-[`docs/business/pricing.md`](../docs/business/pricing.md) (decision D6). Summary:
+only. Prices and the cost derivation are in
+[`docs/business/pricing.md`](../docs/business/pricing.md); the owner approved them 2026-11-18
+(decision D6). Summary:
 
-| Operation | Draft price | Who pays |
-|-----------|-------------|----------|
-| Issue a credential (includes prepaid revocation and 13 months of record storage) | 100 µ$ ($0.0001) | Issuing account |
-| Renew / rotate | 50 µ$ | Issuing account |
-| Online authorization decision | 10 µ$ ($10 per million) | Audience account |
-| API-key reads (list/get) | 20 µ$ | Caller |
+| Operation | Price | Who pays |
+|-----------|-------|----------|
+| Issue or rotate a credential (includes prepaid revocation, 13 months of record storage and their later deletion) | 85 µ$ | Issuing account |
+| Renew (same key) | 25 µ$ | Issuing account |
+| Online authorization decision | 12 µ$ ($12 per million) | Audience account |
+| OpenID Connect sign-in | 12 µ$ | Audience account |
+| Metered API reads (API keys, non-dashboard devices), token exchange, X.509 certificate | 5 µ$ | Caller / issuing account |
+| Register or change an audience | 100 µ$ | Audience account |
 | Offline verification, JWKS, status lists, web UI reads, revocation, dev tools | Free (cached / rate-limited) | — |
 
 ### 8.3 Why no account can cost money

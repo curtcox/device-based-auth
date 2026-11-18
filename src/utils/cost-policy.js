@@ -31,16 +31,19 @@ export const OPERATIONS = Object.freeze({
   // Rate limit, credential status (auth), credential status (renew), funds check, renew; later
   // compaction deletes its ledger, receipt and audit rows.
   renew: { workerRequests: 1, doRequests: 5, rowWrites: 8, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 },
+  // Charges summed into the day's aggregate (decision, read, token, login) each count one more row:
+  // the first of a kind on an account each day flushes yesterday's aggregate as a ledger row,
+  // which is kept for good (a few bytes; the monthly summary row is shared by all charges).
   // Rate limit, charge on the audience's balance row, registry (normally cached), issuer check
   // with usage counter + decision row + its pruning delete; decision rows are kept 90 days.
-  decision: { workerRequests: 1, doRequests: 4, rowWrites: 4, cpuMs: 5, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
+  decision: { workerRequests: 1, doRequests: 4, rowWrites: 5, cpuMs: 5, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
   // Rate limit, charge (aggregated on the balance row), the read itself.
-  read: { workerRequests: 1, doRequests: 3, rowWrites: 1, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 },
+  read: { workerRequests: 1, doRequests: 3, rowWrites: 2, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 },
   // Rate limit, credential status (auth), registry, charge. An X.509 certificate (B3) costs the
   // same: no registry read, one DER build and signature well inside the CPU allowance.
-  token: { workerRequests: 1, doRequests: 4, rowWrites: 1, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 },
+  token: { workerRequests: 1, doRequests: 4, rowWrites: 2, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 },
   // Consent (rate limit, registry, code put, code alarm) + token (take code, registry, charge).
-  login: { workerRequests: 2, doRequests: 7, rowWrites: 4, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 },
+  login: { workerRequests: 2, doRequests: 7, rowWrites: 5, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 },
   // Rate limit, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
   // the charge's ledger and receipt rows and the audit row.
   audience: { workerRequests: 1, doRequests: 3, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }

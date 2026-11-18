@@ -39,15 +39,17 @@ handler adds a Durable Object call or a storage write.
 | Issue a credential (enrollment approval or API) | Issuing account | 3 Worker req, 20 DO req, 26 rows, 81 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries, an enrollment token's check and use counter, and the **deletion of its records** after 13 months | 52 | 85 | **85** |
 | Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 52 | 85 | **85** |
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 10 ms, 1 KB × 13 months | 12 | 20 | **25** |
-| Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 4 rows (balance, usage counter, decision row and its later deletion), 0.5 KB × 3 months | 6 | 10 | **10** |
-| Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 3 DO req, 1 row (aggregated on the balance row) | 2 | 4 | **5** |
-| Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 1 row | 2 | 4 | **5** |
-| OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 4 rows | 6 | 10 | **10** |
+| Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 5 rows (balance, usage counter, decision row and its later deletion, daily aggregate row), 0.5 KB × 3 months | 7 | 12 | **12** |
+| Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 3 DO req, 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
+| Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
+| OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
 | Register or change an audience | Audience owner | 1 Worker req, 3 DO req, 8 rows (incl. later deletions), 4 KB × 13 months | 20 | 33 | **100** |
 | Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
 
-Decision, login and issue prices sit exactly at their floors (the thinnest margin the rule allows).
-Issue was 75 µ$ until 2026-11-18, when record compaction (below) added the deletes it prepays.
+Decision, login, read, token and issue prices sit exactly at their floors (the thinnest margin the
+rule allows). The owner approved these prices on 2026-11-18 (D6). That day issue went from 75 to
+85 µ$, when record compaction (below) added the deletes it prepays, and decision and login from 10
+to 12 µ$, when counting the daily aggregate ledger row (below) raised their floors.
 
 ### Why records are deleted after 13 months
 
@@ -65,9 +67,9 @@ that has nothing left to age out. Kept for good: revoked devices (a revoked key 
 without a recent sign-in; about 0.1 µ$ a month each), deposits, the daily aggregate ledger rows
 and the monthly summaries (one per day or month, not per operation).
 
-Not yet counted: the first metered read, token, decision or sign-in of a day writes that day's
-aggregate ledger row, a row the read, token, decision and login counts above omit. Counting it
-would put decision and login 2 µ$ above their prices; see S3/D6.
+The first metered read, token, decision or sign-in of a day on an account writes that day's
+aggregate ledger row for its kind, so each of those operations counts one row for it (it was
+omitted until 2026-11-18, which left decision and login 2 µ$ under their floors).
 Any upward correction found in an audit must raise those prices.
 
 ### Key attestation adds nothing to the issue price
@@ -82,7 +84,8 @@ inside the signed approval ticket, so approval and issuance do no extra work.
 
 A separate ledger row per read, decision or token would cost 1 µ$ each — as much as the operation.
 These charges are summed into today's aggregate on the balance row (one write per charge, which the
-balance update needs anyway) and flushed as one ledger row per kind when the day rolls over.
+balance update needs anyway) and flushed as one ledger row per kind when the day rolls over. That
+row is counted once in each operation's cost, as if every operation were the only one of its day.
 
 ### Why issuance is the expensive operation
 
@@ -102,20 +105,20 @@ The webhook test button (`POST /api/v1/audiences/{name}/webhook-test`) is charge
 | Developer: 5 devices, 30-day credentials renewed monthly | 5 × 25 µ$ = **$0.000125** |
 | Small team: 200 devices, 7-day credentials | 200 × 4.3 × 25 µ$ ≈ **$0.02** |
 | Agent fleet: 1,000 agents, 1-hour credentials, 24/7 | 1,000 × 720 × 25 µ$ = **$18.00** |
-| Site doing 10 M online decisions | 10 M × 10 µ$ = **$100** |
+| Site doing 10 M online decisions | 10 M × 12 µ$ = **$120** |
 | Script polling the API 1 M times | 1 M × 5 µ$ = **$5** |
 
-A $5 deposit covers about 58,000 issuances, 200,000 renewals, or 500,000 online decisions.
+A $5 deposit covers about 58,000 issuances, 200,000 renewals, or about 416,000 online decisions.
 
 ## Margin and break-even
 
-Margin per operation (`price × 0.92 − cost`): issue ≈ 26 µ$, renew ≈ 11 µ$, decision ≈ 3 µ$,
-read/token ≈ 3 µ$, login ≈ 3 µ$. Profit = Σ margins − fixed costs, so it rises with every
+Margin per operation (`price × 0.92 − cost`): issue ≈ 26 µ$, renew ≈ 11 µ$, decision ≈ 4.7 µ$,
+read ≈ 1.8 µ$, token ≈ 1.6 µ$, login ≈ 4.2 µ$. Profit = Σ margins − fixed costs, so it rises with every
 operation (master plan principle 6).
 
 Fixed costs specific to devicebasedauth.org, assuming the shared Cloudflare account and LLC (as for
 cronly): the domain (~$11/year ≈ $0.92/month) plus Clerk if it ever exceeds 50,000 monthly retained
-users. Break-even on $1/month is roughly 38,000 issuances, 90,000 renewals, or 330,000 online
+users. Break-even on $1/month is roughly 38,000 issuances, 90,000 renewals, or 210,000 online
 decisions per month.
 
 ## Free paths and the cost brake
@@ -128,7 +131,7 @@ measurements are missing for 36 hours. Paid operations keep working: they are pr
 
 ## Open questions for the owner
 
-1. Approve these prices (D6), or lower renew towards its floor (20)? Issue is at its floor (85).
+1. ~~Approve these prices (D6)~~ Approved 2026-11-18. Renew could still go towards its floor (20).
 2. Clerk monthly retained users are the one per-user cost not tied to an operation. Mitigations in
    place: dashboard sign-in with a DBA browser credential (no Clerk session). Proposed (D8, not
    built): close zero-balance accounts with no live credentials after 12 idle months.

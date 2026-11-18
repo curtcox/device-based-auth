@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { testEnv, call, newDevice, enroll, runAlarms, worker, ORIGIN } from '../test-utils/env.js';
 import { createVerifier, createProof, signJws, inspectCredential, sha256b64u, b64u } from '../packages/verify/src/index.js';
+import { price } from './utils/pricing.js';
 
 const fund = (env, account, dollars = 1) => call(env, 'POST', '/api/v1/dev/deposit', { auth: account, body: { amount_microdollars: dollars * 1_000_000 } });
 const verifierFor = (env, audience = 'hashbin.org', options = {}) => createVerifier({ issuer: ORIGIN, audience, fetch: (url, init) => worker.fetch(new Request(url, init), env), ...options });
@@ -170,13 +171,13 @@ describe('online authorization', () => {
 
   it('enforces usage limits and bills the audience for every decision', async () => {
     const { ask, credential, device } = await setup([{ actions: ['hashbin:content:write'], limits: { uses: { count: 2, per: 'day' } } }]);
-    expect((await ask()).body).toMatchObject({ allow: true, grant_index: 0, cost_microdollars: 10 });
+    expect((await ask()).body).toMatchObject({ allow: true, grant_index: 0, cost_microdollars: price('decision') });
     expect((await ask('hashbin:content:write', { context: { network: { country: 'us', region: 'TX', lat: 30.27, lon: -97.74, ip: '203.0.113.9' } } })).body.allow).toBe(true);
     expect((await ask()).body).toMatchObject({ allow: false, reasons: ['usage_limit_reached'] });
-    expect((await call(env, 'GET', '/api/v1/account', { auth: 'operator' })).body.today.aggregates.decision).toEqual({ count: 3, amount: 30 });
+    expect((await call(env, 'GET', '/api/v1/account', { auth: 'operator' })).body.today.aggregates.decision).toEqual({ count: 3, amount: 3 * price('decision') });
     // The audience console shows the owner its decisions and spend; nobody else may read them.
     const usage = await call(env, 'GET', '/api/v1/audiences/hashbin.org/usage', { auth: 'operator' });
-    expect(usage.body.items[0]).toMatchObject({ decisions: 3, logins: 0, spent_microdollars: 30 });
+    expect(usage.body.items[0]).toMatchObject({ decisions: 3, logins: 0, spent_microdollars: 3 * price('decision') });
     expect((await call(env, 'GET', '/api/v1/audiences/hashbin.org/usage', { auth: 'alice' })).status).toBe(403);
     const offline = await verifierFor(env).verifyRequest(await requestWith(device, credential), { action: 'hashbin:content:write' });
     expect(offline).toMatchObject({ allow: false, code: 'online_required', online_required: true });
@@ -325,8 +326,8 @@ describe('OpenID Connect', () => {
     expect(again.body.error).toBe('invalid_grant');
     const info = await call(env, 'GET', '/oauth/userinfo', { headers: { Authorization: `Bearer ${token.body.access_token}` } });
     expect(info.body).toMatchObject({ sub: 'alice', acct: 'alice' });
-    expect((await call(env, 'GET', '/api/v1/account', { auth: 'operator' })).body.today.aggregates.login).toEqual({ count: 1, amount: 10 });
-    expect((await call(env, 'GET', '/api/v1/audiences/cronly.org/usage', { auth: 'operator' })).body.items[0]).toMatchObject({ decisions: 0, logins: 1, spent_microdollars: 10 });
+    expect((await call(env, 'GET', '/api/v1/account', { auth: 'operator' })).body.today.aggregates.login).toEqual({ count: 1, amount: price('login') });
+    expect((await call(env, 'GET', '/api/v1/audiences/cronly.org/usage', { auth: 'operator' })).body.items[0]).toMatchObject({ decisions: 0, logins: 1, spent_microdollars: price('login') });
     const bad = await call(env, 'POST', '/oauth/authorize', { auth: 'alice', body: { client_id: 'cronly.org', redirect_uri: 'https://evil.example/cb', response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', approve: true } });
     expect(bad.body.code).toBe('invalid_redirect_uri');
     const local = await call(env, 'POST', '/oauth/authorize', { auth: 'alice', body: { client_id: 'hashbin.org', redirect_uri: 'http://localhost:8790/auth/dba/callback', response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', approve: true } });
