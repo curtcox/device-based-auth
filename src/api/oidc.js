@@ -52,6 +52,8 @@ export async function oidcAuthorize(request, env, auth) {
   if (app) assert(app.redirect_uris.includes(body.redirect_uri), 'invalid_redirect_uri', 'redirect_uri is not registered for this client', 400);
   const audience = app ? null : await client(env, body.client_id, body.redirect_uri);
   const redirect = new URL(body.redirect_uri);
+  // Registration refuses other schemes; this also covers records stored before it did.
+  assert(['https:', 'http:'].includes(redirect.protocol), 'invalid_redirect_uri', 'redirect_uri must use https', 400);
   if (body.state !== undefined) redirect.searchParams.set('state', String(body.state));
   if (!body.approve) { redirect.searchParams.set('error', 'access_denied'); redirect.searchParams.set('iss', issuerName(env)); return { redirect: redirect.toString() }; }
   assert(body.response_type === 'code', 'unsupported_response_type', 'response_type must be code');

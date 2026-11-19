@@ -1,4 +1,5 @@
-import { assert, readJson } from '../utils/errors.js';
+import { assert, readJson, ApiError } from '../utils/errors.js';
+import { cleanRedirectUri } from './mcp-oauth.js';
 import { rpc } from '../utils/rpc.js';
 import { price } from '../utils/pricing.js';
 import { AUDIENCE_NAME } from '../durable-objects/registry-do.js';
@@ -18,13 +19,15 @@ function cleanCatalog(namespace, catalog) {
   });
 }
 
+/**
+ * OpenID Connect redirect URIs: https, or http on a loopback address, as for MCP clients. Any other
+ * scheme is refused: the consent page navigates to the redirect, so `javascript://localhost/…`
+ * (which once passed a hostname-only check) would run script on devicebasedauth.org itself.
+ */
 function cleanRedirects(uris = []) {
   assert(Array.isArray(uris) && uris.length <= 10, 'invalid_redirect_uris', 'redirect_uris must list at most 10 URLs');
   return uris.map(uri => {
-    let u; try { u = new URL(uri); } catch { assert(false, 'invalid_redirect_uris', `${uri} is not a URL`); }
-    assert(u.protocol === 'https:' || u.hostname === 'localhost', 'invalid_redirect_uris', 'redirect URIs must use https (or localhost)');
-    assert(!u.hash, 'invalid_redirect_uris', 'redirect URIs cannot have fragments');
-    return u.toString();
+    try { return cleanRedirectUri(uri); } catch (error) { if (error instanceof ApiError) assert(false, 'invalid_redirect_uris', `${String(uri).slice(0, 100)}: ${error.message}`); throw error; }
   });
 }
 

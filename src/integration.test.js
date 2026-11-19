@@ -351,6 +351,18 @@ describe('OpenID Connect', () => {
     const local = await call(env, 'POST', '/oauth/authorize', { auth: 'alice', body: { client_id: 'hashbin.org', redirect_uri: 'http://localhost:8790/auth/dba/callback', response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', approve: true } });
     expect(local.body.redirect).toMatch(/^http:\/\/localhost:8790\/auth\/dba\/callback\?code=/);
   });
+
+  it('refuses redirect URIs that are not web addresses (the consent page navigates to them)', async () => {
+    await fund(env, 'operator'); await fund(env, 'mallory');
+    for (const uri of ['javascript://localhost/%0Aalert(document.domain)', 'data://localhost/x', 'http://shop.example/cb', 'https://user:pw@shop.example/cb', 'https://shop.example/cb#x']) {
+      const patched = await call(env, 'PATCH', '/api/v1/audiences/cronly.org', { auth: 'operator', body: { redirect_uris: [uri] } });
+      expect(patched.status, uri).toBe(400);
+      expect(patched.body.code).toBe('invalid_redirect_uris');
+      const created = await call(env, 'POST', '/api/v1/audiences', { auth: 'mallory', body: { name: 'shop.localhost', namespace: 'shop', catalog: [{ action: 'shop:buy' }], redirect_uris: [uri] } });
+      expect(created.body.code, uri).toBe('invalid_redirect_uris');
+    }
+    expect((await call(env, 'PATCH', '/api/v1/audiences/cronly.org', { auth: 'operator', body: { redirect_uris: ['https://cronly.org/cb', 'http://127.0.0.1:9000/cb'] } })).status).toBe(200);
+  });
 });
 
 describe('public endpoints', () => {

@@ -26,7 +26,11 @@ function decider(out) {
     try {
       const result = await api('/oauth/authorize', { method: 'POST', body: { ...request, approve } });
       replace(out, notice('info', approve ? 'Returning to the app…' : 'Returning without access…'));
-      location.assign(result.redirect);
+      // Never follow anything but a web address, whatever the server says (a javascript: URL
+      // would run on this origin).
+      const next = new URL(result.redirect);
+      if (next.protocol !== 'https:' && next.protocol !== 'http:') throw Object.assign(new Error('The app\'s return address is not a web address'), { code: 'invalid_redirect_uri' });
+      location.assign(next.href);
     } catch (error) {
       const again = error.code === 'reverification_required' && authMode() === 'clerk'
         ? h('button', { type: 'button', class: 'link', onclick: () => reauthenticate() }, 'Sign in again') : null;
