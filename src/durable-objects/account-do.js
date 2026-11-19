@@ -699,10 +699,13 @@ export class AccountDO {
     return { items: [...rows.values()].filter(s => !s.denied_at && (s.approved_at ? s.approved_until > now : s.expires_at > now)) };
   }
 
-  async op_decide_step_up({ id, approve }, now) {
+  async op_decide_step_up({ id, approve, approver_device }, now) {
     return this.tx(async tx => {
       const item = await tx.get(`stepup:${id}`);
       assert(item && !item.approved_at && !item.denied_at && item.expires_at > now, 'not_found', 'Approval request not found or expired', 404);
+      // Step-up exists because the device alone is not trusted for this action: a device signed in
+      // to the dashboard (dba:session) must not approve what it asked for itself. It may deny.
+      assert(!approve || !approver_device || approver_device !== item.device_id, 'self_approval', 'A device cannot approve its own request; approve it from another device or a signed-in browser', 403);
       if (approve) { item.approved_at = now; item.approved_until = now + STEP_UP_APPROVED_TTL_MS; } else item.denied_at = now;
       await tx.put(`stepup:${id}`, item);
       await this.audit(tx, now, approve ? 'step_up.approved' : 'step_up.denied', { id, cid: item.cid, action: item.action });

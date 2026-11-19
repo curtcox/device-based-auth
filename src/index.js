@@ -180,7 +180,7 @@ async function handle(route, request, env, auth) {
     case 'ca-bundle': return caBundle(env);
     case 'authorize': return authorize(request, env, auth);
     case 'step-ups': return rpc(env.ACCOUNTS, auth.account, 'list-step-ups');
-    case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve') });
+    case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve'), approver_device: auth.device?.payload.sub });
     case 'audiences': return audiences(route, request, env, auth);
     case 'audience-usage': return audienceUsage(route, request, env, auth);
     case 'audience-webhook-test': return audienceWebhookTest(route, request, env, auth);

@@ -353,7 +353,7 @@ Content-Type: application/json
   &quot;device_id&quot;: &quot;dev_…&quot;, &quot;account&quot;: &quot;user_…&quot;, &quot;cid&quot;: &quot;crd_…&quot;,
   &quot;expires_in&quot;: 30, &quot;cost_microdollars&quot;: 10
 }</code></pre>
-<p>A positive answer may be cached for <code>expires_in</code> seconds (0 when counters or step-up were involved). A step-up grant answers <code>{"allow": false, "code": "step_up_required", "step_up": {"id", "expires_in", "approve_url"}}</code>; the owner approves it under <a href="/app.html#approvals">Approvals</a> (browsers with security notices on are told at once) and the next request (within 5 minutes) is allowed once. Asking again while the request waits returns the same <code>id</code>; once the owner denies it, requests answer <code>step_up_denied</code> until it would have expired (10 minutes). Replayed proofs are refused with <code>replayed_proof</code>.</p>
+<p>A positive answer may be cached for <code>expires_in</code> seconds (0 when counters or step-up were involved). A step-up grant answers <code>{"allow": false, "code": "step_up_required", "step_up": {"id", "expires_in", "approve_url"}}</code>; the owner approves it under <a href="/app.html#approvals">Approvals</a> (browsers with security notices on are told at once; a dashboard device cannot approve its own request, <code>403 self_approval</code>) and the next request (within 5 minutes) is allowed once. Asking again while the request waits returns the same <code>id</code>; once the owner denies it, requests answer <code>step_up_denied</code> until it would have expired (10 minutes). Replayed proofs are refused with <code>replayed_proof</code>.</p>
 </section>
 
 <section id="oidc">

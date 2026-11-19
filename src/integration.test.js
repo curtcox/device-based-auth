@@ -254,6 +254,26 @@ describe('online authorization', () => {
     expect((await ask('hashbin:content:delete')).body.code).toBe('step_up_required');
   });
 
+  it('does not let a dashboard device approve its own step-up request (STATUS L12)', async () => {
+    await fund(env, 'alice'); await fund(env, 'operator');
+    const key = await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'k', scopes: ['authorize'] } });
+    const device = await newDevice();
+    const grants = [{ actions: ['dba:session'] }, { actions: ['hashbin:content:delete'], require: { step_up: true } }];
+    const credential = (await enroll(env, 'alice', device, { aud: ['hashbin.org', 'devicebasedauth.org'], grants })).approve.body.credential;
+    const url = 'https://hashbin.org/api/content';
+    const ask = async () => call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${key.body.secret}`, body: { credential, proof: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url, credential }), request: { method: 'POST', url }, audience: 'hashbin.org', action: 'hashbin:content:delete' } });
+    const { step_up } = (await ask()).body;
+    const path = `/api/v1/step-ups/${step_up.id}/approve`;
+    const self = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: {} });
+    expect(self).toMatchObject({ status: 403, body: { code: 'self_approval' } });
+    expect((await ask()).body.code).toBe('step_up_required');
+    // Another dashboard device, or the signed-in owner, may approve it.
+    const laptop = await newDevice();
+    const other = (await enroll(env, 'alice', laptop, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:session'] }] })).approve.body.credential;
+    expect((await call(env, 'POST', path, { headers: await laptop.headers('POST', path, other), body: {} })).status).toBe(200);
+    expect((await ask()).body.allow).toBe(true);
+  });
+
   it('asks once per thing to approve, deletes an approval when spent, and lets a denial stand', async () => {
     const { ask } = await setup([{ actions: ['hashbin:content:delete', 'hashbin:content:write'], require: { step_up: true } }]);
     const first = (await ask('hashbin:content:delete')).body;

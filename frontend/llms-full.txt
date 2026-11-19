@@ -528,7 +528,7 @@ honest as the device. See the master plan §3.5.
 ### 3.6 `require`
 
 - `online: true` — the grant may only be used through online authorization.
-- `step_up: true` — online, and the account owner must approve each use.
+- `step_up: true` — online, and the account owner must approve each use (never from the device that asked).
 - `attestation: "hardware" | "strongbox"` — the credential's `device.attestation` (credential.md
   §3a) must show the key in a TEE, StrongBox, Secure Enclave or TPM (`hardware`), or in StrongBox
   only (`strongbox`); otherwise `attestation_required`. The evaluator reads it from
