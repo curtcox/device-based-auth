@@ -1,7 +1,7 @@
 import { assert, errorResponse, ApiError } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { charge, deposit, readBalance, money } from './ledger.js';
-import { periodSeconds } from '../../packages/verify/src/grants.js';
+import { periodSeconds, actionNamespace } from '../../packages/verify/src/grants.js';
 import { randomId } from '../utils/ids.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
@@ -624,7 +624,7 @@ export class AccountDO {
    * Final online checks for one decision: revocation, proof replay, step-up and usage counters.
    * candidates: grant indexes that passed every static check, in order, with their online needs.
    */
-  async op_authorize({ cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country }, now) {
+  async op_authorize({ cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country, token_namespace = null }, now) {
     const nowSeconds = Math.floor(now / 1000);
     for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
     let asked = null;
@@ -646,9 +646,11 @@ export class AccountDO {
           // owner's step-up approval (nor a step-up refusal count as a use).
           let usage = null;
           if (candidate.uses) {
+            const counter = usageCounter(cred, candidate.index, token_namespace);
+            if (!counter) { reasons.push('invalid_grant'); continue; }
             const per = periodSeconds(candidate.uses.per);
             const start = Number.isFinite(per) ? Math.floor(nowSeconds / per) * per : 0;
-            const key = `usage:${cid}:${candidate.index}:${start}`;
+            const key = `usage:${counter}:${start}`;
             const used = (await tx.get(key)) || 0;
             if (used >= candidate.uses.count) { reasons.push('usage_limit_reached'); continue; }
             usage = { key, used };
@@ -856,6 +858,29 @@ function visibleToken({ hash: _hash, ...token }, now) { return { ...token, state
 /** What the dashboard sees of an API key or connected app: never the hash. */
 function visibleKey({ hash: _hash, oauth, ...key }) {
   return oauth ? { ...key, resource: oauth.resource } : key;
+}
+
+/**
+ * The usage counter ("<cid>:<grant index>") a grant of this credential spends, for online
+ * decisions. Two things keep a `limits.uses` from multiplying (STATUS L12):
+ * - An access token carries only the grants in its audience's namespace (exchangeToken), so its
+ *   grant indexes are mapped back to the credential's; otherwise a token's uses would land on
+ *   another grant's counter, or a fresh one.
+ * - A delegated grant whose limit came from its parent (`usage_from`, set at issuance) spends the
+ *   parent's counter, so a device limited to 3 uses a day cannot delegate itself more.
+ * Returns null when the index does not name a grant of the credential.
+ * @param {object} cred stored credential record
+ * @param {number} index grant index in the presented credential or access token
+ * @param {string|null} tokenNamespace the audience namespace when an access token was presented
+ * @returns {string|null}
+ */
+export function usageCounter(cred, index, tokenNamespace = null) {
+  const grants = Array.isArray(cred.grants) ? cred.grants : [];
+  const own = tokenNamespace === null ? index
+    : grants.map((grant, i) => grant.actions.some(a => actionNamespace(a) === tokenNamespace) ? i : -1).filter(i => i >= 0)[index];
+  if (!Number.isSafeInteger(own) || own < 0 || own >= grants.length) return null;
+  const parentIndex = cred.parent_cid ? cred.usage_from?.[own] : null;
+  return Number.isSafeInteger(parentIndex) ? `${cred.parent_cid}:${parentIndex}` : `${cred.cid}:${own}`;
 }
 
 export function credentialState(cred, now = Date.now()) {

@@ -64,7 +64,7 @@ export async function authorize(request, env, auth) {
   const location = { network: body.context?.network, device: proof?.loc };
   const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true, attestation: payload.device?.attestation });
   const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok, uses: r.online.uses, step_up: r.online.step_up })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
-  const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, status_list: payload.status.status_list, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account, country: coarseCountry(location) });
+  const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, status_list: payload.status.status_list, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account, country: coarseCountry(location), token_namespace: payload.cnf ? null : registered.namespace });
   const grant = decision.allow ? payload.grants[decision.grant_index] : null;
   return {
     allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, reasons: decision.allow ? [] : (decision.reasons.length ? decision.reasons : evaluation.reasons.flat()),

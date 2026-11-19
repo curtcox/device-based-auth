@@ -519,7 +519,9 @@ honest as the device. See the master plan §3.5.
 
 - `uses: { count, per }` (`per` ∈ `minute`, `hour`, `day`, `month` (30 days), `total`) — enforced
   only online by devicebasedauth.org with a counter per credential and grant. Fixed windows aligned
-  to the Unix epoch.
+  to the Unix epoch. An access token's uses count on the credential grant it was cut from (its own
+  grant indexes differ), and a delegated grant that copied its parent's limit spends the parent
+  grant's counter, so neither a token nor any number of delegates adds uses.
 - `spend_usd_per_month` — not checked by the evaluator. It is returned as a **caveat** for the
   audience to enforce on its own spending (e.g. hashbin's monthly spend limit).
 

@@ -2,7 +2,7 @@ import { assert } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { randomId, derivedId } from '../utils/ids.js';
 import { price } from '../utils/pricing.js';
-import { validateGrants, actionNamespace, grantsNarrow } from '../../packages/verify/src/grants.js';
+import { validateGrants, actionNamespace, grantsNarrow, isNarrowing } from '../../packages/verify/src/grants.js';
 import { jwkThumbprint, publicJwk, verifyJws, decodeJws, sha256b64u } from '../../packages/verify/src/jose.js';
 import { signCredential, signAccessToken } from '../../packages/verify/src/issuer.js';
 import { CREDENTIAL_TYP, inspectCredential } from '../../packages/verify/src/credential.js';
@@ -85,6 +85,26 @@ async function allocate(env) {
   assert(false, 'capacity', 'All status list shards are full; raise STATUS_SHARDS', 503);
 }
 
+/**
+ * For each grant of a delegated credential, the index of the parent grant whose usage counter it
+ * must share, or null for its own. A delegated grant has to copy its parent's `limits.uses`
+ * (isNarrowing), and with a counter of its own every delegate would get the whole limit again.
+ * A grant that also narrows a parent grant without a use limit keeps its own counter: the parent
+ * could do as much itself. Returns undefined when no grant needs to share.
+ * @param {object[]} grants the delegated credential's grants
+ * @param {object[]} parentGrants the delegating credential's grants
+ * @returns {(number|null)[]|undefined}
+ */
+export function sharedUsage(grants, parentGrants) {
+  const from = grants.map(grant => {
+    if (!grant.limits?.uses) return null;
+    const covering = parentGrants.map((parent, i) => isNarrowing(grant, parent) ? i : -1).filter(i => i >= 0);
+    if (covering.some(i => !parentGrants[i].limits?.uses)) return null;
+    return covering.length ? covering[0] : null;
+  });
+  return from.some(i => i !== null) ? from : undefined;
+}
+
 /** Refuse early (before allocating or signing) when the balance cannot cover the price. */
 export async function requireFunds(env, account, amount) {
   const state = await rpc(env.ACCOUNTS, account, 'account', { funds_check: true });
@@ -112,7 +132,8 @@ export async function issueCredential(env, account, request, { source, chargeId,
   assert(exp > iat + 60, 'parent_expiring', 'The delegating credential expires too soon to issue from', 409);
   const payload = { iss: issuerName(env), sub: deviceId, acct: account, aud, cid, jti: `${cid}.1`, iat, nbf: iat, exp, cnf: { jkt }, device, grants, status: { status_list: { idx: status.idx, uri: status.uri } }, ver: 1 };
   const credential = await signCredential(payload, await activeSigner(env));
-  const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}) };
+  const usageFrom = parentGrants ? sharedUsage(grants, parentGrants) : undefined;
+  const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}), ...(usageFrom ? { usage_from: usageFrom } : {}) };
   // With a caller's charge id (Idempotency-Key, an enrollment's id) a retry gets the first
   // credential back; the fingerprint tells a retry from a different request reusing the key.
   const fingerprint = chargeId ? await sha256b64u(JSON.stringify({ jkt, aud, grants, lifetime, device: cleanDevice(request.device), parentCid: parentCid ?? null })) : undefined;
