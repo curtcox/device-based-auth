@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateKeyPair, exportPublicJwk, jwkThumbprint, b64u, unb64u, decodeJws, signJws } from './jose.js';
-import { verifyCredential, createProof, verifyProof, ReplayCache, inspectCredential } from './credential.js';
+import { verifyCredential, createProof, verifyProof, ReplayCache, inspectCredential, CONFIRMATION_TYP } from './credential.js';
 import { issuerSigner, jwksFor, signCredential, signStatusList, signAccessToken } from './issuer.js';
 import { getBit, setBit, encodeStatusList, decodeStatusList } from './status-list.js';
 import { createVerifier } from './verifier.js';
@@ -110,17 +110,31 @@ describe('status lists', () => {
 });
 
 describe('verifier', () => {
-  async function setup({ revoked = false } = {}) {
+  async function setup({ revoked = false, grants, catalog } = {}) {
     const key = await issuerKey(); const signer = await issuerSigner(key); const dev = await device();
-    const credential = await signCredential(payload(dev), signer);
+    const credential = await signCredential(payload(dev, grants ? { grants } : {}), signer);
     const uri = `${ISSUER}/status/v1/lists/0`;
     const list = await signStatusList({ uri, bytes: revoked ? setBit(new Uint8Array(1), 5) : new Uint8Array(1), issuer: ISSUER, now: NOW }, signer);
     let fetches = 0;
     const fetch = async url => { fetches++; if (url.endsWith('/.well-known/jwks.json')) return Response.json(jwksFor([key])); if (url === uri) return new Response(list); return new Response('nope', { status: 404 }); };
-    const verifier = createVerifier({ audience: 'hashbin.org', fetch, now: () => NOW + 1 });
-    const request = async (method = 'POST', url = 'https://hashbin.org/api/content') => new Request(url, { method, headers: { Authorization: `DBA ${credential}`, DPoP: await createProof({ ...dev, method, url, credential, now: NOW }) } });
+    const verifier = createVerifier({ audience: 'hashbin.org', fetch, now: () => NOW + 1, catalog });
+    const request = async (method = 'POST', url = 'https://hashbin.org/api/content', extra = {}) => new Request(url, { method, headers: { Authorization: `DBA ${credential}`, DPoP: await createProof({ ...dev, method, url, credential, now: NOW }), ...extra } });
     return { verifier, request, credential, signer, fetches: () => fetches, dev };
   }
+  it('checks a DBA-Confirmation header for credentials that need one (spec/credential.md §9)', async () => {
+    const { verifier, request, signer, dev } = await setup({ grants: [{ actions: ['hashbin:content:write'], require: { confirmation: true } }], catalog: [{ action: 'hashbin:content:write', gates: { fail_open: false } }] });
+    const confirm = extra => signJws({ typ: CONFIRMATION_TYP, kid: signer.kid }, { iss: ISSUER, sub: 'dev_ABCDEFGH12', aud: ['hashbin.org'], cid: 'crd_ABCDEFGH12', cnf: { jkt: dev.jkt }, iat: NOW, exp: NOW + 3600, gates: [], by_timeout: false, ...extra }, signer.key);
+    const check = { action: 'hashbin:content:write' };
+    expect(await verifier.verifyRequest(await request(), check)).toMatchObject({ allow: false, reasons: [['confirmation_required']] });
+    expect(await verifier.verifyRequest(await request('POST', undefined, { 'DBA-Confirmation': await confirm() }), check)).toMatchObject({ allow: true });
+    expect(await verifier.verifyRequest(await request('POST', undefined, { 'DBA-Confirmation': await confirm({ iat: NOW - 3600, exp: NOW - 60 }) }), check)).toMatchObject({ allow: false, reasons: [['confirmation_expired']] });
+    expect(await verifier.verifyRequest(await request('POST', undefined, { 'DBA-Confirmation': await confirm({ by_timeout: true }) }), check)).toMatchObject({ allow: false, reasons: [['confirmation_by_timeout_refused']] });
+    expect(await verifier.verifyRequest(await request('POST', undefined, { 'DBA-Confirmation': await confirm({ cid: 'crd_OTHER00001' }) }), check)).toMatchObject({ allow: false, status: 401, code: 'confirmation_wrong_credential' });
+  });
+  it('makes actions whose catalog entry requires gates online only', async () => {
+    const { verifier, request } = await setup({ catalog: [{ action: 'hashbin:content:write', gates: { require: true } }] });
+    expect(await verifier.verifyRequest(await request(), { action: 'hashbin:content:write' })).toMatchObject({ allow: false, code: 'online_required', online_required: true });
+  });
   it('allows a granted action and caches the JWKS and status list', async () => {
     const { verifier, request, fetches } = await setup();
     const result = await verifier.verifyRequest(await request(), { action: 'hashbin:content:write' });

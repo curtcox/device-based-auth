@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { evaluateGrants, verifyCredential, verifyProof, verifyJws, decodeStatusList, getBit } from '../packages/verify/src/index.js';
+import { evaluateGrants, verifyCredential, verifyConfirmation, decodeJws, verifyProof, verifyJws, decodeStatusList, getBit } from '../packages/verify/src/index.js';
 
 const evaluation = JSON.parse(readFileSync(new URL('./vectors/evaluation.json', import.meta.url)));
 const credentials = JSON.parse(readFileSync(new URL('./vectors/credentials.json', import.meta.url)));
@@ -19,6 +19,11 @@ describe('credential vectors', () => {
   });
   for (const c of credentials.proofs) it(`proof: ${c.name}`, async () => {
     const outcome = await verifyProof(c.proof, c).then(() => ({ valid: true }), e => ({ valid: false, code: e.code }));
+    expect(outcome).toEqual(c.expected);
+  });
+  const credential = decodeJws(credentials.credentials.find(c => c.name === 'valid credential').jws).payload;
+  for (const c of credentials.confirmations) it(`confirmation: ${c.name}`, async () => {
+    const outcome = await verifyConfirmation(c.jws, { jwks: credentials.jwks, issuer: credentials.issuer, credential, audience: c.audience }).then(() => ({ valid: true }), e => ({ valid: false, code: e.code }));
     expect(outcome).toEqual(c.expected);
   });
   it('status list', async () => {

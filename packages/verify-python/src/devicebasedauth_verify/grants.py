@@ -29,7 +29,14 @@ WHERE_KEYS = {"source", "countries", "regions", "areas", "networks"}
 AREA_KEYS = {"lat", "lon", "radius_m"}
 LIMIT_KEYS = {"uses", "spend_usd_per_month"}
 USES_KEYS = {"count", "per"}
-REQUIRE_KEYS = {"online", "step_up", "attestation", "verified_boot", "app_ids"}
+REQUIRE_KEYS = {"online", "step_up", "attestation", "verified_boot", "app_ids", "gates", "gates_reuse_s", "confirmation"}
+GATE_ENTRY_KEYS = {"any", "timeout_s", "on_timeout"}
+GATE_LIMITS = {"entries": 3, "gates": 5, "minTimeout": 10, "maxTimeout": 86400, "defaultTimeout": 300, "maxReuse": 3600}
+#: The gate kinds an audience policy can name; ``owner`` is the built-in step-up approver.
+GATE_KINDS = ["owner", "dba-device", "totp", "webauthn", "webhook", "duo", "okta-verify"]
+#: ``require.step_up: true`` is exactly this gate list.
+STEP_UP_GATES = [{"any": ["owner"], "timeout_s": 600, "on_timeout": "deny"}]
+CONFIRMATION_SKEW = 60
 ATTESTATION_LEVELS = {"hardware": ["tee", "strongbox", "secure_enclave", "tpm"], "strongbox": ["strongbox"]}
 MAX_APP_IDS = 16
 LIMITS = {"grants": 32, "actions": 64, "resources": 64, "windows": 16, "places": 64, "networks": 64, "resourceLength": 256}
@@ -43,6 +50,7 @@ REGION = re.compile(r"[A-Z]{2}-[A-Z0-9]{1,3}", re.ASCII)
 # An Apple app id: the 10-character team id, a dot, the bundle id.
 APP_ID = re.compile(r"[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*", re.ASCII)
 # An Android app: "android:", the package name, ":", the SHA-256 of its signing certificate in hex.
+GATE_ID = re.compile(r"gate_[A-Za-z0-9]{8,64}", re.ASCII)
 ANDROID_APP_ID = re.compile(r"android:[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+:[0-9a-f]{64}", re.ASCII)
 # ECMA-402 accepts UTC offsets as time zones ("+05:30", "-08", "+0530"; U+2212 too).
 OFFSET_ZONE = re.compile("([+\\-−])([01][0-9]|2[0-3])(?::?([0-5][0-9]))?", re.ASCII)
@@ -331,6 +339,10 @@ def validate_grant(grant, path: str = "grant") -> list:
         level = get(grant["require"], "attestation")
         if level is not MISSING and not (isinstance(level, str) and level in ATTESTATION_LEVELS):
             errors.append(f'{path}.require.attestation must be "hardware" or "strongbox"')
+        _validate_gates(grant["require"], f"{path}.require", errors)
+        confirmation = get(grant["require"], "confirmation")
+        if confirmation is not MISSING and not isinstance(confirmation, bool):
+            errors.append(f"{path}.require.confirmation must be true or false")
         apps = get(grant["require"], "app_ids")
         if apps is not MISSING and not (
             isinstance(apps, list) and 1 <= len(apps) <= MAX_APP_IDS
@@ -338,6 +350,61 @@ def validate_grant(grant, path: str = "grant") -> list:
         ):
             errors.append(f"{path}.require.app_ids must list 1–{MAX_APP_IDS} app ids (Apple TEAMID.bundle.id, or android:<package>:<signing certificate SHA-256, lowercase hex>)")
     return errors
+
+
+def _validate_gates(require, path, errors) -> None:
+    gates, reuse = get(require, "gates"), get(require, "gates_reuse_s")
+    if gates is not MISSING:
+        if not isinstance(gates, list) or len(gates) == 0 or len(gates) > GATE_LIMITS["entries"]:
+            errors.append(f"{path}.gates must be a list of 1–{GATE_LIMITS['entries']} gate entries")
+        else:
+            for i, entry in enumerate(gates):
+                ep = f"{path}.gates[{i}]"
+                if not _check_keys(entry, GATE_ENTRY_KEYS, ep, errors):
+                    continue
+                any_ = get(entry, "any")
+                if not (
+                    isinstance(any_, list) and 1 <= len(any_) <= GATE_LIMITS["gates"]
+                    and all(isinstance(g, str) and (g == "owner" or GATE_ID.fullmatch(g)) for g in any_)
+                    and len(set(any_)) == len(any_)
+                ):
+                    errors.append(f'{ep}.any must list 1–{GATE_LIMITS["gates"]} different gates ("owner" or gate ids like "gate_01JE…")')
+                timeout = get(entry, "timeout_s")
+                if timeout is not MISSING and not (is_safe_integer(timeout) and GATE_LIMITS["minTimeout"] <= timeout <= GATE_LIMITS["maxTimeout"]):
+                    errors.append(f"{ep}.timeout_s must be an integer from {GATE_LIMITS['minTimeout']} to {GATE_LIMITS['maxTimeout']}")
+                on_timeout = get(entry, "on_timeout")
+                if on_timeout is not MISSING and not (_js.strict_eq(on_timeout, "deny") or _js.strict_eq(on_timeout, "allow")):
+                    errors.append(f'{ep}.on_timeout must be "deny" or "allow"')
+        if _js.strict_eq(get(require, "step_up"), True):
+            errors.append(f'{path} has both step_up and gates; step_up means gates [{{ "any": ["owner"] }}], so list "owner" in gates instead')
+    if reuse is not MISSING:
+        if not (is_safe_integer(reuse) and 0 <= reuse <= GATE_LIMITS["maxReuse"]):
+            errors.append(f"{path}.gates_reuse_s must be an integer from 0 to {GATE_LIMITS['maxReuse']}")
+        if gates is MISSING and not _js.strict_eq(get(require, "step_up"), True):
+            errors.append(f"{path}.gates_reuse_s needs gates or step_up")
+
+
+def grant_gates(grant):
+    """The gate entries a valid grant requires, with defaults filled in, or None (step_up gives STEP_UP_GATES)."""
+    require = get(grant, "require")
+    gates = get(require, "gates")
+    if isinstance(gates, list):
+        return [
+            {
+                "any": list(e["any"]),
+                "timeout_s": e["timeout_s"] if get(e, "timeout_s") not in (MISSING, None) else GATE_LIMITS["defaultTimeout"],
+                "on_timeout": e["on_timeout"] if get(e, "on_timeout") not in (MISSING, None) else "deny",
+            }
+            for e in gates
+        ]
+    if _js.strict_eq(get(require, "step_up"), True):
+        return [dict(e, any=list(e["any"])) for e in STEP_UP_GATES]
+    return None
+
+
+def _gate_policy(policy):
+    gates = get(policy, "gates")
+    return gates if is_object(gates) else None
 
 
 def validate_grants(grants) -> list:
@@ -484,10 +551,44 @@ def evaluate_grant(grant, context: dict) -> dict:
         attestation is not None and _js.strict_eq(get(attestation, "verified_boot"), "verified") and _js.strict_eq(get(attestation, "device_locked"), True)
     ):
         reasons.append("verified_boot_required")
+    # A confirmation is checked offline too: verifiers verify the DBA-Confirmation header and pass
+    # its claims in; DBA's own /authorize passes its record (spec/evaluation.md §3.6).
+    policy = _gate_policy(get(context, "policy"))
+    if truthy(get(require, "confirmation")):
+        c = get(context, "confirmation")
+        iat, exp = get(c, "iat"), get(c, "exp")
+        if not is_object(c) or not is_safe_integer(iat) or not is_safe_integer(exp) or now + CONFIRMATION_SKEW < iat:
+            reasons.append("confirmation_required")
+        elif now - CONFIRMATION_SKEW >= exp:
+            reasons.append("confirmation_expired")
+        elif not _js.strict_eq(get(c, "by_timeout"), False) and _js.strict_eq(get(policy, "fail_open"), False):
+            reasons.append("confirmation_by_timeout_refused")
+    gates = grant_gates(grant)
+    if _js.strict_eq(get(policy, "require"), True):
+        # Only DBA knows each gate's kind, so a policy that requires gates is checked online;
+        # offline it makes the grant online-only (spec/evaluation.md §3.8).
+        online["gate_policy"] = True
+        if truthy(get(context, "online")):
+            kinds = get(context, "gate_kinds")
+            kinds = kinds if is_object(kinds) else {}
+            accepted_kinds = get(policy, "kinds")
+
+            def accepted(gate_id):
+                kind = "owner" if gate_id == "owner" else kinds.get(gate_id, MISSING)
+                return isinstance(kind, str) and (not isinstance(accepted_kinds, list) or includes(accepted_kinds, kind))
+
+            if not (gates and any(all(accepted(g) for g in entry["any"]) for entry in gates)):
+                reasons.append("gate_required")
     if truthy(get(limits, "uses")):
         online["uses"] = limits["uses"]
     if truthy(get(require, "step_up")):
         online["step_up"] = True
+    if gates:
+        online["gates"] = gates
+        reuse = get(require, "gates_reuse_s")
+        online["gates_reuse_s"] = reuse if reuse not in (MISSING, None) else 0
+        if _js.strict_eq(get(policy, "fail_open"), False):
+            online["fail_open"] = False
     if truthy(get(require, "online")):
         online["required"] = True
     if not reasons and online and not truthy(get(context, "online")):
@@ -500,7 +601,9 @@ def evaluate_grants(grants, context: dict) -> dict:
     Evaluate every grant; allow when any grant passes (deny by default).
 
     context: {now (seconds, the verifier's clock), action, resource, location: {network, device},
-    online, attestation (the credential's device.attestation, if any)}. Returns {allow, grant_index, grant, online, caveats, reasons, online_required,
+    online, attestation (the credential's device.attestation, if any), confirmation ({iat, exp,
+    by_timeout} of a verified confirmation), policy (the audience's catalog entry for the action),
+    gate_kinds ({gate id: kind}, online only)}. Returns {allow, grant_index, grant, online, caveats, reasons, online_required,
     results}, where reasons has one list per grant.
     """
     if not isinstance(grants, list):

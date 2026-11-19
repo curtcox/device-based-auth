@@ -63,7 +63,9 @@ export async function authorize(request, env, auth) {
   }
   const location = { network: body.context?.network, device: proof?.loc };
   const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true, attestation: payload.device?.attestation });
-  const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok, uses: r.online.uses, step_up: r.online.step_up })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
+  // Until the gate engine (STATUS B7, G2) decides require.gates, a grant gated by anything but
+  // step-up is never a candidate: it denies rather than passing ungated.
+  const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok && (!r.online.gates || r.online.step_up), uses: r.online.uses, step_up: r.online.step_up })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
   const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, status_list: payload.status.status_list, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account, country: coarseCountry(location), token_namespace: payload.cnf ? null : registered.namespace });
   const grant = decision.allow ? payload.grants[decision.grant_index] : null;
   return {

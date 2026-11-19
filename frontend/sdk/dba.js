@@ -65,7 +65,13 @@ var WHERE_KEYS = /* @__PURE__ */ new Set(["source", "countries", "regions", "are
 var AREA_KEYS = /* @__PURE__ */ new Set(["lat", "lon", "radius_m"]);
 var LIMIT_KEYS = /* @__PURE__ */ new Set(["uses", "spend_usd_per_month"]);
 var USES_KEYS = /* @__PURE__ */ new Set(["count", "per"]);
-var REQUIRE_KEYS = /* @__PURE__ */ new Set(["online", "step_up", "attestation", "verified_boot", "app_ids"]);
+var REQUIRE_KEYS = /* @__PURE__ */ new Set(["online", "step_up", "attestation", "verified_boot", "app_ids", "gates", "gates_reuse_s", "confirmation"]);
+var GATE_ENTRY_KEYS = /* @__PURE__ */ new Set(["any", "timeout_s", "on_timeout"]);
+var GATE_ID = /^gate_[A-Za-z0-9]{8,64}$/;
+var GATE_LIMITS = Object.freeze({ entries: 3, gates: 5, minTimeout: 10, maxTimeout: 86400, defaultTimeout: 300, maxReuse: 3600 });
+var GATE_KINDS = Object.freeze(["owner", "dba-device", "totp", "webauthn", "webhook", "duo", "okta-verify"]);
+var STEP_UP_GATES = Object.freeze([Object.freeze({ any: Object.freeze(["owner"]), timeout_s: 600, on_timeout: "deny" })]);
+var CONFIRMATION_SKEW = 60;
 var ATTESTATION_LEVELS = { hardware: ["tee", "strongbox", "secure_enclave", "tpm"], strongbox: ["strongbox"] };
 var APP_ID = /^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
 var ANDROID_APP_ID = /^android:[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+:[0-9a-f]{64}$/;
@@ -213,9 +219,39 @@ function validateGrant(grant, path = "grant") {
     for (const key of ["online", "step_up", "verified_boot"]) if (grant.require[key] !== void 0 && typeof grant.require[key] !== "boolean") errors.push(`${path}.require.${key} must be true or false`);
     if (grant.require.attestation !== void 0 && (typeof grant.require.attestation !== "string" || !Object.hasOwn(ATTESTATION_LEVELS, grant.require.attestation))) errors.push(`${path}.require.attestation must be "hardware" or "strongbox"`);
     const apps = grant.require.app_ids;
+    validateGates(grant.require, `${path}.require`, errors);
+    if (grant.require.confirmation !== void 0 && typeof grant.require.confirmation !== "boolean") errors.push(`${path}.require.confirmation must be true or false`);
     if (apps !== void 0 && !(Array.isArray(apps) && apps.length >= 1 && apps.length <= MAX_APP_IDS && apps.every((a) => typeof a === "string" && a.length <= 200 && (APP_ID.test(a) || ANDROID_APP_ID.test(a))))) errors.push(`${path}.require.app_ids must list 1\u2013${MAX_APP_IDS} app ids (Apple TEAMID.bundle.id, or android:<package>:<signing certificate SHA-256, lowercase hex>)`);
   }
   return errors;
+}
+function validateGates(require2, path, errors) {
+  const { gates, gates_reuse_s: reuse } = require2;
+  if (gates !== void 0) {
+    if (!Array.isArray(gates) || gates.length === 0 || gates.length > GATE_LIMITS.entries) errors.push(`${path}.gates must be a list of 1\u2013${GATE_LIMITS.entries} gate entries`);
+    else gates.forEach((entry, i) => {
+      const ep = `${path}.gates[${i}]`;
+      if (!checkKeys(entry, GATE_ENTRY_KEYS, ep, errors)) return;
+      const any = entry.any;
+      if (!(Array.isArray(any) && any.length >= 1 && any.length <= GATE_LIMITS.gates && any.every((g) => typeof g === "string" && (g === "owner" || GATE_ID.test(g))) && new Set(any).size === any.length)) errors.push(`${ep}.any must list 1\u2013${GATE_LIMITS.gates} different gates ("owner" or gate ids like "gate_01JE\u2026")`);
+      if (entry.timeout_s !== void 0 && !(Number.isSafeInteger(entry.timeout_s) && entry.timeout_s >= GATE_LIMITS.minTimeout && entry.timeout_s <= GATE_LIMITS.maxTimeout)) errors.push(`${ep}.timeout_s must be an integer from ${GATE_LIMITS.minTimeout} to ${GATE_LIMITS.maxTimeout}`);
+      if (entry.on_timeout !== void 0 && entry.on_timeout !== "deny" && entry.on_timeout !== "allow") errors.push(`${ep}.on_timeout must be "deny" or "allow"`);
+    });
+    if (require2.step_up === true) errors.push(`${path} has both step_up and gates; step_up means gates [{ "any": ["owner"] }], so list "owner" in gates instead`);
+  }
+  if (reuse !== void 0) {
+    if (!(Number.isSafeInteger(reuse) && reuse >= 0 && reuse <= GATE_LIMITS.maxReuse)) errors.push(`${path}.gates_reuse_s must be an integer from 0 to ${GATE_LIMITS.maxReuse}`);
+    if (gates === void 0 && require2.step_up !== true) errors.push(`${path}.gates_reuse_s needs gates or step_up`);
+  }
+}
+function grantGates(grant) {
+  const require2 = isObject(grant) ? grant.require : void 0;
+  if (Array.isArray(require2?.gates)) return require2.gates.map((e) => ({ any: [...e.any], timeout_s: e.timeout_s ?? GATE_LIMITS.defaultTimeout, on_timeout: e.on_timeout ?? "deny" }));
+  if (require2?.step_up === true) return STEP_UP_GATES.map((e) => ({ ...e, any: [...e.any] }));
+  return null;
+}
+function gatePolicy(policy) {
+  return isObject(policy) && isObject(policy.gates) ? policy.gates : null;
 }
 function localTime(nowSeconds, tz) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(nowSeconds * 1e3)).map((p) => [p.type, p.value]));
@@ -295,8 +331,30 @@ function evaluateGrant(grant, context) {
   }
   if (apps !== void 0 && !appListed) reasons.push("attested_app_required");
   if (grant.require?.verified_boot && !(attestation && attestation.verified_boot === "verified" && attestation.device_locked === true)) reasons.push("verified_boot_required");
+  const policy = gatePolicy(context.policy);
+  if (grant.require?.confirmation) {
+    const c = context.confirmation;
+    if (!isObject(c) || !Number.isSafeInteger(c.iat) || !Number.isSafeInteger(c.exp) || now + CONFIRMATION_SKEW < c.iat) reasons.push("confirmation_required");
+    else if (now - CONFIRMATION_SKEW >= c.exp) reasons.push("confirmation_expired");
+    else if (c.by_timeout !== false && policy?.fail_open === false) reasons.push("confirmation_by_timeout_refused");
+  }
+  const gates = grantGates(grant);
+  if (policy?.require === true) {
+    online.gate_policy = true;
+    if (context.online) {
+      const kinds = isObject(context.gate_kinds) ? context.gate_kinds : {};
+      const kindOf = (id) => id === "owner" ? "owner" : Object.hasOwn(kinds, id) ? kinds[id] : void 0;
+      const accepted = (kind) => typeof kind === "string" && (!Array.isArray(policy.kinds) || policy.kinds.includes(kind));
+      if (!(gates && gates.some((entry) => entry.any.every((id) => accepted(kindOf(id)))))) reasons.push("gate_required");
+    }
+  }
   if (grant.limits?.uses) online.uses = grant.limits.uses;
   if (grant.require?.step_up) online.step_up = true;
+  if (gates) {
+    online.gates = gates;
+    online.gates_reuse_s = grant.require.gates_reuse_s ?? 0;
+    if (policy?.fail_open === false) online.fail_open = false;
+  }
   if (grant.require?.online) online.required = true;
   if (!reasons.length && Object.keys(online).length && !context.online) reasons.push("online_required");
   return { ok: reasons.length === 0, reasons, online };
@@ -334,6 +392,18 @@ function describeDays(days) {
   return list(DAYS.filter((d) => days.includes(d)).map((d) => DAY_NAMES[d]));
 }
 var iso = (seconds) => new Date(seconds * 1e3).toISOString().replace(".000Z", "Z");
+function describeSeconds(seconds) {
+  const unit = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (seconds % 86400 === 0) return unit(seconds / 86400, "day");
+  if (seconds % 3600 === 0) return unit(seconds / 3600, "hour");
+  if (seconds % 60 === 0) return unit(seconds / 60, "minute");
+  return unit(seconds, "second");
+}
+function describeGateEntry(entry) {
+  const who = list(entry.any.map((g) => g === "owner" ? "the account owner" : `gate ${g}`));
+  const wait = describeSeconds(entry.timeout_s ?? GATE_LIMITS.defaultTimeout);
+  return entry.on_timeout === "allow" ? `approved by ${who}, or allowed anyway if nobody answers within ${wait}` : `approved by ${who} within ${wait}`;
+}
 function describeGrant(grant) {
   if (!isObject(grant) || !Array.isArray(grant.actions)) return "An invalid grant (it allows nothing).";
   const parts = [`May ${list(grant.actions.map((a) => `"${a}"`))}`];
@@ -358,6 +428,9 @@ function describeGrant(grant) {
   if (Array.isArray(grant.require?.app_ids)) parts.push(`only from the attested app${grant.require.app_ids.length > 1 ? "s" : ""} ${grant.require.app_ids.map(describeAppId).join(", ")}`);
   if (grant.require?.verified_boot) parts.push("only from a device attested to have verified boot and a locked bootloader");
   if (grant.require?.step_up) parts.push("with the owner approving each use");
+  if (Array.isArray(grant.require?.gates)) for (const entry of grantGates(grant)) parts.push(describeGateEntry(entry));
+  if (grant.require?.gates_reuse_s) parts.push(`one approval covering repeated uses for ${describeSeconds(grant.require.gates_reuse_s)}`);
+  if (grant.require?.confirmation) parts.push("only while the device holds a recent confirmation");
   if (grant.require?.online) parts.push("checked online with devicebasedauth.org every time");
   return `${parts.join(", ")}.`;
 }

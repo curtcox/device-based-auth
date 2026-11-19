@@ -14,6 +14,7 @@ describe('device grants on devicebasedauth.org\'s own API', () => {
   it('does not treat a grant with a usage limit or step-up as unlimited', () => {
     expect(canAccess(device([{ actions: ['dba:credentials:issue'], limits: { uses: { count: 1, per: 'day' } } }]), 'credentials:issue')).toBe(false);
     expect(canAccess(device([{ actions: ['dba:credentials:issue'], require: { step_up: true } }]), 'credentials:issue')).toBe(false);
+    expect(canAccess(device([{ actions: ['dba:credentials:issue'], require: { gates: [{ any: ['owner'] }] } }]), 'credentials:issue')).toBe(false);
     // Another grant without them still counts.
     expect(canAccess(device([{ actions: ['dba:credentials:issue'], require: { step_up: true } }, { actions: ['dba:credentials:issue'] }]), 'credentials:issue')).toBe(true);
   });

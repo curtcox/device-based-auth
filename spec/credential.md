@@ -42,6 +42,7 @@ base64url-decoding its middle segment.
 | `grants` | yes | 1–32 grants; see [evaluation.md](evaluation.md). |
 | `status.status_list` | yes | `{ idx, uri }` — the credential's bit in an IETF OAuth Token Status List. |
 | `ver` | yes | Grant vocabulary version, `1`. |
+| `confirm` | no | `{ gates, every_s }`: the credential authenticates only while the device holds a confirmation (§9) issued within the last `every_s` seconds (300–604 800). `gates` lists the gate entries that confirm it ([evaluation.md](evaluation.md) §3.6). When present, every grant also carries `require.confirmation: true`, so verifiers that predate confirmations deny the credential instead of ignoring this claim. |
 
 Unknown top-level claims MUST be ignored. Unknown **grant** members MUST make that grant deny.
 
@@ -227,7 +228,11 @@ A verifier MUST, in order:
 4. Check revocation: bit `idx` of the status list at `uri` must be 0. Status lists are themselves
    JWTs (`typ: statuslist+jwt`) signed by the issuer with `sub` equal to `uri`; cache them for at
    most their `ttl` (the service publishes 60 s; verifiers SHOULD cache ≤ 5 minutes).
-5. Evaluate the grants for the requested action ([evaluation.md](evaluation.md)).
+5. If the request carries `DBA-Confirmation`, verify it (§9) and refuse the request when it does
+   not verify; a confirmation presented as this credential's and that is not is never ignored.
+6. Evaluate the grants for the requested action ([evaluation.md](evaluation.md)), passing the
+   verified confirmation's `iat`, `exp` and `by_timeout`, and the audience's catalog entry for
+   the action (evaluation.md §3.8).
 
 If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
 
@@ -289,3 +294,42 @@ bitwise operators, and read bits past the end of a list as 0.
 Constraints that need state (`limits.uses`, `require.step_up`, `require.online`) cannot be checked
 offline. Verifiers send those requests to `POST /api/v1/authorize` (metered, billed to the
 audience's account), which also sees revocations instantly.
+
+Gated grants (`require.gates`, `require.step_up`, and actions whose audience requires gates) are
+online only too: `/authorize` answers `{ allow: false, code: "gate_pending", gate_request: { id,
+retry_after, deadline } }` until the gates settle, and the caller retries.
+
+## 9. Confirmations
+
+A credential with a `confirm` claim authenticates only while its device holds a recent
+**confirmation**: a JWS signed by the issuer (`ES256`, a `kid` from the JWKS) with
+`typ: dba-confirmation+jwt`, issued after the credential's `confirm.gates` approved it.
+
+```json
+{ "iss": "https://devicebasedauth.org", "sub": "dev_…", "aud": ["hashbin.org"],
+  "cid": "crd_…", "cnf": { "jkt": "<same as credential>" },
+  "iat": 1795017600, "exp": 1795046400,
+  "gates": [{ "kind": "dba-device", "by": "answer" }], "by_timeout": false }
+```
+
+| Claim | Meaning |
+|-------|---------|
+| `iss` | The issuer. |
+| `sub`, `cid`, `cnf.jkt` | The device, credential and device key it confirms: equal to the credential's. `cid` is stable across renewals, so a renewal keeps a confirmation; a key rotation (new `cnf.jkt`) needs a new one. |
+| `aud` | The credential's audiences. |
+| `iat`, `exp` | When it was issued, and `iat + confirm.every_s`. |
+| `gates` | How each gate entry passed: `{ kind, by: "answer" \| "timeout" }`. Informational. |
+| `by_timeout` | `true` when any entry passed because nobody answered before its timeout (an allow-on-timeout entry). Audiences can refuse those (evaluation.md §3.8). |
+
+The device sends it with the credential and proof as `DBA-Confirmation: <jws>`. A verifier checks
+the signature with the issuer's JWKS, `typ`, `iss`, that `cid`, `sub` and `cnf.jkt` equal the
+presented credential's, and its own audience in `aud`; failures use the codes `invalid_format`,
+`wrong_type`, `unknown_kid`, `invalid_signature`, `wrong_issuer`, `invalid_claims`
+(missing or malformed claims, `exp ≤ iat`, `by_timeout` not a boolean), `wrong_credential`,
+`key_mismatch` and `wrong_audience`. Time is checked by the evaluator (evaluation.md §3.6), with
+the same 60 s skew as credentials. Conformance vectors: `confirmations` in
+[`vectors/credentials.json`](vectors/credentials.json), checked against the `valid credential`.
+
+Online, devicebasedauth.org uses its own record of the credential's last confirmation instead of
+the header, so the account owner can end it at once ("Stop trusting this device now"); offline
+verifiers stop accepting the device within `every_s` at most, or at once on revocation.

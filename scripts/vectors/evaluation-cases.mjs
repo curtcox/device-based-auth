@@ -9,6 +9,10 @@ const area = { lat: stl.lat, lon: stl.lon, radius_m: 50000 };
 const APP = 'V8H6LQ9448.io.example.app';
 const APPLE = { format: 'apple-appattest', security_level: 'secure_enclave', app_id: APP, environment: 'production' };
 const DROID_APP = `android:io.example.app:${'ab'.repeat(32)}`;
+const PHONE = 'gate_PHONE0001'; const KEY = 'gate_YUBIKEY01';
+const CONFIRMED = { iat: WED_1500Z - 3600, exp: WED_1500Z + 3600, by_timeout: false };
+const GATED = { gates: { require: true, kinds: ['webauthn', 'dba-device'] } };
+const KINDS = { [PHONE]: 'dba-device', [KEY]: 'webauthn', gate_TOTPAPP01: 'totp' };
 const DROID = { format: 'android-key', security_level: 'strongbox', verified_boot: 'verified', device_locked: true, app_id: DROID_APP };
 
 export const cases = [
@@ -89,5 +93,39 @@ export const cases = [
   ['an Apple app id never matches an Android attestation', [{ actions: W, require: { app_ids: [APP] } }], ctx({ attestation: { ...DROID, app_id: APP } }), false, null, [['attested_app_required']]],
   ['Android app ids need a lowercase hex signer digest', [{ actions: W, require: { app_ids: [`android:io.example.app:${'AB'.repeat(32)}`] } }], ctx({ attestation: DROID }), false, null, [['invalid_grant']]],
   ['Android app ids need a package of two or more parts', [{ actions: W, require: { app_ids: [`android:app:${'ab'.repeat(32)}`] } }], ctx({ attestation: DROID }), false, null, [['invalid_grant']]],
+  ['gates require online', [{ actions: W, require: { gates: [{ any: [PHONE] }] } }], ctx(), false, null, [['online_required']]],
+  ['gates pass the evaluator online (the gate engine decides)', [{ actions: W, require: { gates: [{ any: [PHONE, 'owner'], timeout_s: 120, on_timeout: 'allow' }] } }], ctx({ online: true }), true, 0, [[]]],
+  ['step-up and the equivalent owner gate evaluate the same offline', [{ actions: W, require: { step_up: true } }, { actions: W, require: { gates: [{ any: ['owner'], timeout_s: 600, on_timeout: 'deny' }] } }], ctx(), false, null, [['online_required'], ['online_required']]],
+  ['step-up and the equivalent owner gate evaluate the same online', [{ actions: ['x:y'], require: { step_up: true } }, { actions: W, require: { gates: [{ any: ['owner'], timeout_s: 600, on_timeout: 'deny' }] } }], ctx({ online: true }), true, 1, [['action_not_granted'], []]],
+  ['gates and step_up together are an invalid grant', [{ actions: W, require: { step_up: true, gates: [{ any: ['owner'] }] } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['at most 3 gate entries', [{ actions: W, require: { gates: [{ any: ['owner'] }, { any: [PHONE] }, { any: [KEY] }, { any: ['gate_TOTPAPP01'] }] } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['at most 5 gates per entry', [{ actions: W, require: { gates: [{ any: ['owner', 'gate_AAAAAAA1', 'gate_AAAAAAA2', 'gate_AAAAAAA3', 'gate_AAAAAAA4', 'gate_AAAAAAA5'] }] } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['a gate may appear once per entry', [{ actions: W, require: { gates: [{ any: [PHONE, PHONE] }] } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['gate ids look like gate_…', [{ actions: W, require: { gates: [{ any: ['phone'] }] } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['gate timeouts are 10 s to 1 day', [{ actions: W, require: { gates: [{ any: [PHONE], timeout_s: 5 }] } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['on_timeout is deny or allow', [{ actions: W, require: { gates: [{ any: [PHONE], on_timeout: 'ask' }] } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['an unknown gate entry member is an invalid grant', [{ actions: W, require: { gates: [{ any: [PHONE], quorum: 2 }] } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['gates_reuse_s needs gates or step_up', [{ actions: W, require: { gates_reuse_s: 60 } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['gates_reuse_s with step_up', [{ actions: W, require: { step_up: true, gates_reuse_s: 3600 } }], ctx({ online: true }), true, 0, [[]]],
+  ['gates_reuse_s at most an hour', [{ actions: W, require: { gates: [{ any: [PHONE] }], gates_reuse_s: 3601 } }], ctx({ online: true }), false, null, [['invalid_grant']]],
+  ['a confirmation is required', [{ actions: W, require: { confirmation: true } }], ctx(), false, null, [['confirmation_required']]],
+  ['a current confirmation passes offline', [{ actions: W, require: { confirmation: true } }], ctx({ confirmation: CONFIRMED }), true, 0, [[]]],
+  ['an expired confirmation is refused', [{ actions: W, require: { confirmation: true } }], ctx({ confirmation: { ...CONFIRMED, exp: WED_1500Z - 60 } }), false, null, [['confirmation_expired']]],
+  ['a confirmation within clock skew of exp passes', [{ actions: W, require: { confirmation: true } }], ctx({ confirmation: { ...CONFIRMED, exp: WED_1500Z - 59 } }), true, 0, [[]]],
+  ['a confirmation from the future is not a confirmation', [{ actions: W, require: { confirmation: true } }], ctx({ confirmation: { ...CONFIRMED, iat: WED_1500Z + 61 } }), false, null, [['confirmation_required']]],
+  ['a confirmation by timeout passes by default', [{ actions: W, require: { confirmation: true } }], ctx({ confirmation: { ...CONFIRMED, by_timeout: true } }), true, 0, [[]]],
+  ['a confirmation by timeout is refused when the audience forbids fail-open', [{ actions: W, require: { confirmation: true } }], ctx({ confirmation: { ...CONFIRMED, by_timeout: true }, policy: { action: W[0], gates: { fail_open: false } } }), false, null, [['confirmation_by_timeout_refused']]],
+  ['a confirmation that does not say how it passed counts as by timeout', [{ actions: W, require: { confirmation: true } }], ctx({ confirmation: { iat: CONFIRMED.iat, exp: CONFIRMED.exp }, policy: { gates: { fail_open: false } } }), false, null, [['confirmation_by_timeout_refused']]],
+  ['confirmation must be true or false', [{ actions: W, require: { confirmation: 'yes' } }], ctx({ confirmation: CONFIRMED }), false, null, [['invalid_grant']]],
+  ['confirmation is checked before online_required', [{ actions: W, require: { confirmation: true, online: true } }], ctx(), false, null, [['confirmation_required']]],
+  ['a confirmation is checked online too', [{ actions: W, require: { confirmation: true } }], ctx({ online: true }), false, null, [['confirmation_required']]],
+  ['an audience requiring gates makes an ungated grant online only', [{ actions: W }], ctx({ policy: GATED }), false, null, [['online_required']]],
+  ['an audience requiring gates refuses an ungated grant online', [{ actions: W }], ctx({ online: true, policy: GATED, gate_kinds: KINDS }), false, null, [['gate_required']]],
+  ['an audience requiring gates accepts a gate of an accepted kind', [{ actions: W, require: { gates: [{ any: [PHONE, KEY] }] } }], ctx({ online: true, policy: GATED, gate_kinds: KINDS }), true, 0, [[]]],
+  ['every gate of the entry must be of an accepted kind', [{ actions: W, require: { gates: [{ any: [PHONE, 'gate_TOTPAPP01'] }] } }], ctx({ online: true, policy: GATED, gate_kinds: KINDS }), false, null, [['gate_required']]],
+  ['one entry of accepted kinds is enough', [{ actions: W, require: { gates: [{ any: ['gate_TOTPAPP01'] }, { any: [KEY] }] } }], ctx({ online: true, policy: GATED, gate_kinds: KINDS }), true, 0, [[]]],
+  ['step-up counts as an owner gate for audience policy', [{ actions: W, require: { step_up: true } }], ctx({ online: true, policy: { gates: { require: true, kinds: ['owner'] } } }), true, 0, [[]]],
+  ['an audience policy without kinds accepts any gate', [{ actions: W, require: { gates: [{ any: ['gate_TOTPAPP01'] }] } }], ctx({ online: true, policy: { gates: { require: true } }, gate_kinds: KINDS }), true, 0, [[]]],
+  ['a gate of unknown kind does not satisfy an audience policy', [{ actions: W, require: { gates: [{ any: ['gate_UNKNOWN01'] }] } }], ctx({ online: true, policy: { gates: { require: true } }, gate_kinds: KINDS }), false, null, [['gate_required']]],
   ['all failing reasons are reported', [{ actions: ['x:y'], resources: ['other'] }], ctx(), false, null, [['action_not_granted', 'resource_not_granted']]]
 ].map(([name, grants, context, allow, grant_index, reasons]) => ({ name, grants, context, expected: { allow, grant_index, reasons } }));

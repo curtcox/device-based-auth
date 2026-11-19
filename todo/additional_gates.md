@@ -139,13 +139,14 @@ A credential may carry a top-level `confirm` block:
 
   ```json
   { "iss": "https://devicebasedauth.org", "sub": "dev_…", "aud": ["hashbin.org"],
-    "cid": "<credential jti>", "cnf": { "jkt": "<same as credential>" },
+    "cid": "<credential cid>", "cnf": { "jkt": "<same as credential>" },
     "iat": 1795017600, "exp": 1795046400,
     "gates": [{ "kind": "dba-device", "by": "answer" }], "by_timeout": false }
   ```
 
 - The device sends it as `DBA-Confirmation: <jws>` with the credential and DPoP proof. Verifiers
-  check signature, `iss`, `cid` = credential `jti`, `cnf.jkt` = credential `cnf.jkt`,
+  check signature, `iss`, `cid` and `sub` = the credential's (the stable `cid`, so a renewal keeps
+  the confirmation; a rotation changes `cnf.jkt` and needs a new one), `cnf.jkt` = credential `cnf.jkt`,
   `iat ≤ now < exp` (60 s skew). Missing → `confirmation_required`; expired →
   `confirmation_expired`; `by_timeout: true` and the action's policy forbids it (§6) →
   `confirmation_by_timeout_refused`.
@@ -373,7 +374,7 @@ STATUS row updated.
 
 | Phase | Deliverable | Exit criteria |
 |-------|-------------|---------------|
-| G1 | Spec text and vectors for `require.gates`, `require.confirmation`, confirmations, catalog policy; evaluator in JS, Python, Go | Every new vector passes in all three; step_up ≡ owner gate |
+| G1 ✅ | Spec text and vectors for `require.gates`, `require.confirmation`, confirmations, catalog policy; evaluator in JS, Python, Go | Every new vector passes in all three; step_up ≡ owner gate |
 | G2 | Gate registry (`gate:` rows, CRUD routes, scopes `gates:read`/`gates:write`), `gatereq:` engine replacing `stepup:`, `owner` and `dba-device` kinds, `/authorize` integration, timeouts both ways, audit and notices, D13 prices in cost policy | Concurrency tests: one answer settles; timeout allow/deny; deleted gate denies; balance refusal behaves per §2; cost-count test covers the new ops |
 | G3 | Audience gate policy: catalog field, issuance check, `/authorize` check, verify library `catalog` option | An ungated grant for a required action is refused online and gets `online_required` offline |
 | G4 | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
@@ -382,6 +383,21 @@ STATUS row updated.
 | G7 | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
 | G8 | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
 | G9 | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
+
+## 11a. Progress
+
+- **G1 done (2026-11-19).** `spec/evaluation.md` §3.6–3.9 and `spec/credential.md` §9: `require.gates`
+  (1–3 entries of 1–5 gates; ids `gate_` + 8–64 alphanumerics; `step_up` and `gates` together are
+  invalid), `gates_reuse_s`, `require.confirmation`, the `confirm` claim, `dba-confirmation+jwt`
+  (bound to the credential's `cid`, `sub` and `cnf.jkt`; time checked by the evaluator with 60 s
+  skew), and the catalog `gates` policy (`context.policy`, `context.gate_kinds` online). 34 new
+  evaluation vectors and 10 signed confirmation vectors pass in JS, Python and Go (plus 19 new
+  cross-check cases). `verifyConfirmation` / `verify_confirmation` / `VerifyConfirmation` in all
+  three; the JS `createVerifier` reads `DBA-Confirmation` and takes a static `catalog` option
+  (fetching the catalog, and the Python and Go verifier wiring, are G3/G7).
+- **Fail closed until G2:** issuance refuses `require.gates`, `gates_reuse_s` and `confirmation`
+  (400 `gates_not_available`), `/authorize` never counts a grant gated by anything but `step_up`,
+  and gated `dba:*` grants never grant DBA scopes. G2 removes the issuance refusal.
 
 ## 12. Open questions for later
 

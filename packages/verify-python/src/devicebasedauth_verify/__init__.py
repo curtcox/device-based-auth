@@ -3,11 +3,12 @@ devicebasedauth-verify: read and verify devicebasedauth.org device credentials, 
 status lists, and evaluate their grants. A port of the JavaScript reference library
 (packages/verify) that passes the same conformance vectors (spec/vectors/).
 """
-from .credential import (ACCESS_TYP, CLOCK_SKEW, CREDENTIAL_TYP, DEFAULT_ISSUER, PROOF_MAX_AGE, PROOF_TYP,
-                         STATUS_LIST_TYP, ReplayCache, VerificationError, create_proof, htu, inspect_credential,
-                         validate_credential_payload, verify_credential, verify_proof)
-from .grants import (DAYS, LIMITS, USE_PERIODS, VOCABULARY_VERSION, action_matches, distance_meters, evaluate_grant,
-                     evaluate_grants, in_window, ip_in_cidr, local_time, parse_cidr, parse_ip, period_seconds,
+from .credential import (ACCESS_TYP, CLOCK_SKEW, CONFIRMATION_TYP, CREDENTIAL_TYP, DEFAULT_ISSUER, PROOF_MAX_AGE,
+                         PROOF_TYP, STATUS_LIST_TYP, ReplayCache, VerificationError, create_proof, htu,
+                         inspect_credential, validate_credential_payload, verify_confirmation, verify_credential,
+                         verify_proof)
+from .grants import (DAYS, GATE_KINDS, GATE_LIMITS, LIMITS, STEP_UP_GATES, USE_PERIODS, VOCABULARY_VERSION, action_matches,
+                     distance_meters, evaluate_grant, evaluate_grants, grant_gates, in_window, ip_in_cidr, local_time, parse_cidr, parse_ip, period_seconds,
                      resource_matches, valid_time_zone, validate_grant, validate_grants)
 from .issuer import issuer_signer, jwks_for, sign_access_token, sign_credential, sign_status_list
 from .jose import (b64u, decode_jws, export_public_jwk, generate_key_pair, import_private_key, import_public_key,
@@ -21,6 +22,12 @@ __version__ = "0.1.0"
 __all__ = [
     "ACCESS_TYP",
     "CLOCK_SKEW",
+    "CONFIRMATION_TYP",
+    "GATE_KINDS",
+    "GATE_LIMITS",
+    "STEP_UP_GATES",
+    "grant_gates",
+    "verify_confirmation",
     "CREDENTIAL_TYP",
     "DAYS",
     "DEFAULT_ISSUER",

@@ -194,6 +194,7 @@ base64url-decoding its middle segment.
 | `grants` | yes | 1–32 grants; see [evaluation.md](https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md). |
 | `status.status_list` | yes | `{ idx, uri }` — the credential's bit in an IETF OAuth Token Status List. |
 | `ver` | yes | Grant vocabulary version, `1`. |
+| `confirm` | no | `{ gates, every_s }`: the credential authenticates only while the device holds a confirmation (§9) issued within the last `every_s` seconds (300–604 800). `gates` lists the gate entries that confirm it ([evaluation.md](https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md) §3.6). When present, every grant also carries `require.confirmation: true`, so verifiers that predate confirmations deny the credential instead of ignoring this claim. |
 
 Unknown top-level claims MUST be ignored. Unknown **grant** members MUST make that grant deny.
 
@@ -379,7 +380,11 @@ A verifier MUST, in order:
 4. Check revocation: bit `idx` of the status list at `uri` must be 0. Status lists are themselves
    JWTs (`typ: statuslist+jwt`) signed by the issuer with `sub` equal to `uri`; cache them for at
    most their `ttl` (the service publishes 60 s; verifiers SHOULD cache ≤ 5 minutes).
-5. Evaluate the grants for the requested action ([evaluation.md](https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md)).
+5. If the request carries `DBA-Confirmation`, verify it (§9) and refuse the request when it does
+   not verify; a confirmation presented as this credential's and that is not is never ignored.
+6. Evaluate the grants for the requested action ([evaluation.md](https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md)), passing the
+   verified confirmation's `iat`, `exp` and `by_timeout`, and the audience's catalog entry for
+   the action (evaluation.md §3.8).
 
 If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
 
@@ -442,6 +447,45 @@ Constraints that need state (`limits.uses`, `require.step_up`, `require.online`)
 offline. Verifiers send those requests to `POST /api/v1/authorize` (metered, billed to the
 audience's account), which also sees revocations instantly.
 
+Gated grants (`require.gates`, `require.step_up`, and actions whose audience requires gates) are
+online only too: `/authorize` answers `{ allow: false, code: "gate_pending", gate_request: { id,
+retry_after, deadline } }` until the gates settle, and the caller retries.
+
+## 9. Confirmations
+
+A credential with a `confirm` claim authenticates only while its device holds a recent
+**confirmation**: a JWS signed by the issuer (`ES256`, a `kid` from the JWKS) with
+`typ: dba-confirmation+jwt`, issued after the credential's `confirm.gates` approved it.
+
+```json
+{ "iss": "https://devicebasedauth.org", "sub": "dev_…", "aud": ["hashbin.org"],
+  "cid": "crd_…", "cnf": { "jkt": "<same as credential>" },
+  "iat": 1795017600, "exp": 1795046400,
+  "gates": [{ "kind": "dba-device", "by": "answer" }], "by_timeout": false }
+```
+
+| Claim | Meaning |
+|-------|---------|
+| `iss` | The issuer. |
+| `sub`, `cid`, `cnf.jkt` | The device, credential and device key it confirms: equal to the credential's. `cid` is stable across renewals, so a renewal keeps a confirmation; a key rotation (new `cnf.jkt`) needs a new one. |
+| `aud` | The credential's audiences. |
+| `iat`, `exp` | When it was issued, and `iat + confirm.every_s`. |
+| `gates` | How each gate entry passed: `{ kind, by: "answer" \| "timeout" }`. Informational. |
+| `by_timeout` | `true` when any entry passed because nobody answered before its timeout (an allow-on-timeout entry). Audiences can refuse those (evaluation.md §3.8). |
+
+The device sends it with the credential and proof as `DBA-Confirmation: <jws>`. A verifier checks
+the signature with the issuer's JWKS, `typ`, `iss`, that `cid`, `sub` and `cnf.jkt` equal the
+presented credential's, and its own audience in `aud`; failures use the codes `invalid_format`,
+`wrong_type`, `unknown_kid`, `invalid_signature`, `wrong_issuer`, `invalid_claims`
+(missing or malformed claims, `exp ≤ iat`, `by_timeout` not a boolean), `wrong_credential`,
+`key_mismatch` and `wrong_audience`. Time is checked by the evaluator (evaluation.md §3.6), with
+the same 60 s skew as credentials. Conformance vectors: `confirmations` in
+[`vectors/credentials.json`](https://github.com/curtcox/device-based-auth/blob/main/spec/vectors/credentials.json), checked against the `valid credential`.
+
+Online, devicebasedauth.org uses its own record of the credential's last confirmation instead of
+the header, so the account owner can end it at once ("Stop trusting this device now"); offline
+verifiers stop accepting the device within `every_s` at most, or at once on revocation.
+
 ---
 
 <!-- Grant evaluation: from spec/evaluation.md -->
@@ -464,6 +508,11 @@ in `context` yields `expected.allow`, `expected.grant_index`, and per-grant `exp
 - `location.device` — the `loc` claim from the verified DPoP proof: `{ lat, lon, acc_m, t }`.
 - `online` — true only when devicebasedauth.org itself is evaluating (it can enforce counters).
 - `attestation` — the presented credential's `device.attestation`, if any (credential.md §3a).
+- `confirmation` — `{ iat, exp, by_timeout }` of the confirmation presented with the credential
+  and verified by the verifier (credential.md §9); online, devicebasedauth.org's own record.
+- `policy` — the audience's action catalog entry for `action`, if any (§3.8).
+- `gate_kinds` — `{ <gate id>: <kind> }` for the issuing account's gates. Only
+  devicebasedauth.org knows them, so only online evaluations have it.
 
 ## 2. Decision
 
@@ -558,11 +607,70 @@ honest as the device. See the master plan §3.5.
 
 Both are checked offline: the attestation is part of the signed credential.
 
+- `gates: [entry, …]` — online, and each use waits until every entry is satisfied (1–3 entries).
+  An entry is `{ any, timeout_s?, on_timeout? }`:
+  - `any`: 1–5 different gates of the issuing account, each `"owner"` (any browser signed in to
+    the account, or a dashboard device: today's step-up) or a gate id `gate_` + 8–64 letters and
+    digits. One allow from any of them satisfies the entry.
+  - `timeout_s`: integer 10–86 400, default 300.
+  - `on_timeout`: `"deny"` (default) or `"allow"`. With `"allow"` the use goes ahead if nobody
+    answers within `timeout_s`, whether the approver ignored the request or could not be reached:
+    a veto window, not a check.
+
+  Any other entry member, or a value out of range, makes the grant `invalid_grant`. Gates are
+  decided by devicebasedauth.org's gate engine, not by the evaluator: the evaluator only makes the
+  grant online-only, and `/authorize` answers `gate_pending` until the gates settle
+  (credential.md §8). The device that asks can never approve its own request.
+- `step_up: true` is exactly `gates: [{ "any": ["owner"], "timeout_s": 600, "on_timeout": "deny" }]`.
+  A grant may not have both (`invalid_grant`).
+- `gates_reuse_s` — integer 0–3600 (default 0), only with `gates` or `step_up`: one approval covers
+  repeated uses of the same credential, action, resource and audience for this long. 0 means
+  each approval is spent by one use.
+- `confirmation: true` — the credential carries `confirm` (credential.md §9) and this grant counts
+  only while the device holds a current confirmation. Checked offline and online, in this order:
+  - no `context.confirmation` object with integer `iat` and `exp`, or `now + 60 < iat` →
+    `confirmation_required`;
+  - `now − 60 ≥ exp` → `confirmation_expired`;
+  - `by_timeout` is anything but `false` and the action's policy has `fail_open: false` (§3.8) →
+    `confirmation_by_timeout_refused`.
+
+  `false` requires nothing.
+
 ### 3.7 Online-only constraints
 
-If a grant would otherwise pass but has `limits.uses`, `require.online: true` or
-`require.step_up: true`, and the evaluation is not online, it fails with `online_required` (and
-the overall result reports `online_required: true` when that is the only reason any grant failed).
+If a grant would otherwise pass but has `limits.uses`, `require.online: true`,
+`require.step_up: true` or `require.gates`, or the action's policy requires gates (§3.8), and the
+evaluation is not online, it fails with `online_required` (and the overall result reports
+`online_required: true` when that is the only reason any grant failed).
+
+### 3.8 Audience policy
+
+An audience's action catalog entry may carry a gates policy, which applies to every credential
+used for that action, old or new:
+
+```json
+{ "action": "cronly:jobs:delete", "description": "Delete a job",
+  "gates": { "require": true, "kinds": ["webauthn", "dba-device"], "fail_open": false } }
+```
+
+Verifiers pass the entry for the requested action as `context.policy`. Only its `gates` object is
+read, and only these members:
+
+- `require: true` — a grant counts only if one of its gate entries (with `step_up` as the owner
+  entry) consists of gates whose kinds are all listed in `kinds` (any kind when `kinds` is not a
+  list; `owner` is of kind `owner`; a gate whose kind is not in `context.gate_kinds` is of no
+  kind). Otherwise, online, the grant fails with `gate_required`. Gate kinds are known only to
+  devicebasedauth.org, so offline the grant is online-only (§3.7), with or without gates.
+- `fail_open: false` — an allow by timeout counts as a deny for this action: confirmations with
+  `by_timeout` other than `false` fail with `confirmation_by_timeout_refused` (§3.6), and the gate
+  engine answers `by_timeout_refused` for gate entries that would pass by timeout.
+
+Account owners can add gates but never remove an audience's requirement.
+
+### 3.9 Reason order
+
+Reasons are reported in the order of this document; `confirmation_*` come after
+`verified_boot_required`, then `gate_required`, then `online_required`.
 
 ---
 

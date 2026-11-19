@@ -16,6 +16,11 @@ in `context` yields `expected.allow`, `expected.grant_index`, and per-grant `exp
 - `location.device` — the `loc` claim from the verified DPoP proof: `{ lat, lon, acc_m, t }`.
 - `online` — true only when devicebasedauth.org itself is evaluating (it can enforce counters).
 - `attestation` — the presented credential's `device.attestation`, if any (credential.md §3a).
+- `confirmation` — `{ iat, exp, by_timeout }` of the confirmation presented with the credential
+  and verified by the verifier (credential.md §9); online, devicebasedauth.org's own record.
+- `policy` — the audience's action catalog entry for `action`, if any (§3.8).
+- `gate_kinds` — `{ <gate id>: <kind> }` for the issuing account's gates. Only
+  devicebasedauth.org knows them, so only online evaluations have it.
 
 ## 2. Decision
 
@@ -110,8 +115,67 @@ honest as the device. See the master plan §3.5.
 
 Both are checked offline: the attestation is part of the signed credential.
 
+- `gates: [entry, …]` — online, and each use waits until every entry is satisfied (1–3 entries).
+  An entry is `{ any, timeout_s?, on_timeout? }`:
+  - `any`: 1–5 different gates of the issuing account, each `"owner"` (any browser signed in to
+    the account, or a dashboard device: today's step-up) or a gate id `gate_` + 8–64 letters and
+    digits. One allow from any of them satisfies the entry.
+  - `timeout_s`: integer 10–86 400, default 300.
+  - `on_timeout`: `"deny"` (default) or `"allow"`. With `"allow"` the use goes ahead if nobody
+    answers within `timeout_s`, whether the approver ignored the request or could not be reached:
+    a veto window, not a check.
+
+  Any other entry member, or a value out of range, makes the grant `invalid_grant`. Gates are
+  decided by devicebasedauth.org's gate engine, not by the evaluator: the evaluator only makes the
+  grant online-only, and `/authorize` answers `gate_pending` until the gates settle
+  (credential.md §8). The device that asks can never approve its own request.
+- `step_up: true` is exactly `gates: [{ "any": ["owner"], "timeout_s": 600, "on_timeout": "deny" }]`.
+  A grant may not have both (`invalid_grant`).
+- `gates_reuse_s` — integer 0–3600 (default 0), only with `gates` or `step_up`: one approval covers
+  repeated uses of the same credential, action, resource and audience for this long. 0 means
+  each approval is spent by one use.
+- `confirmation: true` — the credential carries `confirm` (credential.md §9) and this grant counts
+  only while the device holds a current confirmation. Checked offline and online, in this order:
+  - no `context.confirmation` object with integer `iat` and `exp`, or `now + 60 < iat` →
+    `confirmation_required`;
+  - `now − 60 ≥ exp` → `confirmation_expired`;
+  - `by_timeout` is anything but `false` and the action's policy has `fail_open: false` (§3.8) →
+    `confirmation_by_timeout_refused`.
+
+  `false` requires nothing.
+
 ### 3.7 Online-only constraints
 
-If a grant would otherwise pass but has `limits.uses`, `require.online: true` or
-`require.step_up: true`, and the evaluation is not online, it fails with `online_required` (and
-the overall result reports `online_required: true` when that is the only reason any grant failed).
+If a grant would otherwise pass but has `limits.uses`, `require.online: true`,
+`require.step_up: true` or `require.gates`, or the action's policy requires gates (§3.8), and the
+evaluation is not online, it fails with `online_required` (and the overall result reports
+`online_required: true` when that is the only reason any grant failed).
+
+### 3.8 Audience policy
+
+An audience's action catalog entry may carry a gates policy, which applies to every credential
+used for that action, old or new:
+
+```json
+{ "action": "cronly:jobs:delete", "description": "Delete a job",
+  "gates": { "require": true, "kinds": ["webauthn", "dba-device"], "fail_open": false } }
+```
+
+Verifiers pass the entry for the requested action as `context.policy`. Only its `gates` object is
+read, and only these members:
+
+- `require: true` — a grant counts only if one of its gate entries (with `step_up` as the owner
+  entry) consists of gates whose kinds are all listed in `kinds` (any kind when `kinds` is not a
+  list; `owner` is of kind `owner`; a gate whose kind is not in `context.gate_kinds` is of no
+  kind). Otherwise, online, the grant fails with `gate_required`. Gate kinds are known only to
+  devicebasedauth.org, so offline the grant is online-only (§3.7), with or without gates.
+- `fail_open: false` — an allow by timeout counts as a deny for this action: confirmations with
+  `by_timeout` other than `false` fail with `confirmation_by_timeout_refused` (§3.6), and the gate
+  engine answers `by_timeout_refused` for gate entries that would pass by timeout.
+
+Account owners can add gates but never remove an audience's requirement.
+
+### 3.9 Reason order
+
+Reasons are reported in the order of this document; `confirmation_*` come after
+`verified_boot_required`, then `gate_required`, then `online_required`.

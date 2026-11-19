@@ -2449,6 +2449,1234 @@
       }
     },
     {
+      "name": "gates require online",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "online_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "gates pass the evaluator online (the gate engine decides)",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001",
+                  "owner"
+                ],
+                "timeout_s": 120,
+                "on_timeout": "allow"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "step-up and the equivalent owner gate evaluate the same offline",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "step_up": true
+          }
+        },
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "owner"
+                ],
+                "timeout_s": 600,
+                "on_timeout": "deny"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "online_required"
+          ],
+          [
+            "online_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "step-up and the equivalent owner gate evaluate the same online",
+      "grants": [
+        {
+          "actions": [
+            "x:y"
+          ],
+          "require": {
+            "step_up": true
+          }
+        },
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "owner"
+                ],
+                "timeout_s": 600,
+                "on_timeout": "deny"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 1,
+        "reasons": [
+          [
+            "action_not_granted"
+          ],
+          []
+        ]
+      }
+    },
+    {
+      "name": "gates and step_up together are an invalid grant",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "step_up": true,
+            "gates": [
+              {
+                "any": [
+                  "owner"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "at most 3 gate entries",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "owner"
+                ]
+              },
+              {
+                "any": [
+                  "gate_PHONE0001"
+                ]
+              },
+              {
+                "any": [
+                  "gate_YUBIKEY01"
+                ]
+              },
+              {
+                "any": [
+                  "gate_TOTPAPP01"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "at most 5 gates per entry",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "owner",
+                  "gate_AAAAAAA1",
+                  "gate_AAAAAAA2",
+                  "gate_AAAAAAA3",
+                  "gate_AAAAAAA4",
+                  "gate_AAAAAAA5"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a gate may appear once per entry",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001",
+                  "gate_PHONE0001"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "gate ids look like gate_…",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "phone"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "gate timeouts are 10 s to 1 day",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001"
+                ],
+                "timeout_s": 5
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "on_timeout is deny or allow",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001"
+                ],
+                "on_timeout": "ask"
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an unknown gate entry member is an invalid grant",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001"
+                ],
+                "quorum": 2
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "gates_reuse_s needs gates or step_up",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates_reuse_s": 60
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "gates_reuse_s with step_up",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "step_up": true,
+            "gates_reuse_s": 3600
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "gates_reuse_s at most an hour",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001"
+                ]
+              }
+            ],
+            "gates_reuse_s": 3601
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a confirmation is required",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "confirmation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a current confirmation passes offline",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "confirmation": {
+          "iat": 1795010400,
+          "exp": 1795017600,
+          "by_timeout": false
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "an expired confirmation is refused",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "confirmation": {
+          "iat": 1795010400,
+          "exp": 1795013940,
+          "by_timeout": false
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "confirmation_expired"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a confirmation within clock skew of exp passes",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "confirmation": {
+          "iat": 1795010400,
+          "exp": 1795013941,
+          "by_timeout": false
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "a confirmation from the future is not a confirmation",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "confirmation": {
+          "iat": 1795014061,
+          "exp": 1795017600,
+          "by_timeout": false
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "confirmation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a confirmation by timeout passes by default",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "confirmation": {
+          "iat": 1795010400,
+          "exp": 1795017600,
+          "by_timeout": true
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "a confirmation by timeout is refused when the audience forbids fail-open",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "confirmation": {
+          "iat": 1795010400,
+          "exp": 1795017600,
+          "by_timeout": true
+        },
+        "policy": {
+          "action": "hashbin:content:write",
+          "gates": {
+            "fail_open": false
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "confirmation_by_timeout_refused"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a confirmation that does not say how it passed counts as by timeout",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "confirmation": {
+          "iat": 1795010400,
+          "exp": 1795017600
+        },
+        "policy": {
+          "gates": {
+            "fail_open": false
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "confirmation_by_timeout_refused"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "confirmation must be true or false",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": "yes"
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "confirmation": {
+          "iat": 1795010400,
+          "exp": 1795017600,
+          "by_timeout": false
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "confirmation is checked before online_required",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true,
+            "online": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "confirmation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a confirmation is checked online too",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "confirmation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an audience requiring gates makes an ungated grant online only",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "policy": {
+          "gates": {
+            "require": true,
+            "kinds": [
+              "webauthn",
+              "dba-device"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "online_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an audience requiring gates refuses an ungated grant online",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ]
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true,
+        "policy": {
+          "gates": {
+            "require": true,
+            "kinds": [
+              "webauthn",
+              "dba-device"
+            ]
+          }
+        },
+        "gate_kinds": {
+          "gate_PHONE0001": "dba-device",
+          "gate_YUBIKEY01": "webauthn",
+          "gate_TOTPAPP01": "totp"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "gate_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an audience requiring gates accepts a gate of an accepted kind",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001",
+                  "gate_YUBIKEY01"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true,
+        "policy": {
+          "gates": {
+            "require": true,
+            "kinds": [
+              "webauthn",
+              "dba-device"
+            ]
+          }
+        },
+        "gate_kinds": {
+          "gate_PHONE0001": "dba-device",
+          "gate_YUBIKEY01": "webauthn",
+          "gate_TOTPAPP01": "totp"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "every gate of the entry must be of an accepted kind",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_PHONE0001",
+                  "gate_TOTPAPP01"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true,
+        "policy": {
+          "gates": {
+            "require": true,
+            "kinds": [
+              "webauthn",
+              "dba-device"
+            ]
+          }
+        },
+        "gate_kinds": {
+          "gate_PHONE0001": "dba-device",
+          "gate_YUBIKEY01": "webauthn",
+          "gate_TOTPAPP01": "totp"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "gate_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "one entry of accepted kinds is enough",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_TOTPAPP01"
+                ]
+              },
+              {
+                "any": [
+                  "gate_YUBIKEY01"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true,
+        "policy": {
+          "gates": {
+            "require": true,
+            "kinds": [
+              "webauthn",
+              "dba-device"
+            ]
+          }
+        },
+        "gate_kinds": {
+          "gate_PHONE0001": "dba-device",
+          "gate_YUBIKEY01": "webauthn",
+          "gate_TOTPAPP01": "totp"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "step-up counts as an owner gate for audience policy",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "step_up": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true,
+        "policy": {
+          "gates": {
+            "require": true,
+            "kinds": [
+              "owner"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "an audience policy without kinds accepts any gate",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_TOTPAPP01"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true,
+        "policy": {
+          "gates": {
+            "require": true
+          }
+        },
+        "gate_kinds": {
+          "gate_PHONE0001": "dba-device",
+          "gate_YUBIKEY01": "webauthn",
+          "gate_TOTPAPP01": "totp"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "a gate of unknown kind does not satisfy an audience policy",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "require": {
+            "gates": [
+              {
+                "any": [
+                  "gate_UNKNOWN01"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "online": true,
+        "policy": {
+          "gates": {
+            "require": true
+          }
+        },
+        "gate_kinds": {
+          "gate_PHONE0001": "dba-device",
+          "gate_YUBIKEY01": "webauthn",
+          "gate_TOTPAPP01": "totp"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "gate_required"
+          ]
+        ]
+      }
+    },
+    {
       "name": "all failing reasons are reported",
       "grants": [
         {

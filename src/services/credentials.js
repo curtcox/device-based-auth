@@ -52,6 +52,13 @@ export async function validateIssue(env, { aud, grants, lifetime_seconds }) {
   const audiences = await rpc(env.REGISTRY, 'global', 'get-many', { names: [...new Set(aud)] });
   const problems = validateGrants(grants);
   assert(!problems.length, 'invalid_grants', problems.join('; '));
+  // Gates and confirmations are in the grant vocabulary (spec/evaluation.md §3.6) before the gate
+  // engine that enforces them exists (STATUS B7, phase G2): refuse them rather than issue grants
+  // /authorize could not enforce.
+  for (const [i, grant] of grants.entries()) {
+    const unsupported = ['gates', 'gates_reuse_s', 'confirmation'].filter(k => grant.require?.[k] !== undefined);
+    assert(!unsupported.length, 'gates_not_available', `grants[${i}]: require.${unsupported.join(', require.')} ${unsupported.length > 1 ? 'are' : 'is'} not available yet; use require.step_up for owner approval`);
+  }
   // devicebasedauth.org checks dba:* grants itself, per request, with no counters or approvals.
   for (const [i, grant] of grants.entries()) {
     const dba = grant.actions.some(a => a === '*' || a.startsWith('dba:'));

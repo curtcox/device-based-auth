@@ -2,7 +2,7 @@
 // credential vectors are signed once with a published TEST-ONLY key and then frozen.
 import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { cases } from './vectors/evaluation-cases.mjs';
-import { generateKeyPair, exportPublicJwk, jwkThumbprint, issuerSigner, jwksFor, signCredential, createProof, b64u, signStatusList, setBit, decodeJws, signJws, CREDENTIAL_TYP } from '../packages/verify/src/index.js';
+import { generateKeyPair, exportPublicJwk, jwkThumbprint, issuerSigner, jwksFor, signCredential, createProof, b64u, signStatusList, setBit, decodeJws, signJws, CREDENTIAL_TYP, CONFIRMATION_TYP } from '../packages/verify/src/index.js';
 
 writeFileSync('spec/vectors/evaluation.json', JSON.stringify({ description: 'Grant evaluation conformance vectors. context.now is in seconds; reasons are listed per grant.', cases }, null, 2) + '\n');
 
@@ -65,6 +65,29 @@ for (const [name, payload, expected] of appended) {
   if (frozen.credentials.some(c => c.name === name)) continue;
   frozen.credentials.push({ name, jws: await signJws({ typ: CREDENTIAL_TYP, kid: appendSigner.kid }, payload, appendSigner.key), audience: 'hashbin.org', now: validPayload.nbf + 10, expected });
   added++;
+}
+
+// Confirmations (spec/credential.md §9) for the valid credential. Checked against that credential's
+// payload; time is the evaluator's job (evaluation vectors), so these test only signature and binding.
+if (!frozen.confirmations) {
+  const c = validPayload;
+  const claims = { iss: c.iss, sub: c.sub, aud: c.aud, cid: c.cid, cnf: { jkt: c.cnf.jkt }, iat: c.iat + 5, exp: c.iat + 5 + 28800, gates: [{ kind: 'dba-device', by: 'answer' }], by_timeout: false };
+  const sign = (payload, typ = CONFIRMATION_TYP) => signJws({ typ, kid: appendSigner.kid }, payload, appendSigner.key);
+  const good = await sign(claims);
+  const [h, , sig] = good.split('.');
+  frozen.confirmations = [
+    ['valid confirmation', good, { valid: true }],
+    ['confirmation for another credential', await sign({ ...claims, cid: 'crd_OTHER00001' }), { valid: false, code: 'wrong_credential' }],
+    ['confirmation for another device', await sign({ ...claims, sub: 'dev_OTHER00001' }), { valid: false, code: 'wrong_credential' }],
+    ['confirmation for another key', await sign({ ...claims, cnf: { jkt: 'AAAA' } }), { valid: false, code: 'key_mismatch' }],
+    ['confirmation with a tampered payload', `${h}.${b64u(JSON.stringify({ ...claims, exp: claims.exp + 86400 }))}.${sig}`, { valid: false, code: 'invalid_signature' }],
+    ['credential presented as a confirmation', frozen.credentials.find(v => v.name === 'valid credential').jws, { valid: false, code: 'wrong_type' }],
+    ['confirmation without by_timeout', await sign({ ...claims, by_timeout: undefined }), { valid: false, code: 'invalid_claims' }],
+    ['confirmation with exp before iat', await sign({ ...claims, exp: claims.iat }), { valid: false, code: 'invalid_claims' }],
+    ['confirmation from another issuer', await sign({ ...claims, iss: 'https://example.com' }), { valid: false, code: 'wrong_issuer' }],
+    ['confirmation for another audience', await sign({ ...claims, aud: ['cronly.org'] }), { valid: false, code: 'wrong_audience' }]
+  ].map(([name, jws, expected]) => ({ name, jws, audience: 'hashbin.org', expected }));
+  added += frozen.confirmations.length;
 }
 if (added) writeFileSync(credentialsPath, JSON.stringify(frozen, null, 2) + '\n');
 console.log(`wrote ${cases.length} evaluation cases; appended ${added} credential vectors`);

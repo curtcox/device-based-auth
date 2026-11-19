@@ -21,6 +21,7 @@ CREDENTIAL_TYP = "dba-device+jwt"
 ACCESS_TYP = "dba-access+jwt"
 PROOF_TYP = "dpop+jwt"
 STATUS_LIST_TYP = "statuslist+jwt"
+CONFIRMATION_TYP = "dba-confirmation+jwt"
 DEFAULT_ISSUER = "https://devicebasedauth.org"
 #: Seconds of disagreement tolerated between the issuer's, the device's and the verifier's clocks.
 CLOCK_SKEW = 60
@@ -134,6 +135,53 @@ def verify_credential(jws, *, jwks, issuer: str = DEFAULT_ISSUER, audience: str 
         raise VerificationError("not_yet_valid", "Credential is not valid yet")
     if now - CLOCK_SKEW >= payload["exp"]:
         raise VerificationError("expired", "Credential has expired")
+    return {"header": header, "payload": payload}
+
+
+def verify_confirmation(jws, *, jwks, credential: dict, issuer: str = DEFAULT_ISSUER, audience: str | None = None) -> dict:
+    """
+    Verify a confirmation (typ "dba-confirmation+jwt", spec/credential.md §9) for an
+    already-verified credential payload: issuer signature, issuer, and the binding to the
+    credential (same cid, sub and cnf.jkt). Time is not checked here: the evaluator compares
+    iat/exp with its clock (pass the payload as context["confirmation"]). Returns {header, payload}.
+    Raises VerificationError: invalid_format, wrong_type, unknown_kid, invalid_signature,
+    wrong_issuer, invalid_claims, wrong_credential, key_mismatch, wrong_audience.
+    """
+    try:
+        decoded = decode_jws(jws)
+    except ValueError:
+        raise VerificationError("invalid_format", "Confirmation is not a compact JWS") from None
+    header, payload = decoded["header"], decoded["payload"]
+    if not _js.strict_eq(get(header, "typ"), CONFIRMATION_TYP):
+        raise VerificationError("wrong_type", f"Expected typ {CONFIRMATION_TYP}")
+    kid = get(header, "kid")
+    keys = get(jwks, "keys")
+    jwk = next((k for k in keys if _js.strict_eq(get(k, "kid"), kid)), None) if isinstance(keys, list) else None
+    if jwk is None:
+        raise VerificationError("unknown_kid", f"Unknown signing key {_js.to_string(kid)}")
+    if not verify_jws(jws, jwk):
+        raise VerificationError("invalid_signature", "Confirmation signature does not verify")
+    if not _js.strict_eq(get(payload, "iss"), issuer):
+        raise VerificationError("wrong_issuer", f"Issuer is not {issuer}")
+    problems = []
+    if not (isinstance(get(payload, "cid"), str) and isinstance(get(payload, "sub"), str) and isinstance(get(get(payload, "cnf"), "jkt"), str)):
+        problems.append("cid, sub and cnf.jkt are required")
+    iat, exp = get(payload, "iat"), get(payload, "exp")
+    if not (is_safe_integer(iat) and is_safe_integer(exp) and exp > iat):
+        problems.append("iat and exp must be NumericDates with exp after iat")
+    if not isinstance(get(payload, "by_timeout"), bool):
+        problems.append("by_timeout must be true or false")
+    aud = get(payload, "aud")
+    if not (isinstance(aud, list) and all(isinstance(a, str) for a in aud)):
+        problems.append("aud must be a list of audiences")
+    if problems:
+        raise VerificationError("invalid_claims", "; ".join(problems))
+    if not _js.strict_eq(payload["cid"], get(credential, "cid")) or not _js.strict_eq(payload["sub"], get(credential, "sub")):
+        raise VerificationError("wrong_credential", "Confirmation is for another credential")
+    if not _js.strict_eq(payload["cnf"]["jkt"], get(get(credential, "cnf"), "jkt")):
+        raise VerificationError("key_mismatch", "Confirmation is for another device key")
+    if audience is not None and audience not in aud:
+        raise VerificationError("wrong_audience", f"Confirmation is not valid for {audience}")
     return {"header": header, "payload": payload}
 
 

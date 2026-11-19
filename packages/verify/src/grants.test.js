@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateGrant, validateGrants, evaluateGrants, evaluateGrant, isNarrowing, describeGrant, ipInCidr, parseIp, localTime, inWindow, distanceMeters, actionMatches, resourceMatches } from './grants.js';
+import { validateGrant, validateGrants, evaluateGrants, evaluateGrant, isNarrowing, describeGrant, ipInCidr, parseIp, localTime, inWindow, distanceMeters, actionMatches, resourceMatches, grantGates, STEP_UP_GATES } from './grants.js';
 
 const at = iso => Math.floor(Date.parse(iso) / 1000);
 const base = { actions: ['hashbin:content:write'] };
@@ -99,4 +99,21 @@ describe('narrowing', () => {
 it('describes grants in plain English', () => {
   expect(describeGrant({ actions: ['hashbin:content:write'], when: { tz: 'America/Chicago', windows: [{ days: ['mon', 'tue', 'wed', 'thu', 'fri'], from: '08:00', to: '18:00' }] }, where: { source: 'network', countries: ['US'] }, limits: { spend_usd_per_month: 5 } }))
     .toBe('May "hashbin:content:write", on any resource, weekdays 08:00–18:00 (America/Chicago time), only from US (as seen from its network connection), spending at most $5.00 per month.');
+});
+
+describe('gates', () => {
+  it('fills in defaults and treats step_up as the owner gate', () => {
+    expect(grantGates({ actions: ['x:y'], require: { gates: [{ any: ['gate_PHONE0001'] }] } })).toEqual([{ any: ['gate_PHONE0001'], timeout_s: 300, on_timeout: 'deny' }]);
+    expect(grantGates({ actions: ['x:y'], require: { step_up: true } })).toEqual(STEP_UP_GATES);
+    expect(grantGates({ actions: ['x:y'] })).toBe(null);
+  });
+  it('reports what the gate engine must do online', () => {
+    const grant = { actions: ['hashbin:content:write'], require: { gates: [{ any: ['owner'], timeout_s: 60, on_timeout: 'allow' }], gates_reuse_s: 120 } };
+    const result = evaluateGrants([grant], { now: 0, action: 'hashbin:content:write', online: true, policy: { gates: { fail_open: false } } });
+    expect(result.online).toEqual({ gates: [{ any: ['owner'], timeout_s: 60, on_timeout: 'allow' }], gates_reuse_s: 120, fail_open: false });
+  });
+  it('says plainly that allow-on-timeout lets silence through', () => {
+    expect(describeGrant({ actions: ['cronly:jobs:run'], require: { gates: [{ any: ['owner', 'gate_PHONE0001'], timeout_s: 120, on_timeout: 'allow' }, { any: ['gate_YUBIKEY01'] }], gates_reuse_s: 3600 } }))
+      .toBe('May "cronly:jobs:run", on any resource, approved by the account owner or gate gate_PHONE0001, or allowed anyway if nobody answers within 2 minutes, approved by gate gate_YUBIKEY01 within 5 minutes, one approval covering repeated uses for 1 hour.');
+  });
 });

@@ -243,6 +243,15 @@ describe('online authorization', () => {
     expect((await call(env, 'GET', '/api/v1/step-ups', { auth: 'alice' })).body.items).toHaveLength(0);
   });
 
+  it('refuses to issue gates or confirmations before the gate engine exists (STATUS B7)', async () => {
+    await fund(env, 'alice');
+    for (const require of [{ gates: [{ any: ['owner'] }] }, { step_up: true, gates_reuse_s: 60 }, { confirmation: true }]) {
+      const { approve } = await enroll(env, 'alice', await newDevice(), { grants: [{ actions: ['hashbin:content:write'], require }] });
+      expect(approve.status).toBe(400);
+      expect(approve.body.code).toBe('gates_not_available');
+    }
+  });
+
   it('requires owner approval for step-up grants', async () => {
     const { ask } = await setup([{ actions: ['hashbin:content:delete'], require: { step_up: true } }]);
     const first = await ask('hashbin:content:delete');

@@ -3,7 +3,7 @@
  * JWKS and status lists (both CDN-served and cached here), and optionally online.
  */
 import { verifyJws, decodeJws } from './jose.js';
-import { verifyCredential, verifyProof, ReplayCache, VerificationError, DEFAULT_ISSUER, STATUS_LIST_TYP, CLOCK_SKEW } from './credential.js';
+import { verifyCredential, verifyProof, verifyConfirmation, ReplayCache, VerificationError, DEFAULT_ISSUER, STATUS_LIST_TYP, CLOCK_SKEW } from './credential.js';
 import { evaluateGrants } from './grants.js';
 import { decodeStatusList, getBit } from './status-list.js';
 import { verifyEvent } from './events.js';
@@ -48,6 +48,9 @@ export function credentialFromRequest(request) {
  *   audience  — your audience name, e.g. "hashbin.org" (required)
  *   jwksCooldown — seconds between JWKS refetches forced by an unknown kid (default 30)
  *   online    — { apiKey } to enable verifyOnline (POST {issuer}/api/v1/authorize)
+ *   catalog   — your action catalog ([{ action, gates: { require, kinds, fail_open } }]); actions
+ *               whose entry requires gates are then online only, and confirmations that passed by
+ *               timeout are refused where fail_open is false (spec/evaluation.md §3.8)
  */
 export function createVerifier(options = {}) {
   const issuer = options.issuer || DEFAULT_ISSUER;
@@ -58,6 +61,7 @@ export function createVerifier(options = {}) {
   const jwksTtl = options.jwksTtl ?? 3600; const statusTtl = options.statusTtl ?? 300;
   const replay = options.replay === false ? null : options.replay || new ReplayCache();
   let jwksCache = null; const statusCache = new Map();
+  const catalog = new Map((Array.isArray(options.catalog) ? options.catalog : []).map(entry => [entry.action, entry]));
   // Revocations pushed by webhook (handleEvent): "uri#idx" -> credential exp. Checked before the
   // cached status list, so a pushed revocation takes effect before the list's TTL runs out.
   const pushedRevocations = new Map(); const seenEvents = new Map();
@@ -156,7 +160,19 @@ export function createVerifier(options = {}) {
         if (!found.proof) return { ok: false, status: 401, code: 'proof_required' };
         proof = await verifyProof(found.proof, { method: request.method, url: request.url, credential: found.credential, jkt: payload.cnf.jkt, now: clock(), replay });
       }
-      return { ok: true, kind: found.kind, payload, proof, credential: found.credential };
+      // A confirmation that does not verify is refused rather than ignored: it was presented as
+      // this credential's and is not (spec/credential.md §9).
+      let confirmation = null;
+      const confirmationHeader = found.kind === 'device' ? request.headers.get('DBA-Confirmation') : null;
+      if (confirmationHeader) {
+        const check = keys => verifyConfirmation(confirmationHeader.trim(), { jwks: keys, issuer, credential: payload, audience });
+        try { confirmation = (await check(await jwks())).payload; }
+        catch (error) {
+          if (error.code !== 'unknown_kid') throw new VerificationError(`confirmation_${error.code}`, error.message);
+          try { confirmation = (await check(await jwks(true))).payload; } catch (again) { throw new VerificationError(`confirmation_${again.code}`, again.message); }
+        }
+      }
+      return { ok: true, kind: found.kind, payload, proof, confirmation, credential: found.credential };
     } catch (error) {
       if (error instanceof VerificationError) return { ok: false, status: ['jwks_unavailable', 'status_unavailable'].includes(error.code) ? 503 : 401, code: error.code, message: error.message };
       throw error;
@@ -171,18 +187,18 @@ export function createVerifier(options = {}) {
   async function verifyRequest(request, check) {
     const auth = await authenticateRequest(request);
     if (!auth.ok) return { allow: false, status: auth.status, code: auth.code, message: auth.message, reasons: [] };
-    return decide(auth.payload, check, { request, proof: auth.proof });
+    return decide(auth.payload, check, { request, proof: auth.proof, confirmation: auth.confirmation });
   }
 
   /** Which of these actions does a verified credential allow right now (offline checks only)? */
-  function allowedActions(payload, actions, { request, proof, location } = {}) {
-    return actions.filter(action => decide(payload, { action, location }, { request, proof }).allow);
+  function allowedActions(payload, actions, { request, proof, location, confirmation } = {}) {
+    return actions.filter(action => decide(payload, { action, location }, { request, proof, confirmation }).allow);
   }
 
-  /** Evaluate grants for an already-verified payload. */
-  function decide(payload, check, { request, proof } = {}) {
+  /** Evaluate grants for an already-verified payload (and its verified confirmation, if any). */
+  function decide(payload, check, { request, proof, confirmation } = {}) {
     const location = { network: check.location?.network ?? (request ? networkLocation(request) : undefined), device: check.location?.device ?? proof?.loc };
-    const result = evaluateGrants(payload.grants, { now: clock(), action: check.action, resource: check.resource, location, online: false, attestation: payload.device?.attestation });
+    const result = evaluateGrants(payload.grants, { now: clock(), action: check.action, resource: check.resource, location, online: false, attestation: payload.device?.attestation, confirmation: confirmation ?? undefined, policy: catalog.get(check.action) });
     return {
       allow: result.allow, status: result.allow ? 200 : 403, code: result.allow ? 'ok' : result.online_required ? 'online_required' : 'forbidden',
       reasons: result.reasons, grant_index: result.grant_index, grant: result.grant, caveats: result.caveats, online_required: result.online_required,

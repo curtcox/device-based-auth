@@ -45,6 +45,9 @@ func contextFromVector(c any) Context {
 	device, _ := get(location, "device")
 	ctx.Location.Device = DeviceLocationFromClaim(device)
 	ctx.Attestation, _ = get(c, "attestation")
+	ctx.Confirmation, _ = get(c, "confirmation")
+	ctx.Policy, _ = get(c, "policy")
+	ctx.GateKinds, _ = get(c, "gate_kinds")
 	return ctx
 }
 
@@ -121,6 +124,34 @@ func TestCredentialVectors(t *testing.T) {
 	for _, c := range creds.([]any) {
 		t.Run(str(c, "name"), func(t *testing.T) {
 			_, err := VerifyCredential(str(c, "jws"), CredentialOptions{JWKS: jwks, Issuer: issuer.(string), Audience: str(c, "audience"), Now: int64(*num(c, "now"))})
+			if got, want := outcome(err), expectedOutcome(c); !reflect.DeepEqual(got, want) {
+				t.Errorf("got %v (%v), want %v", got, err, want)
+			}
+		})
+	}
+}
+
+func TestConfirmationVectors(t *testing.T) {
+	vectors := loadVectors(t, "credentials.json")
+	jwks := vectorJWKS(t, vectors)
+	issuer, _ := vectors.Get("issuer")
+	creds, _ := vectors.Get("credentials")
+	var credential *Credential
+	for _, c := range creds.([]any) {
+		if str(c, "name") == "valid credential" {
+			var err error
+			if credential, err = VerifyCredential(str(c, "jws"), CredentialOptions{JWKS: jwks, Issuer: issuer.(string), Now: int64(*num(c, "now"))}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	confirmations, _ := vectors.Get("confirmations")
+	if len(confirmations.([]any)) == 0 {
+		t.Fatal("no confirmation vectors")
+	}
+	for _, c := range confirmations.([]any) {
+		t.Run(str(c, "name"), func(t *testing.T) {
+			_, err := VerifyConfirmation(str(c, "jws"), ConfirmationOptions{JWKS: jwks, Issuer: issuer.(string), Audience: str(c, "audience"), Credential: credential})
 			if got, want := outcome(err), expectedOutcome(c); !reflect.DeepEqual(got, want) {
 				t.Errorf("got %v (%v), want %v", got, err, want)
 			}

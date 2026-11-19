@@ -6,8 +6,8 @@ try:
 except ImportError:  # run with the tests directory as the top level
     import support
 
-from devicebasedauth_verify import (VerificationError, decode_status_list, evaluate_grants, get_bit, verify_credential,
-                                    verify_jws, verify_proof)
+from devicebasedauth_verify import (VerificationError, decode_jws, decode_status_list, evaluate_grants, get_bit,
+                                    verify_confirmation, verify_credential, verify_jws, verify_proof)
 
 EVALUATION = support.load_vectors("evaluation.json")
 CREDENTIALS = support.load_vectors("credentials.json")
@@ -65,10 +65,22 @@ def _proof_test(case):
     return test
 
 
+def _confirmation_test(case):
+    credential = decode_jws(next(c for c in CREDENTIALS["credentials"] if c["name"] == "valid credential")["jws"])["payload"]
+
+    def test(self):
+        result = outcome(lambda: verify_confirmation(case["jws"], jwks=CREDENTIALS["jwks"], issuer=CREDENTIALS["issuer"],
+                                                     credential=credential, audience=case.get("audience")))
+        self.assertEqual(result, case["expected"])
+    return test
+
+
 for _i, _case in enumerate(EVALUATION["cases"]):
     setattr(EvaluationVectors, f"test_{_i:03d}_{_slug(_case['name'])}", _evaluation_test(_case))
 for _i, _case in enumerate(CREDENTIALS["credentials"]):
     setattr(CredentialVectors, f"test_credential_{_i:02d}_{_slug(_case['name'])}", _credential_test(_case))
+for _i, _case in enumerate(CREDENTIALS["confirmations"]):
+    setattr(CredentialVectors, f"test_confirmation_{_i:02d}_{_slug(_case['name'])}", _confirmation_test(_case))
 for _i, _case in enumerate(CREDENTIALS["proofs"]):
     setattr(CredentialVectors, f"test_proof_{_i:02d}_{_slug(_case['name'])}", _proof_test(_case))
 

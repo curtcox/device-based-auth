@@ -1126,6 +1126,627 @@
     ],
     "online_required": false
    }
+  },
+  {
+   "name": "gate timeout null",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "gates": [
+       {
+        "any": [
+         "owner"
+        ],
+        "timeout_s": null
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "gate any not a list",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "gates": [
+       {
+        "any": "owner"
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "gate entry not an object",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "gates": [
+       "owner"
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "gate on_timeout null",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "gates": [
+       {
+        "any": [
+         "owner"
+        ],
+        "on_timeout": null
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "gates_reuse_s with step_up false",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "step_up": false,
+      "gates_reuse_s": 0
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "gates with step_up false",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "step_up": false,
+      "gates": [
+       {
+        "any": [
+         "owner"
+        ]
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "gates_reuse_s fractional",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "gates": [
+       {
+        "any": [
+         "owner"
+        ]
+       }
+      ],
+      "gates_reuse_s": 1.5
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "invalid_grant"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "confirmation false",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "confirmation": false
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write"
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "confirmation iat as string",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "confirmation": true
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "confirmation": {
+     "iat": "1795014000",
+     "exp": 1795014010,
+     "by_timeout": false
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "confirmation_required"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "confirmation not an object",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "confirmation": true
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "confirmation": [
+     1795014000,
+     1795014010
+    ]
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "confirmation_required"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "confirmation by_timeout 0",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "confirmation": true
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "confirmation": {
+     "iat": 1795014000,
+     "exp": 1795014010,
+     "by_timeout": 0
+    },
+    "policy": {
+     "gates": {
+      "fail_open": false
+     }
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "confirmation_by_timeout_refused"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "policy fail_open 0",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "confirmation": true
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "confirmation": {
+     "iat": 1795014000,
+     "exp": 1795014010,
+     "by_timeout": true
+    },
+    "policy": {
+     "gates": {
+      "fail_open": 0
+     }
+    }
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "policy require 1",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ]
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true,
+    "policy": {
+     "gates": {
+      "require": 1
+     }
+    }
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "policy gates not object",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ]
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true,
+    "policy": {
+     "gates": true
+    }
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "policy kinds a string",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "gates": [
+       {
+        "any": [
+         "gate_PHONE0001"
+        ]
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true,
+    "policy": {
+     "gates": {
+      "require": true,
+      "kinds": "totp"
+     }
+    },
+    "gate_kinds": {
+     "gate_PHONE0001": "totp"
+    }
+   },
+   "result": {
+    "allow": true,
+    "grant_index": 0,
+    "reasons": [
+     []
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "gate kind not a string",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "gates": [
+       {
+        "any": [
+         "gate_PHONE0001"
+        ]
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true,
+    "policy": {
+     "gates": {
+      "require": true
+     }
+    },
+    "gate_kinds": {
+     "gate_PHONE0001": 1
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "gate_required"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "gate_kinds overriding owner",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "step_up": true
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "online": true,
+    "policy": {
+     "gates": {
+      "require": true,
+      "kinds": [
+       "totp"
+      ]
+     }
+    },
+    "gate_kinds": {
+     "owner": "totp"
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "gate_required"
+     ]
+    ],
+    "online_required": false,
+    "caveats": {}
+   }
+  },
+  {
+   "name": "policy offline with gates",
+   "grants": [
+    {
+     "actions": [
+      "hashbin:content:write"
+     ],
+     "require": {
+      "gates": [
+       {
+        "any": [
+         "owner"
+        ]
+       }
+      ]
+     }
+    }
+   ],
+   "context": {
+    "now": 1795014000,
+    "action": "hashbin:content:write",
+    "policy": {
+     "gates": {
+      "require": true
+     }
+    }
+   },
+   "result": {
+    "allow": false,
+    "grant_index": null,
+    "reasons": [
+     [
+      "online_required"
+     ]
+    ],
+    "online_required": true,
+    "caveats": {}
+   }
   }
  ],
  "htus": [

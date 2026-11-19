@@ -30,14 +30,16 @@ var UsePeriods = []string{"minute", "hour", "day", "month", "total"}
 var Limits = struct{ Grants, Actions, Resources, Windows, Places, Networks, ResourceLength int }{32, 64, 64, 16, 64, 64, 256}
 
 var (
-	grantKeys   = keySet("actions", "resources", "when", "where", "limits", "require")
-	whenKeys    = keySet("tz", "windows", "not_before", "not_after")
-	windowKeys  = keySet("days", "from", "to")
-	whereKeys   = keySet("source", "countries", "regions", "areas", "networks")
-	areaKeys    = keySet("lat", "lon", "radius_m")
-	limitKeys   = keySet("uses", "spend_usd_per_month")
-	usesKeys    = keySet("count", "per")
-	requireKeys = keySet("online", "step_up", "attestation", "verified_boot", "app_ids")
+	grantKeys     = keySet("actions", "resources", "when", "where", "limits", "require")
+	whenKeys      = keySet("tz", "windows", "not_before", "not_after")
+	windowKeys    = keySet("days", "from", "to")
+	whereKeys     = keySet("source", "countries", "regions", "areas", "networks")
+	areaKeys      = keySet("lat", "lon", "radius_m")
+	limitKeys     = keySet("uses", "spend_usd_per_month")
+	usesKeys      = keySet("count", "per")
+	requireKeys   = keySet("online", "step_up", "attestation", "verified_boot", "app_ids", "gates", "gates_reuse_s", "confirmation")
+	gateEntryKeys = keySet("any", "timeout_s", "on_timeout")
+	gateIDPattern = regexp.MustCompile(`^gate_[A-Za-z0-9]{8,64}$`)
 
 	maxAppIDs = 16
 
@@ -52,6 +54,23 @@ var (
 	countryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
 	regionPattern  = regexp.MustCompile(`^[A-Z]{2}-[A-Z0-9]{1,3}$`)
 )
+
+// GateLimits bound gate entries (spec/evaluation.md §3.6).
+var GateLimits = struct{ Entries, Gates, MinTimeout, MaxTimeout, DefaultTimeout, MaxReuse int }{3, 5, 10, 86400, 300, 3600}
+
+// GateKinds are the gate kinds an audience policy can name; "owner" is the built-in step-up approver.
+var GateKinds = []string{"owner", "dba-device", "totp", "webauthn", "webhook", "duo", "okta-verify"}
+
+// GateEntry is one entry of require.gates with defaults filled in: one allow from any of its
+// gates satisfies it; with no answer by TimeoutS it settles as OnTimeout.
+type GateEntry struct {
+	Any       []string `json:"any"`
+	TimeoutS  int      `json:"timeout_s"`
+	OnTimeout string   `json:"on_timeout"`
+}
+
+// confirmationSkew is the clock skew allowed on confirmations, as on credentials.
+const confirmationSkew = 60
 
 // deviceLocationMaxAge is how old (seconds) a device-reported location may be.
 const deviceLocationMaxAge = 300
@@ -393,6 +412,12 @@ func ValidateGrant(grant any, path string) []string {
 				errs = append(errs, path+`.require.attestation must be "hardware" or "strongbox"`)
 			}
 		}
+		validateGates(require, path+".require", &errs)
+		if v, ok := get(require, "confirmation"); ok {
+			if _, isBool := v.(bool); !isBool {
+				errs = append(errs, path+".require.confirmation must be true or false")
+			}
+		}
 		if apps, ok := get(require, "app_ids"); ok {
 			checkStringList(apps, path+".require.app_ids", &errs, maxAppIDs, func(a string) bool {
 				return len(a) <= 200 && (appIDPattern.MatchString(a) || androidAppIDPattern.MatchString(a))
@@ -400,6 +425,92 @@ func ValidateGrant(grant any, path string) []string {
 		}
 	}
 	return errs
+}
+
+func validateGates(require any, path string, errs *[]string) {
+	gates, hasGates := get(require, "gates")
+	stepUp, _ := get(require, "step_up")
+	if hasGates {
+		list, ok := gates.([]any)
+		if !ok || len(list) == 0 || len(list) > GateLimits.Entries {
+			*errs = append(*errs, fmt.Sprintf("%s.gates must be a list of 1–%d gate entries", path, GateLimits.Entries))
+		} else {
+			for i, entry := range list {
+				ep := fmt.Sprintf("%s.gates[%d]", path, i)
+				if !checkKeys(entry, gateEntryKeys, ep, errs) {
+					continue
+				}
+				anyValue, _ := get(entry, "any")
+				ids, isList := anyValue.([]any)
+				valid := isList && len(ids) >= 1 && len(ids) <= GateLimits.Gates
+				seen := map[string]bool{}
+				for _, id := range ids {
+					s, isString := id.(string)
+					if !isString || !(s == "owner" || gateIDPattern.MatchString(s)) || seen[s] {
+						valid = false
+						break
+					}
+					seen[s] = true
+				}
+				if !valid {
+					*errs = append(*errs, fmt.Sprintf(`%s.any must list 1–%d different gates ("owner" or gate ids like "gate_01JE…")`, ep, GateLimits.Gates))
+				}
+				if t, ok := get(entry, "timeout_s"); ok && !(isSafeInteger(t) && t.(float64) >= float64(GateLimits.MinTimeout) && t.(float64) <= float64(GateLimits.MaxTimeout)) {
+					*errs = append(*errs, fmt.Sprintf("%s.timeout_s must be an integer from %d to %d", ep, GateLimits.MinTimeout, GateLimits.MaxTimeout))
+				}
+				if o, ok := get(entry, "on_timeout"); ok && !strictEqual(o, "deny") && !strictEqual(o, "allow") {
+					*errs = append(*errs, ep+`.on_timeout must be "deny" or "allow"`)
+				}
+			}
+		}
+		if strictEqual(stepUp, true) {
+			*errs = append(*errs, path+` has both step_up and gates; step_up means gates [{ "any": ["owner"] }], so list "owner" in gates instead`)
+		}
+	}
+	if reuse, ok := get(require, "gates_reuse_s"); ok {
+		if !(isSafeInteger(reuse) && reuse.(float64) >= 0 && reuse.(float64) <= float64(GateLimits.MaxReuse)) {
+			*errs = append(*errs, fmt.Sprintf("%s.gates_reuse_s must be an integer from 0 to %d", path, GateLimits.MaxReuse))
+		}
+		if !hasGates && !strictEqual(stepUp, true) {
+			*errs = append(*errs, path+".gates_reuse_s needs gates or step_up")
+		}
+	}
+}
+
+// GrantGates returns the gate entries a valid grant requires, with defaults filled in, or nil
+// when it requires none. require.step_up: true yields the owner gate it stands for.
+func GrantGates(grant any) []GateEntry {
+	require, _ := get(normalizeGo(grant), "require")
+	if gates, ok := get(require, "gates"); ok {
+		if list, isList := gates.([]any); isList {
+			out := make([]GateEntry, 0, len(list))
+			for _, entry := range list {
+				e := GateEntry{TimeoutS: GateLimits.DefaultTimeout, OnTimeout: "deny"}
+				ids, _ := get(entry, "any")
+				idList, _ := ids.([]any)
+				for _, id := range idList {
+					s, _ := id.(string)
+					e.Any = append(e.Any, s)
+				}
+				if t, ok := get(entry, "timeout_s"); ok && t != nil {
+					if f, isNum := t.(float64); isNum {
+						e.TimeoutS = int(f)
+					}
+				}
+				if o, ok := get(entry, "on_timeout"); ok && o != nil {
+					if s, isString := o.(string); isString {
+						e.OnTimeout = s
+					}
+				}
+				out = append(out, e)
+			}
+			return out
+		}
+	}
+	if v, _ := get(require, "step_up"); strictEqual(v, true) {
+		return []GateEntry{{Any: []string{"owner"}, TimeoutS: 600, OnTimeout: "deny"}}
+	}
+	return nil
 }
 
 func validateWhen(when any, path string, errs *[]string) {
@@ -638,6 +749,13 @@ type Context struct {
 	Online   bool     // true only when devicebasedauth.org itself evaluates (it enforces counters)
 	// Attestation is the presented credential's device.attestation (a JSON object), or nil.
 	Attestation any
+	// Confirmation holds the claims ({iat, exp, by_timeout}) of a verified confirmation
+	// (VerifyConfirmation), or nil.
+	Confirmation any
+	// Policy is the audience's catalog entry for the action ({gates: {require, kinds, fail_open}}), or nil.
+	Policy any
+	// GateKinds maps gate ids to kinds ({gate id: kind}); only devicebasedauth.org knows them (online).
+	GateKinds any
 }
 
 func finite(p *float64) bool { return p != nil && !math.IsNaN(*p) && !math.IsInf(*p, 0) }
@@ -724,13 +842,19 @@ func checkDevice(where any, loc *DeviceLocation, now int64, reasons *[]string) {
 
 // Online lists the checks of a grant that only devicebasedauth.org can make.
 type Online struct {
-	Uses     any  `json:"uses,omitempty"`     // the grant's limits.uses ({count, per})
-	StepUp   bool `json:"step_up,omitempty"`  // the owner must approve each use
-	Required bool `json:"required,omitempty"` // require.online
+	Uses       any         `json:"uses,omitempty"`          // the grant's limits.uses ({count, per})
+	StepUp     bool        `json:"step_up,omitempty"`       // the owner must approve each use
+	Required   bool        `json:"required,omitempty"`      // require.online
+	Gates      []GateEntry `json:"gates,omitempty"`         // gates that must approve each use
+	GatesReuse int         `json:"gates_reuse_s,omitempty"` // seconds one approval covers repeated uses
+	FailOpen   *bool       `json:"fail_open,omitempty"`     // false: the audience refuses allows by timeout
+	GatePolicy bool        `json:"gate_policy,omitempty"`   // the audience requires gates on this action
 }
 
 // IsEmpty reports whether the grant needs no online checks.
-func (o Online) IsEmpty() bool { return o.Uses == nil && !o.StepUp && !o.Required }
+func (o Online) IsEmpty() bool {
+	return o.Uses == nil && !o.StepUp && !o.Required && o.Gates == nil && !o.GatePolicy
+}
 
 // GrantResult is the outcome for one grant.
 type GrantResult struct {
@@ -913,6 +1037,59 @@ func EvaluateGrant(grant any, ctx Context) GrantResult {
 		}
 	}
 
+	// A confirmation is checked offline too: verifiers verify the DBA-Confirmation header and pass
+	// its claims in; DBA's own /authorize passes its record (spec/evaluation.md §3.6).
+	var policy any
+	if p, _ := get(ctx.Policy, "gates"); func() bool { _, ok := asObject(p); return ok }() {
+		policy = p
+	}
+	failOpen, _ := get(policy, "fail_open")
+	if v, _ := get(require, "confirmation"); truthy(v) {
+		iat, _ := get(ctx.Confirmation, "iat")
+		exp, _ := get(ctx.Confirmation, "exp")
+		byTimeout, _ := get(ctx.Confirmation, "by_timeout")
+		_, isObj := asObject(ctx.Confirmation)
+		switch {
+		case !isObj || !isSafeInteger(iat) || !isSafeInteger(exp) || float64(now+confirmationSkew) < iat.(float64):
+			reasons = append(reasons, "confirmation_required")
+		case float64(now-confirmationSkew) >= exp.(float64):
+			reasons = append(reasons, "confirmation_expired")
+		case !strictEqual(byTimeout, false) && strictEqual(failOpen, false):
+			reasons = append(reasons, "confirmation_by_timeout_refused")
+		}
+	}
+	gates := GrantGates(grant)
+	if requireGates, _ := get(policy, "require"); strictEqual(requireGates, true) {
+		// Only DBA knows each gate's kind, so a policy that requires gates is checked online;
+		// offline it makes the grant online-only (spec/evaluation.md §3.8).
+		online.GatePolicy = true
+		if ctx.Online {
+			kinds, _ := get(policy, "kinds")
+			_, kindsListed := kinds.([]any)
+			accepted := func(id string) bool {
+				var kind any = "owner"
+				if id != "owner" {
+					kind, _ = get(ctx.GateKinds, id)
+				}
+				if _, isString := kind.(string); !isString {
+					return false
+				}
+				return !kindsListed || listIncludes(kinds, kind)
+			}
+			ok := false
+			for _, entry := range gates {
+				all := true
+				for _, id := range entry.Any {
+					all = all && accepted(id)
+				}
+				ok = ok || all
+			}
+			if !ok {
+				reasons = append(reasons, "gate_required")
+			}
+		}
+	}
+
 	limits, _ := g.Get("limits")
 	if uses, _ := get(limits, "uses"); truthy(uses) {
 		online.Uses = uses
@@ -922,6 +1099,16 @@ func EvaluateGrant(grant any, ctx Context) GrantResult {
 	}
 	if v, _ := get(require, "online"); truthy(v) {
 		online.Required = true
+	}
+	if gates != nil {
+		online.Gates = gates
+		if reuse, _ := get(require, "gates_reuse_s"); isSafeInteger(reuse) {
+			online.GatesReuse = int(reuse.(float64))
+		}
+		if strictEqual(failOpen, false) {
+			f := false
+			online.FailOpen = &f
+		}
 	}
 	if len(reasons) == 0 && !online.IsEmpty() && !ctx.Online {
 		reasons = append(reasons, "online_required")
@@ -936,6 +1123,7 @@ func EvaluateGrants(grants any, ctx Context) Result {
 	if !ok {
 		return Result{Reasons: [][]string{{"invalid_grants"}}, Results: []GrantResult{}}
 	}
+	ctx.Confirmation, ctx.Policy, ctx.GateKinds = normalizeGo(ctx.Confirmation), normalizeGo(ctx.Policy), normalizeGo(ctx.GateKinds)
 	results := make([]GrantResult, len(list))
 	index := -1
 	for i, g := range list {
