@@ -8,6 +8,7 @@ import { initAuth, renderSignIn, signOut, reauthenticate, authMode, signedInLabe
 import { h, $, replace, usd, money, num, date, relative, duration, pretty, jsonBlock, copyButton, badge, notice, table, dl, field, splitList, describeKey } from './html.js';
 import { inspectCredential, validateGrants, evaluateGrants, b64u, unb64u, GATE_KINDS as POLICY_GATE_KINDS } from '/lib/verify/index.js';
 import { credentialsCsv, credentialsJson } from './export.js';
+import { qrSvg } from './qr.js';
 
 /** Account API-key scopes (src/services/first-party.js DBA_SCOPES). */
 const SCOPES = {
@@ -514,7 +515,8 @@ async function gatesView(_arg, current) {
         catch (error) { flash('error', error.message); }
       });
       replace(setup, notice('info',
-        h('p', {}, h('strong', {}, 'Add this to your authenticator app now. '), 'It is shown only once.'),
+        h('p', {}, h('strong', {}, 'Add this to your authenticator app now. '), 'It is shown only once. Scan the code with the app, or type the secret.'),
+        h('div', { id: 'totp-qr' }, qrSvg(g.setup.otpauth_uri, { label: 'QR code for your authenticator app' })),
         h('p', {}, 'Secret: ', h('code', { id: 'totp-secret' }, g.setup.secret), ' ', copyButton('Copy', () => g.setup.secret)),
         h('p', {}, 'On a phone: ', h('a', { href: g.setup.otpauth_uri }, 'open in authenticator app')),
         confirm));

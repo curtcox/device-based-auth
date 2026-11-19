@@ -31,6 +31,7 @@ test('an authenticator app gate: set up in the dashboard, approved with a code, 
   await page.locator('#gate-totp-form').getByLabel('Label').fill('Pixel authenticator');
   await page.getByRole('button', { name: 'Add authenticator app' }).click();
   const secret = unbase32(await page.locator('#totp-secret').textContent());
+  await expect(page.getByRole('img', { name: 'QR code for your authenticator app' })).toBeVisible();
   await page.locator('#gate-totp-confirm').getByLabel('Code from the app').fill(await code(secret));
   await page.getByRole('button', { name: 'Finish' }).click();
   await expect(page.locator('#flash')).toContainText('is set up');

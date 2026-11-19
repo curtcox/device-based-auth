@@ -535,10 +535,15 @@ STATUS row updated.
   (at most 3, `fail_open: false`, so silence never approves it), keyed by a hash of the exact
   change, and the PUT answers 202 `gate_pending` until it is allowed (then the same PUT applies),
   403 `gate_denied` or `by_timeout_refused`. The Gates page says so instead of "Saved".
-- **G9 left:** a QR code for the TOTP `otpauth:` URI (the page shows the secret and a link; it
-  needs a QR encoder, either written here or a vendored MIT one such as qrcode-generator, which is
-  the owner's call since it ships third-party code to every visitor); `--wait` on CLI calls that
-  hit a gate (sites pass `gate_pending` on in their own way; the SDK has `fetchWithGates()`).
+- **G9, TOTP QR code (2026-11-19).** The Gates page shows the `otpauth:` URI as a QR code beside the
+  secret. The encoder is written here (`frontend/js/qr.js`: byte mode, level M, versions 1–40,
+  penalty-chosen mask) so no third-party code ships to visitors. `src/qr.test.js` checks it against
+  the standard's capacities, alignment positions, format and version bits, and a separate reader
+  (its own GF tables, zigzag, row/column mask formulas and the standard's block table) that checks
+  every Reed–Solomon block's syndromes and reads the text back, for every mask. Scanning one with a
+  real phone app is still worth doing once.
+- **G9 left:** `--wait` on CLI calls that hit a gate (sites pass `gate_pending` on in their own
+  way; the SDK has `fetchWithGates()`).
 - **G9, dashboard approvals (2026-11-19).** The dashboard's Approvals page lists every gate request
   still waiting or approved (`GET /api/v1/gate-requests`; step-up is its owner gate), whatever its
   purpose (use, confirmation, sign-in, dashboard, settings), with each entry's gates by label, what

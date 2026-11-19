@@ -133,6 +133,8 @@ legend { font-weight: 700; padding: 0 6px; }
 .pill { display: inline-block; font-size: 0.8rem; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 10px; }
 
 /* Notices and badges */
+/* QR codes stay black on white in dark mode too: scanners expect it. */
+svg.qr { display: block; width: 100%; max-width: 220px; height: auto; margin: 8px 0; border-radius: 4px; }
 .notice { border: 1px solid var(--border); border-left-width: 4px; border-radius: 6px; padding: 10px 12px; margin: 12px 0; background: var(--surface); overflow-wrap: anywhere; }
 .notice.info { border-left-color: var(--accent); background: var(--accent-soft); }
 .notice.success { border-left-color: var(--ok); background: var(--ok-soft); }
