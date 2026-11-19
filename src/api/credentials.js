@@ -12,7 +12,7 @@ export async function createCredential(request, env, auth) {
   // delegates, so it can only issue grants narrower than its own and never past its own expiry.
   const parent = auth.device && !canAccess({ ...auth, session: false }, SESSION) ? auth.device.payload : null;
   // Delegation is one level deep (master plan §13): what a device delegated cannot delegate again.
-  assert(!parent || !auth.device.delegated_by, 'delegation_depth', `This credential was delegated by ${auth.device.delegated_by}; a delegated credential cannot issue credentials itself`, 403);
+  if (parent) assert(!auth.device.delegated_by, 'delegation_depth', `This credential was delegated by ${auth.device.delegated_by}; a delegated credential cannot issue credentials itself`, 403);
   // A delegating device is bounded by its own grants; anyone acting as the owner must have signed in recently.
   if (!parent && hasDbaAction(body.grants)) requireRecentSignIn(auth, 'issue a credential with permissions on devicebasedauth.org itself (dba:*)');
   requireDbaActionsWithinScopes(auth, body.grants);
