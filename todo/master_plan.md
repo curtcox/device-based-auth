@@ -59,6 +59,7 @@ cost policy, route table) rather than rewriting it.
 | **Proof** | A per-request signature made with the device's private key (DPoP proof JWT) showing the presenter holds the key the credential names. |
 | **Status list** | A compressed bitstring published at a URL; bit *n* set = credential with status index *n* is revoked. |
 | **Gate** | A device or service that must say yes before DBA allows an action (authorization gate) or trusts a sign-in or credential (authentication gate): the account owner, a DBA device, a TOTP app, a security key or passkey, a customer webhook, or Duo/Okta push (§6.4). |
+| **Relay** | A DBA device that forwards a device's traffic (gateway, VPN egress, tunnel) and signs a hop record for each request it carries, so a grant can require a route through it (§3.6). |
 | **Enrollment** | The flow that gets a device's public key to DBA and the account owner's approval back, ending in an issued credential. |
 
 ---
@@ -144,7 +145,11 @@ Rules:
 | `when.not_before` / `not_after` | Absolute instants narrower than the credential's `nbf`/`exp`. | Anyone |
 | `where.source` | `network` (verifier observes request location, e.g. Cloudflare `request.cf`), `device` (device asserts location in its signed proof), or `both`. | See §3.5 |
 | `where.countries` / `regions` / `areas` | ISO 3166 codes and circles (lat, lon, radius). | Verifier |
-| `where.networks` | CIDR ranges the request must come from. | Verifier |
+| `where.networks` | CIDR ranges the request must come from. Kept as is; new grants use `net.client.addresses.cidrs`. | Verifier |
+| `net.client.addresses` | The device's address must be allowed by inline CIDRs, named address lists, DNS names, or the customer's webhook (any one) (§3.6). | Verifier; webhook DBA online |
+| `net.client.route` | The request must arrive through listed relay devices, each signing a hop bound to the request (§3.6). | Verifier |
+| `net.client.latency` | The device must answer a timed challenge within `max_rtt_ms` (§3.6). | Verifier |
+| `net.server` | The same three rules about the relying party, enforced by the device before it sends (§3.6). | The device (SDK, CLI) |
 | `limits.uses` | Max uses per period. Needs a counter → **online authorization only** (§6.2). | DBA online |
 | `limits.spend_usd_per_month` | Passed to the audience as a caveat (maps to hashbin/cronly spending caps). | The audience |
 | `require.online` | Forces online authorization for every use (instant revocation, usage counters, audit). | DBA online |
@@ -180,6 +185,33 @@ Location is the weakest constraint and the plan says so in the docs:
 Platform attestation (Apple App Attest, Android Play Integrity, TPM) to raise trust in
 device-reported values is backlog (B5); Android Key Attestation of the device key itself is done
 (`device.attestation`, spec/credential.md §3a).
+
+### 3.6 Network constraints — address, route, latency (decision D16)
+
+Detailed plan: [`todo/network_constraints.md`](network_constraints.md) (STATUS B10; owner's
+choices D16, prices D17). Where `where` constrains the *place*, `net` constrains the
+*connection*: when present, communication is valid only if the other end of the connection
+
+- **address**: has an address an allowlist accepts: inline CIDRs, **named address lists** owned
+  by the account and published signed and CDN-cached like status lists (editable without
+  reissuing), **DNS names** resolved by the verifier (optionally DNSSEC-validated), or a
+  **customer webhook** (online only). Any one source may allow;
+- **route**: reached the verifier through allowed **relay devices** (DBA-enrolled gateways, VPN
+  egresses, tunnels) that each sign a `dba-hop+jwt` bound to the request's DPoP proof, with the
+  last relay's registered egress range containing the address the verifier sees;
+- **latency**: answered a **timed challenge** within `max_rtt_ms`. The challenge is a stateless
+  DPoP server nonce carrying its issue time, so the verifier times the round trip on its own
+  clock with no storage. Upper bound only: distance cannot be faked downwards.
+
+Both directions (D16): `net.client` is checked by the verifier about the device; `net.server` is
+checked by the device's SDK or CLI about the relying party (its connected address, its relays,
+and a signed `DBA-RTT` echo from the audience's registered server keys) before the credential is
+sent. Server-direction rules protect the device, never the relying party; browsers can enforce
+only the latency one. Everything except the webhook works offline and costs DBA nothing; old
+verifiers deny `net` as an unknown constraint. These are evidence about the connection, not
+identity: an allowed address or VPN exit passes the address rule, a compromised relay key forges
+hops until revoked, and latency stops a credential relayed from afar, not a stolen key used
+nearby.
 
 ---
 
@@ -299,7 +331,10 @@ It fetches and caches the JWKS and status lists (both CDN-served; cache hits cos
 Offline verification cannot enforce `limits.uses`, `require.online`, `require.step_up` or
 `require.gates`; grants with those constraints deny offline and tell the verifier to go online.
 A credential with periodic confirmation (§6.4) also needs a current `DBA-Confirmation`, which
-offline verifiers check for free.
+offline verifiers check for free. Network constraints (§3.6) are enforced offline by the verifier
+itself (address lists and DNS fetched and cached, relay hops checked like credentials, latency by
+a timed DPoP nonce); only the webhook address source needs online authorization, to which the
+relying party passes the peer address and measured round trip.
 
 ### 6.2 Online (`POST /api/v1/authorize`, metered)
 
@@ -524,6 +559,10 @@ package, conformance vectors and the integration checklists (`todo/integrate_has
 - **Replay**: DPoP `jti` + `iat` window; online authorize keeps a replay cache; docs tell offline
   verifiers to keep a 2-minute `jti` cache (verify library does it in-isolate by default; shared
   replay via a DO is optional).
+- **Network constraints** (§3.6): verifiers take the peer address from the platform, never from
+  client-set headers unless proxies are explicitly trusted; widening a named address list widens
+  every credential naming it, so list changes need a recent sign-in; relays should be attested
+  and short-lived; credentials reveal their CIDRs, host names, list URIs and relays to audiences.
 - **XSS in tools**: the inspector renders untrusted JSON — `textContent` only, strict CSP, no
   framework, port hashbin's `escapeHtml` lint rules.
 - **Privacy**: credentials reveal device names and geofences to the audiences they are shown to;
@@ -568,6 +607,7 @@ STATUS.md AGENTS.md      Status (single source of truth) and contributor guide
 | 9 | hashbin integration | Same for hashbin |
 | 10 | Launch hardening: cost brake, monitoring, security review, legal pages, production acceptance | Launch checklist in STATUS.md all ✅ |
 | 11 | Additional gates (§6.4), phases G1–G9 of [`done/additional_gates.md`](../done/additional_gates.md) | Gated authorization, sign-in and periodic confirmation work online and offline; every new vector passes in all three verifiers |
+| 12 | Network constraints (§3.6), phases N1–N9 of [`todo/network_constraints.md`](network_constraints.md) | Address, route and latency rules enforced offline in both directions; every new vector passes in all three verifiers |
 
 ---
 
