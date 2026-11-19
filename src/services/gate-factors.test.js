@@ -61,3 +61,12 @@ describe('WebAuthn', () => {
     await expect(verifyRegistration(await key.register(options, origin), { challenge: 'c', origin, rpId, requireUV: true })).rejects.toThrow(/verify the user/);
   });
 });
+
+describe('Duo request signing', () => {
+  it('matches the example in Duo\'s API documentation', async () => {
+    const { duoSign } = await import('./vendors.js');
+    const signed = await duoSign({ method: 'POST', host: 'api-xxxxxxxx.duosecurity.com', path: '/accounts/v1/account/list', params: { realname: 'First Last', username: 'root' }, ikey: 'DIWJ8X6AEYOR5OMC6TQ1', skey: 'Zh5eGmUq9zpfQnyUIu5OL9iWoMMv5ZNmk3zLJ4Ep', date: 'Tue, 21 Aug 2012 17:29:18 -0000' });
+    expect(signed.body).toBe('realname=First%20Last&username=root');
+    expect(atob(signed.headers.Authorization.slice(6))).toBe('DIWJ8X6AEYOR5OMC6TQ1:2d97d6166319781b5a3a07af39d366f491234edc');
+  });
+});

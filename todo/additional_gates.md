@@ -381,7 +381,7 @@ STATUS row updated.
 | G5 ✅ | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
 | G6 ✅ | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
 | G7 ✅ | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
-| G8 | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
+| G8 ✅ | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
 | G9 | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
 
 ## 11a. Progress
@@ -465,6 +465,15 @@ STATUS row updated.
   `require.confirmation` and end by `confirmed_until`; certificates too. Not yet (G9): the SDK and
   CLI asking for confirmations on their own, the dashboard's "Stop trusting" button, and
   `DBA-Confirmation` in the Python and Go verifiers.
+- **G8 done (2026-11-19).** `src/services/vendors.js`. Duo: `{ api_host (api-*.duosecurity.com),
+  integration_key, secret_key, username }`, `POST /auth/v2/auth` (factor=push, async=1, pushinfo)
+  then `GET /auth/v2/auth_status`; requests signed per Duo's documented v2 scheme (HMAC-SHA1; the
+  test reproduces Duo's published example). Okta: `{ org_url (*.okta.com, oktapreview, okta-emea,
+  okta-gov), api_token, user_id, factor_id }`, `POST …/factors/{fid}/verify` then the poll link
+  (pinned to the same user and factor). Hosts are pinned to the vendors' domains (no SSRF). Poll
+  times are in memory and bounded by time since the push started, so polls write nothing; a poll
+  that cannot be read counts as waiting. Live checks are owner steps after L9. Microsoft
+  Authenticator push: no public third-party push API is known (not re-researched); TOTP only.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

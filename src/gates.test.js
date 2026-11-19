@@ -48,7 +48,7 @@ describe('gate registry', () => {
     const list = (await call(env, 'GET', '/api/v1/gates', { auth: 'alice' })).body.items;
     expect(list.map(g => g.id)).toEqual(['owner', gate]);
     expect(list[1]).toMatchObject({ kind: 'dba-device', label: 'Phone', device_id: deviceId, state: 'active' });
-    expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'duo', label: 'x' } })).body.code).toBe('gate_kind_not_available');
+    expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'sms', label: 'x' } })).body.code).toBe('gate_kind_not_available');
     expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'dba-device', label: 'x', device_id: 'dev_NOTMYDEVICE1' } })).body.code).toBe('unknown_device');
     expect((await call(env, 'DELETE', `/api/v1/gates/${gate}`, { auth: 'alice' })).body.deleted).toBe(true);
     expect((await call(env, 'GET', '/api/v1/gates', { auth: 'alice' })).body.items).toHaveLength(1);
@@ -563,5 +563,69 @@ describe('periodic confirmation (G7)', () => {
     expect(await ask()).toMatchObject({ allow: false, reasons: ['confirmation_expired'] });
     const renewPath = `/api/v1/credentials/${cid}/renew`;
     expect((await call(env, 'POST', renewPath, { headers: await device.headers('POST', renewPath, credential), body: {} })).body.code).toBe('confirmation_required');
+  });
+});
+
+describe('Duo and Okta Verify gates (G8)', () => {
+  /** A recorded vendor: answers the start and then `answers` in turn to status polls. */
+  function vendor(answers) {
+    const calls = [];
+    env.VENDOR_FETCH = async (url, init) => {
+      calls.push({ url, method: init.method, headers: init.headers, body: init.body });
+      if (url.endsWith('/auth/v2/auth')) return Response.json({ stat: 'OK', response: { txid: '45f7c92b-f45f-4862-8545-e0f58e78075a' } });
+      if (url.includes('/auth/v2/auth_status')) return Response.json({ stat: 'OK', response: { result: answers.shift() ?? 'waiting', status: 'pushed', status_msg: 'Pushed a login request to your phone...' } });
+      if (url.endsWith('/verify')) return Response.json({ factorResult: 'WAITING', _links: { poll: { href: `${url.replace('/verify', '')}/transactions/v2mst.GldKV5VxTrifyeZmWSQguA` } } }, { status: 201 });
+      if (url.includes('/transactions/')) return Response.json({ factorResult: answers.shift() ?? 'WAITING' });
+      return new Response('unexpected', { status: 500 });
+    };
+    return calls;
+  }
+  const tick = async ms => { t += ms; for (const o of env.ACCOUNTS.objects.values()) if (o.storage.alarm !== null && o.storage.alarm <= t) { o.storage.alarm = null; await o.alarm(); } };
+
+  it('pushes with Duo, polls until the user approves, and never stores the secret key in view', async () => {
+    const calls = vendor(['waiting', 'allow']);
+    const created = await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'duo', label: 'Duo', api_host: 'api-1234abcd.duosecurity.com', integration_key: 'DIWJ8X6AEYOR5OMC6TQ1', secret_key: 'Zh5eGmUq9zpfQnyUIu5OL9iWoMMv5ZNmk3zLJ4Ep', username: 'alice' } });
+    expect(created.body).toMatchObject({ kind: 'duo', state: 'active', api_host: 'api-1234abcd.duosecurity.com', username: 'alice' });
+    expect(JSON.stringify(created.body)).not.toContain('Zh5eGmUq');
+    expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'duo', label: 'x', api_host: 'evil.example.com', integration_key: 'DIWJ8X6AEYOR5OMC6TQ1', secret_key: 'Zh5eGmUq9zpfQnyUIu5OL9iWoMMv5ZNmk3zLJ4Ep', username: 'a' } })).body.code).toBe('invalid_gate');
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [created.body.id] }] } }]);
+    expect((await ask()).code).toBe('gate_pending');
+    await settle(env);
+    expect(calls[0]).toMatchObject({ url: 'https://api-1234abcd.duosecurity.com/auth/v2/auth', method: 'POST' });
+    expect(calls[0].body).toContain('factor=push');
+    expect(calls[0].headers.Authorization).toMatch(/^Basic /);
+    await tick(5000);
+    expect((await ask()).code).toBe('gate_pending');
+    await tick(5000);
+    expect((await ask())).toMatchObject({ allow: true, gates: [{ kind: 'duo', by: 'answer' }] });
+    expect(calls.filter(c => c.url.includes('auth_status'))).toHaveLength(2);
+  });
+
+  it('pushes with Okta Verify and takes a rejection; polls stop after 24', async () => {
+    const calls = vendor([]);
+    const created = (await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'okta-verify', label: 'Okta', org_url: 'https://example.okta.com', api_token: '00abcdefghijklmnopqrstuvwxyz0123456789AB', user_id: '00u1abcdefGHIJKLMN0x', factor_id: 'opf1abcdefGHIJKLMN0x' } })).body;
+    expect(created).toMatchObject({ kind: 'okta-verify', org_url: 'https://example.okta.com' });
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [created.id], timeout_s: 600 }] } }]);
+    await ask(); await settle(env);
+    expect(calls[0].url).toBe('https://example.okta.com/api/v1/users/00u1abcdefGHIJKLMN0x/factors/opf1abcdefGHIJKLMN0x/verify');
+    expect(calls[0].headers.Authorization).toMatch(/^SSWS /);
+    for (let i = 0; i < 30; i++) await tick(5000);
+    expect(calls.filter(c => c.url.includes('/transactions/')).length).toBeLessThanOrEqual(24);
+    expect((await ask()).code).toBe('gate_pending');
+    const okta = vendor(['REJECTED']);
+    const second = await asker([{ actions: ['hashbin:content:write'], require: { gates: [{ any: [created.id] }] } }]);
+    await second.ask('hashbin:content:write'); await settle(env);
+    await tick(5000);
+    expect((await second.ask('hashbin:content:write')).code).toBe('gate_denied');
+    expect(okta.length).toBe(2);
+  });
+
+  it('charges the vendor price', async () => {
+    vendor([]);
+    const created = (await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'duo', label: 'Duo', api_host: 'api-1234abcd.duosecurity.com', integration_key: 'DIWJ8X6AEYOR5OMC6TQ1', secret_key: 'Zh5eGmUq9zpfQnyUIu5OL9iWoMMv5ZNmk3zLJ4Ep', username: 'alice' } })).body;
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [created.id] }] } }]);
+    const before = await balance('alice');
+    await ask(); await settle(env);
+    expect(before - await balance('alice')).toBe(price('gate_vendor'));
   });
 });

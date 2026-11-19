@@ -17,11 +17,14 @@ import { matchStep, otpauthUri, base32 } from '../services/totp.js';
 import { creationOptions, verifyRegistration, verifyAssertion, answerChallenge, rpIdFor, WebAuthnError } from '../services/webauthn.js';
 import { publicJwk, verifyJws, decodeJws, signJws } from '../../packages/verify/src/jose.js';
 import { activeSigner, issuerName } from '../services/issuer.js';
+import { cleanVendorInput } from '../services/vendors.js';
 
 /** Gates an account may register (the built-in `owner` gate is not stored). */
 export const MAX_GATES = 20;
 /** Kinds that can be registered today; G5–G8 add webhook, duo and okta-verify. */
-export const STORED_KINDS = Object.freeze(['dba-device', 'totp', 'webauthn', 'webhook']);
+export const STORED_KINDS = Object.freeze(['dba-device', 'totp', 'webauthn', 'webhook', 'duo', 'okta-verify']);
+/** Push MFA vendors: DBA starts a push and polls for the answer. */
+export const VENDOR_KINDS = Object.freeze(['duo', 'okta-verify']);
 /** typ of the signed gate request DBA posts to a webhook gate (spec/events.md §6). */
 export const GATE_EVENT_TYP = 'dba-gate+jwt';
 /** typ of a webhook gate's signed late answer. */
@@ -77,6 +80,8 @@ export function visibleGate(gate) {
     ...(gate.device_id ? { device_id: gate.device_id } : {}),
     ...(gate.kind === 'webauthn' ? { user_verification: gate.user_verification } : {}),
     ...(gate.kind === 'webhook' ? { url: gate.url, public_jwk: gate.public_jwk } : {}),
+    ...(gate.kind === 'duo' ? { api_host: gate.api_host, integration_key: gate.integration_key, username: gate.username } : {}),
+    ...(gate.kind === 'okta-verify' ? { org_url: gate.org_url, user_id: gate.user_id, factor_id: gate.factor_id } : {}),
     created_at: gate.created_at, ...(gate.activated_at ? { activated_at: gate.activated_at } : {})
   };
 }
@@ -108,6 +113,7 @@ export function cleanGateInput(body, env = {}) {
     assert(typeof body.device_id === 'string' && /^dev_[A-Za-z0-9]{8,64}$/.test(body.device_id), 'invalid_gate', 'device_id must name one of your devices');
     return { kind: body.kind, label, device_id: body.device_id };
   }
+  if (VENDOR_KINDS.includes(body.kind)) return { kind: body.kind, label, ...cleanVendorInput(body) };
   if (body.kind === 'webhook') {
     let key;
     try { key = publicJwk(body.public_jwk); } catch { assert(false, 'invalid_gate', 'public_jwk must be the P-256 public key (JWK) your service signs late answers with'); }
@@ -136,6 +142,10 @@ export async function createGate(tx, input, now, { env, account }) {
     gate.device_id = input.device_id; gate.state = 'active';
   } else if (input.kind === 'webhook') {
     gate.url = input.url; gate.public_jwk = input.public_jwk; gate.state = 'active';
+  } else if (VENDOR_KINDS.includes(input.kind)) {
+    // The vendor's secret (Duo secret key, Okta API token) is sealed and never returned (plan §7).
+    assert(env.GATE_SEALING_KEYS, 'gate_kind_unavailable', 'Duo and Okta gates are not available on this server (no sealing key configured)', 503);
+    Object.assign(gate, input.config, { state: 'active', secret: await seal(env, { account, gateId: gate.id }, new TextEncoder().encode(input.secret)) });
   } else if (input.kind === 'totp') {
     assert(env.GATE_SEALING_KEYS, 'gate_kind_unavailable', 'TOTP gates are not available on this server (no sealing key configured)', 503);
     const secret = crypto.getRandomValues(new Uint8Array(20));
@@ -189,6 +199,9 @@ export async function approvalLink(env, account, req) {
 export async function callbackUrl(env, account, req) {
   return `${env.APP_ORIGIN}/api/v1/gate-links/${await linkToken(env, account, req)}/callback`;
 }
+
+/** Vendor gates DBA has to start a push for. */
+export const vendorTargets = req => req.entries.flatMap((e, i) => e.gates.filter(g => VENDOR_KINDS.includes(g.kind) && g.state === 'sent' && !g.push).map(g => ({ entry: i, gate: g.id })));
 
 /** Webhook gates DBA has to post this request to. */
 export const webhookTargets = req => req.entries.flatMap((e, i) => e.gates.filter(g => g.kind === 'webhook' && g.state === 'sent').map(g => ({ entry: i, gate: g.id })));
@@ -384,6 +397,8 @@ export async function answerRequest(tx, req, { entry: entryIndex, gate: gateId, 
     assert(answerer.kind === 'owner', 'not_the_gate', 'Only the account owner (a signed-in browser or dashboard device) answers for the owner gate', 403);
   } else if (gate.kind === 'dba-device') {
     assert(answerer.kind === 'device' && answerer.device_id === gate.device_id, 'not_the_gate', `Only device ${gate.device_id} answers for gate ${gate.id}`, 403);
+  } else if (VENDOR_KINDS.includes(gate.kind)) {
+    assert(answerer.kind === 'vendor' && answerer.gate === gate.id, 'not_the_gate', `Gate ${gate.id} is answered by ${gate.kind === 'duo' ? 'Duo' : 'Okta Verify'}, as DBA polls it`, 403);
   } else if (gate.kind === 'webhook') {
     assert(answerer.kind === 'webhook' && answerer.gate === gate.id, 'not_the_gate', `Only the service behind gate ${gate.id} answers for it`, 403);
   } else if (FACTOR_KINDS.includes(gate.kind)) {

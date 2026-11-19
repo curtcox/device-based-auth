@@ -69,6 +69,11 @@ export const OPERATIONS = Object.freeze({
   // outcome ("failed", or the synchronous answer: 1 row). A late answer arrives as a callback
   // request (the answer's Worker and DO requests, already counted).
   gate_webhook: { workerRequests: 1, doRequests: 3, rowWrites: 10, cpuMs: 28, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
+  // A Duo or Okta Verify gate contacted: as a gate, plus starting the push (a signed subrequest,
+  // 2 ms) and the transaction recording it (1 row), then up to 24 status polls, each an alarm
+  // wake-up of the account (1 DO request, ~2 ms incl. unsealing the vendor secret); poll times are
+  // kept in memory, so a poll writes nothing until the answer arrives (already counted).
+  gate_vendor: { workerRequests: 1, doRequests: 3 + 24, rowWrites: 10, cpuMs: 28 + 48, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
   // Issuing a confirmation (its gates are charged as gate requests): the device's request
   // (credential status with the rate limit, the account's confirm), the credential row's
   // confirmed_until, the charge on the balance row and the day's aggregate, an audit row (and its

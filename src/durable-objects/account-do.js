@@ -8,7 +8,9 @@ import { price } from '../utils/pricing.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
 import { hasDbaAction } from '../auth/reverify.js';
-import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, ACR, meetsAcr, signInClaims, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
+import { startPush, pollPush, POLL_INTERVAL_MS, MAX_POLLS } from '../services/vendors.js';
+import { unseal } from '../services/sealing.js';
+import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, VENDOR_KINDS, vendorTargets, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, ACR, meetsAcr, signInClaims, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -51,6 +53,8 @@ export class AccountDO {
     this.gateRates = new Map();
     // Wrong TOTP codes and security-key answers per gate (in memory; a guessing limit).
     this.factorFailures = new Map();
+    // When each vendor push was last polled ("<request>:<entry>:<gate>" -> ms), to space polls.
+    this.vendorPolls = new Map();
     // Work that outlives the request (security notices). Tests await it with settle().
     this.inflight = new Set();
   }
@@ -727,9 +731,95 @@ export class AccountDO {
       return decision;
     });
     if (asked) await this.announceGateRequest(asked, now, account);
-    if (asked && account && webhookTargets(asked).length) this.background(this.deliverWebhooks(asked.id, account));
+    if (asked && account) this.deliverAsync(asked, account);
     this.announceTimeouts(byTimeout, now);
     return decision;
+  }
+
+  /** Start what reaches gates over the network, after the response: webhooks and vendor pushes. */
+  deliverAsync(req, account) {
+    if (webhookTargets(req).length) this.background(this.deliverWebhooks(req.id, account));
+    if (vendorTargets(req).length) this.background(this.startPushes(req.id, account));
+  }
+
+  /**
+   * Start Duo / Okta Verify pushes for a new request, record what to poll, and wake the alarm to
+   * poll (plan §4.4). A push that cannot be started marks the gate "failed": its entry waits for
+   * its timeout.
+   */
+  async startPushes(id, account) {
+    const req = await this.storage.get(requestKey(id));
+    if (!req) return;
+    const fetcher = this.env.VENDOR_FETCH || fetch;
+    const started = await Promise.all(vendorTargets(req).map(async ({ entry, gate: gateId }) => {
+      const gate = await this.storage.get(gateKey(gateId));
+      if (!gate) return null;
+      const secret = new TextDecoder().decode(await unseal(this.env, { account, gateId }, gate.secret));
+      const what = { action: req.action, site: req.audience, device: req.device_name || 'a device', ...(req.resource ? { resource: req.resource } : {}) };
+      return { entry, gate: gateId, result: await startPush(gate, secret, what, { fetcher }) };
+    }));
+    const now = Date.now();
+    await this.tx(async tx => {
+      const fresh = await tx.get(requestKey(id));
+      if (!fresh) return;
+      for (const s of started.filter(Boolean)) {
+        const g = fresh.entries[s.entry].gates.find(x => x.id === s.gate);
+        if (!g || g.state !== 'sent') continue;
+        if (s.result.token) g.push = { ...s.result.token, started_at: now }; else { g.state = 'failed'; g.reason = s.result.failed; }
+      }
+      await tx.put(requestKey(id), fresh);
+      await this.scheduleWake(tx, now + POLL_INTERVAL_MS);
+    });
+  }
+
+  /**
+   * Poll started pushes (from the alarm): each at most every POLL_INTERVAL_MS and MAX_POLLS times
+   * (by time since it started), until answered or past its entry's deadline. Returns the next time
+   * a poll is due, or null.
+   */
+  async pollPushes(now) {
+    const fetcher = this.env.VENDOR_FETCH || fetch;
+    const account = (await this.storage.get('profile'))?.account;
+    let next = null;
+    const answers = [];
+    for (const req of (await this.storage.list({ prefix: 'gatereq:' })).values()) {
+      if (req.outcome) continue;
+      for (const [i, e] of req.entries.entries()) {
+        if (e.answer || e.outcome || now >= e.deadline) continue;
+        for (const g of e.gates) {
+          if (!g.push || g.state !== 'sent') continue;
+          const window = g.push.started_at + MAX_POLLS * POLL_INTERVAL_MS;
+          const key = `${req.id}:${i}:${g.id}`;
+          if (now > window) continue;
+          if ((this.vendorPolls.get(key) ?? 0) + POLL_INTERVAL_MS > now) { next = Math.min(next ?? Infinity, (this.vendorPolls.get(key) ?? 0) + POLL_INTERVAL_MS); continue; }
+          this.vendorPolls.set(key, now);
+          const gate = await this.storage.get(gateKey(g.id));
+          if (!gate || !account) continue;
+          const secret = new TextDecoder().decode(await unseal(this.env, { account, gateId: g.id }, gate.secret));
+          const decision = await pollPush(gate, secret, g.push, { fetcher, now });
+          if (decision) answers.push({ id: req.id, entry: i, gate: g.id, decision });
+          else if (now + POLL_INTERVAL_MS <= Math.min(window, e.deadline)) next = Math.min(next ?? Infinity, now + POLL_INTERVAL_MS);
+        }
+      }
+    }
+    for (const [key, at] of this.vendorPolls) if (at < now - 3600000) this.vendorPolls.delete(key);
+    if (answers.length) {
+      const byTimeout = [];
+      await this.tx(async tx => {
+        byTimeout.length = 0;
+        for (const a of answers) {
+          const req = await tx.get(requestKey(a.id));
+          if (!req) continue;
+          try {
+            await answerRequest(tx, req, { entry: a.entry, gate: a.gate, decision: a.decision, answerer: { kind: 'vendor', gate: a.gate } }, now);
+            await this.audit(tx, now, a.decision === 'allow' ? 'gate.approved' : 'gate.refused', { id: a.id, gate: a.gate, cid: req.cid, action: req.action, audience: req.audience, by: 'vendor' });
+            if (req.outcome === 'allow' && req.by_timeout) await this.auditSettled(tx, req, now, byTimeout);
+          } catch { /* settled meanwhile */ }
+        }
+      });
+      this.announceTimeouts(byTimeout, now);
+    }
+    return next === Infinity ? null : next;
   }
 
   /**
@@ -822,12 +912,13 @@ export class AccountDO {
     // Owner, TOTP and security-key gates are reached through the owner's browsers (the notice links
     // to the approval page); a dba-device gate polls, so it is reached unless revoked; a webhook
     // gate is posted to after the decision answers ("sent" until that POST fails).
-    const delivery = gate => gate.kind === 'webhook' ? 'sent' : gate.kind === 'dba-device' ? (devices.get(gate.device_id) && !devices.get(gate.device_id).revoked_at ? 'sent' : 'failed') : (subscribed ? 'sent' : 'failed');
+    const delivery = gate => gate.kind === 'webhook' || VENDOR_KINDS.includes(gate.kind) ? 'sent' : gate.kind === 'dba-device' ? (devices.get(gate.device_id) && !devices.get(gate.device_id).revoked_at ? 'sent' : 'failed') : (subscribed ? 'sent' : 'failed');
     const req = newRequest({ cred, ...subject, candidate, gates, now, delivery });
     const contacted = contactedGates(req);
     if (contacted.length) {
       // Webhook gates cost more (a signed subrequest; plan §9), so each gate is priced by its kind.
-      const amount = contacted.reduce((sum, id) => sum + price(gates.get(id)?.kind === 'webhook' ? 'gate_webhook' : 'gate'), 0);
+      const priceOf = kind => price(kind === 'webhook' ? 'gate_webhook' : VENDOR_KINDS.includes(kind) ? 'gate_vendor' : 'gate');
+      const amount = contacted.reduce((sum, id) => sum + priceOf(gates.get(id)?.kind), 0);
       try { await charge(tx, { kind: 'gate', amount, aggregate: true }, now); }
       catch (error) {
         if (error.code !== 'insufficient_balance') throw error;
@@ -981,7 +1072,7 @@ export class AccountDO {
     });
     if (asked) {
       await this.announceGateRequest(asked, now, account);
-      if (webhookTargets(asked).length) this.background(this.deliverWebhooks(asked.id, account));
+      this.deliverAsync(asked, account);
     }
     this.announceTimeouts(byTimeout, now);
     return result;
@@ -1025,7 +1116,7 @@ export class AccountDO {
     });
     if (asked) {
       await this.announceGateRequest(asked, now, account);
-      if (webhookTargets(asked).length) this.background(this.deliverWebhooks(asked.id, account));
+      this.deliverAsync(asked, account);
     }
     this.announceTimeouts(byTimeout, now);
     return result;
@@ -1090,7 +1181,7 @@ export class AccountDO {
     });
     if (asked) {
       await this.announceGateRequest(asked, now, account);
-      if (webhookTargets(asked).length) this.background(this.deliverWebhooks(asked.id, account));
+      this.deliverAsync(asked, account);
     }
     this.announceTimeouts(byTimeout, now);
     return result;
@@ -1318,6 +1409,7 @@ export class AccountDO {
 
   async alarm() {
     const now = Date.now();
+    const pollAt = await this.pollPushes(now);
     const compactAt = await this.compact(now);
     const { next_at: outboxAt } = await this.deliverOutbox(now);
     let more = false;
@@ -1343,7 +1435,7 @@ export class AccountDO {
     more = usage.size === 1000;
     const hasWork = (await this.storage.list({ prefix: 'decision:', limit: 1 })).size || (await this.storage.list({ prefix: 'outbox:', limit: 1 })).size;
     // The outbox's retry time wins over the daily pruning pass.
-    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt, shortLived === null ? null : Math.max(shortLived, now + 60000)].filter(t => t !== null);
+    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt, shortLived === null ? null : Math.max(shortLived, now + 60000), pollAt].filter(t => t !== null);
     if (next.length) await this.storage.setAlarm(Math.min(...next));
   }
 }
