@@ -655,9 +655,10 @@ func placeMatches(where any, lat, lon, accM *float64, country, region string, ki
 	if truthy(areas) && finite(lat) && finite(lon) {
 		slack := 0.0
 		if kind == "device" {
-			// Accuracy is held against the device; an unknown accuracy never matches.
+			// Accuracy is held against the device; an unknown or negative accuracy (which would
+			// shrink the distance) never matches.
 			slack = math.Inf(1)
-			if finite(accM) {
+			if finite(accM) && *accM >= 0 {
 				slack = *accM
 			}
 		}

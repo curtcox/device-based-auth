@@ -508,7 +508,7 @@ source and both must pass. For each source:
   - Network: `countries` match `country`; `regions` (ISO 3166-2, `US-MO`) match `region`; `areas`
     match when the great-circle distance from `(lat, lon)` to the centre is ≤ `radius_m`.
   - Device: only `areas` are allowed, and match when `distance + acc_m ≤ radius_m` (accuracy is
-    held against the device; a missing `acc_m` never matches).
+    held against the device; a missing or negative `acc_m` never matches).
 - `networks` (network source only): the observed IP must be inside one CIDR range, otherwise
   `network_not_allowed`. Networks are checked in addition to places.
 

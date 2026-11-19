@@ -382,7 +382,8 @@ def _place_matches(where: dict, loc, kind: str) -> bool:
     if truthy(get(where, "areas")) and is_finite(lat) and is_finite(lon):
         acc = get(loc, "acc_m")
         # Device accuracy is held against the device: a fix that might be outside the area is.
-        slack = (acc if is_finite(acc) else math.inf) if kind == "device" else 0
+        # Unknown or negative accuracy (which would shrink the distance) never matches.
+        slack = (acc if is_finite(acc) and acc >= 0 else math.inf) if kind == "device" else 0
         return any(distance_meters(area, {"lat": lat, "lon": lon}) + slack <= area["radius_m"] for area in where["areas"])
     return False
 

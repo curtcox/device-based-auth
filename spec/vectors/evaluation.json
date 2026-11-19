@@ -1049,6 +1049,48 @@
       }
     },
     {
+      "name": "negative device accuracy never matches",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "device",
+            "areas": [
+              {
+                "lat": 38.627,
+                "lon": -90.199,
+                "radius_m": 100
+              }
+            ]
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "device": {
+            "lat": 39.627,
+            "lon": -90.199,
+            "acc_m": -10000000,
+            "t": 1795014000
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_location:device"
+          ]
+        ]
+      }
+    },
+    {
       "name": "device location without accuracy never matches",
       "grants": [
         {

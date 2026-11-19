@@ -204,7 +204,9 @@ function placeMatches(where, loc, kind) {
     if (where.regions?.includes(loc.region)) return true;
   }
   if (where.areas && Number.isFinite(loc.lat) && Number.isFinite(loc.lon)) {
-    const slack = kind === 'device' ? (Number.isFinite(loc.acc_m) ? loc.acc_m : Infinity) : 0;
+    // Accuracy is held against the device: unknown or negative accuracy (which would shrink the
+    // distance and match anywhere) never matches.
+    const slack = kind === 'device' ? (Number.isFinite(loc.acc_m) && loc.acc_m >= 0 ? loc.acc_m : Infinity) : 0;
     return where.areas.some(area => distanceMeters(area, loc) + slack <= area.radius_m);
   }
   return false;
