@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { testEnv, call, newDevice, enroll, settle, runAlarms } from '../test-utils/env.js';
 import { inspectCredential, createProof } from '../packages/verify/src/index.js';
 import { price } from './utils/pricing.js';
+import { hotp } from './services/totp.js';
+import { answerChallenge } from './services/webauthn.js';
+import { softAuthenticator } from '../test-utils/authenticator.js';
 
 // STATUS B7, phase G2 (todo/additional_gates.md): the gate registry and the gate request engine.
 
@@ -44,8 +47,8 @@ describe('gate registry', () => {
     const { gate, deviceId } = await phoneGate();
     const list = (await call(env, 'GET', '/api/v1/gates', { auth: 'alice' })).body.items;
     expect(list.map(g => g.id)).toEqual(['owner', gate]);
-    expect(list[1]).toMatchObject({ kind: 'dba-device', label: 'Phone', device_id: deviceId });
-    expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'totp', label: 'x' } })).body.code).toBe('gate_kind_not_available');
+    expect(list[1]).toMatchObject({ kind: 'dba-device', label: 'Phone', device_id: deviceId, state: 'active' });
+    expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'webhook', label: 'x' } })).body.code).toBe('gate_kind_not_available');
     expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'dba-device', label: 'x', device_id: 'dev_NOTMYDEVICE1' } })).body.code).toBe('unknown_device');
     expect((await call(env, 'DELETE', `/api/v1/gates/${gate}`, { auth: 'alice' })).body.deleted).toBe(true);
     expect((await call(env, 'GET', '/api/v1/gates', { auth: 'alice' })).body.items).toHaveLength(1);
@@ -228,5 +231,74 @@ describe('audience gate policy (G3)', () => {
     expect((await ask()).code).toBe('gate_pending');
     t += 31000;
     expect(await ask()).toMatchObject({ allow: false, code: 'by_timeout_refused', reasons: ['by_timeout_refused'] });
+  });
+});
+
+describe('TOTP and security-key gates (G4)', () => {
+  const unbase32 = text => { const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = 0; let value = 0; const out = []; for (const c of text) { value = (value << 5) | A.indexOf(c); bits += 5; if (bits >= 8) { out.push((value >>> (bits - 8)) & 255); bits -= 8; } } return new Uint8Array(out); };
+  const codeAt = (secret, ms) => hotp(secret, Math.floor(ms / 30000));
+  const linkOf = url => url.split('#')[1];
+
+  async function totpGate() {
+    const created = await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'totp', label: 'Authenticator' } });
+    expect(created.body).toMatchObject({ kind: 'totp', state: 'pending', setup: { otpauth_uri: expect.stringMatching(/^otpauth:\/\/totp\//) } });
+    const secret = unbase32(created.body.setup.secret);
+    // Not usable before it is set up.
+    expect((await call(env, 'POST', '/api/v1/credentials', { auth: 'alice', body: { public_jwk: (await newDevice()).publicJwk, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [created.body.id] }] } }] } })).body.code).toBe('gate_not_active');
+    expect((await call(env, 'POST', `/api/v1/gates/${created.body.id}/activate`, { auth: 'alice', body: { code: '000000' === await codeAt(secret, t) ? '111111' : '000000' } })).body.code).toBe('invalid_code');
+    const activated = await call(env, 'POST', `/api/v1/gates/${created.body.id}/activate`, { auth: 'alice', body: { code: await codeAt(secret, t) } });
+    expect(activated.body).toMatchObject({ state: 'active' });
+    expect(JSON.stringify((await call(env, 'GET', '/api/v1/gates', { auth: 'alice' })).body)).not.toContain(created.body.setup.secret);
+    return { gate: created.body.id, secret };
+  }
+
+  it('answers with a TOTP code on the approval page, each code once', async () => {
+    const { gate, secret } = await totpGate();
+    const { ask } = await asker([{ actions: ['hashbin:content:delete', 'hashbin:content:write'], require: { gates: [{ any: [gate] }] } }]);
+    t += 30000; // the next step: the activation code is spent
+    const pending = await ask();
+    expect(pending.gate_request.approve_url).toMatch(/^http:\/\/localhost:8787\/gate\.html#dbag_/);
+    const link = linkOf(pending.gate_request.approve_url);
+    const view = (await call(env, 'GET', `/api/v1/gate-links/${link}`)).body;
+    expect(view).toMatchObject({ id: pending.gate_request.id, action: 'hashbin:content:delete', status: 'pending', factors: { entries: [{ gates: [{ id: gate, kind: 'totp', label: 'Authenticator' }] }] } });
+    const code = await codeAt(secret, t);
+    expect((await call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate, decision: 'allow', totp: { code: code === '123456' ? '654321' : '123456' } } })).body.code).toBe('invalid_code');
+    expect((await call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate, decision: 'allow', totp: { code } } })).body.status).toBe('allowed');
+    expect((await ask()).allow).toBe(true);
+    // The same code cannot answer another request.
+    const other = await ask('hashbin:content:write');
+    const replay = await call(env, 'POST', `/api/v1/gate-links/${linkOf(other.gate_request.approve_url)}/answer`, { body: { gate, decision: 'allow', totp: { code } } });
+    expect(replay).toMatchObject({ status: 403, body: { code: 'invalid_code' } });
+    // A tampered link is refused.
+    expect((await call(env, 'GET', `/api/v1/gate-links/${link.slice(0, -2)}xx`)).status).toBe(404);
+  });
+
+  it('stops guessing after 5 wrong codes', async () => {
+    const { gate, secret } = await totpGate();
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [gate] }] } }]);
+    t += 30000;
+    const link = linkOf((await ask()).gate_request.approve_url);
+    const right = await codeAt(secret, t);
+    const wrong = right === '000001' ? '000002' : '000001';
+    for (let i = 0; i < 5; i++) expect((await call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate, decision: 'allow', totp: { code: wrong } } })).status).toBe(403);
+    expect((await call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate, decision: 'allow', totp: { code: right } } })).status).toBe(429);
+  });
+
+  it('registers a security key and answers with it', async () => {
+    const key = await softAuthenticator();
+    const created = (await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'webauthn', label: 'YubiKey', user_verification: 'required' } })).body;
+    expect(created.setup.public_key).toMatchObject({ rp: { id: 'localhost' }, pubKeyCredParams: [{ alg: -7 }] });
+    const registration = await key.register(created.setup.public_key, 'http://localhost:8787');
+    expect((await call(env, 'POST', `/api/v1/gates/${created.id}/activate`, { auth: 'alice', body: { registration } })).body.state).toBe('active');
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [created.id] }] } }]);
+    const pending = await ask();
+    const link = linkOf(pending.gate_request.approve_url);
+    const view = (await call(env, 'GET', `/api/v1/gate-links/${link}`)).body;
+    expect(view.factors.entries[0].gates[0]).toMatchObject({ kind: 'webauthn', credential_id: key.id, user_verification: 'required' });
+    const sign = decision => answerChallenge({ requestId: view.id, entry: 0, decision, salt: view.factors.salt }).then(challenge => key.assert({ challenge, rpId: view.factors.rp_id }, 'http://localhost:8787'));
+    // An assertion made to deny does not allow.
+    expect((await call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate: created.id, decision: 'allow', webauthn: await sign('deny') } })).body.code).toBe('invalid_webauthn');
+    expect((await call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate: created.id, decision: 'allow', webauthn: await sign('allow') } })).body.status).toBe('allowed');
+    expect((await ask()).allow).toBe(true);
   });
 });

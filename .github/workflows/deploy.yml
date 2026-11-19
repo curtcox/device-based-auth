@@ -31,6 +31,7 @@ jobs:
       LAUNCH_APPROVED: ${{ vars.DBA_LAUNCH_APPROVED }}
       ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
       PUSH_VAPID_KEY: ${{ secrets.DBA_PUSH_VAPID_KEY }}
+      GATE_SEALING_KEYS: ${{ secrets.DBA_GATE_SEALING_KEYS }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

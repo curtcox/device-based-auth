@@ -12,6 +12,18 @@ const MAX_ITEMS = 1024;
  * @returns {*}
  */
 export function decodeCbor(bytes) {
+  const { value, length } = decodeCborPrefix(bytes);
+  if (length !== bytes.length) throw new Error('malformed CBOR: trailing bytes');
+  return value;
+}
+
+/**
+ * Decode the CBOR item at the start of a buffer, returning it and the bytes it took (WebAuthn
+ * authenticator data puts a COSE key in the middle of other bytes).
+ * @param {Uint8Array} bytes
+ * @returns {{ value: *, length: number }}
+ */
+export function decodeCborPrefix(bytes) {
   let at = 0;
   const fail = message => { throw new Error(`malformed CBOR: ${message}`); };
   const take = n => {
@@ -68,6 +80,5 @@ export function decodeCbor(bytes) {
     }
   };
   const value = item(0);
-  if (at !== bytes.length) fail('trailing bytes');
-  return value;
+  return { value, length: at };
 }

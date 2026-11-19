@@ -3,6 +3,7 @@ import { rpc } from '../utils/rpc.js';
 import { canAccess, SESSION } from '../auth/scopes.js';
 import { requireRecentSignIn } from '../auth/reverify.js';
 import { cleanGateInput } from '../durable-objects/gates.js';
+import { verifyToken } from '../auth/tokens.js';
 
 /**
  * The account's gates (STATUS B7): GET lists them (with the built-in owner gate), POST adds one,
@@ -13,8 +14,41 @@ export async function gates(route, request, env, auth) {
   if (request.method === 'GET') return rpc(env.ACCOUNTS, auth.account, 'list-gates');
   requireRecentSignIn(auth, 'change your gates');
   if (request.method === 'DELETE') return rpc(env.ACCOUNTS, auth.account, 'delete-gate', { id: route.params.id });
+  if (route.params.id) return rpc(env.ACCOUNTS, auth.account, 'activate-gate', { id: route.params.id, body: await readJson(request, 16384), account: auth.account });
   const input = cleanGateInput(await readJson(request, 4096));
-  return rpc(env.ACCOUNTS, auth.account, 'create-gate', { input });
+  return rpc(env.ACCOUNTS, auth.account, 'create-gate', { input, account: auth.account });
+}
+
+/** A TOTP code or a security-key assertion offered as proof with an answer. */
+function cleanProof(body) {
+  const proof = {};
+  if (body.totp !== undefined) { assert(typeof body.totp?.code === 'string' && body.totp.code.length <= 12, 'invalid_answer', 'totp.code must be the 6-digit code'); proof.totp = { code: body.totp.code }; }
+  if (body.webauthn !== undefined) {
+    const w = body.webauthn;
+    assert(w && ['credential_id', 'clientDataJSON', 'authenticatorData', 'signature'].every(k => typeof w[k] === 'string' && w[k].length <= 8192), 'invalid_answer', 'webauthn must carry credential_id, clientDataJSON, authenticatorData and signature (base64url)');
+    proof.webauthn = { credential_id: w.credential_id, clientDataJSON: w.clientDataJSON, authenticatorData: w.authenticatorData, signature: w.signature };
+  }
+  return proof;
+}
+
+function cleanAnswer(body) {
+  assert(body.entry === undefined || (Number.isSafeInteger(body.entry) && body.entry >= 0 && body.entry < 3), 'invalid_answer', 'entry must be 0, 1 or 2');
+  assert(typeof body.gate === 'string' && body.gate.length <= 80, 'invalid_answer', 'gate is required ("owner" or a gate id)');
+  assert(body.decision === 'allow' || body.decision === 'deny', 'invalid_answer', 'decision must be "allow" or "deny"');
+  return { entry: body.entry, gate: body.gate, decision: body.decision, proof: cleanProof(body) };
+}
+
+/**
+ * The approval page (/gate.html#<link>): a signed link names the account and one request. It
+ * shows the request and takes answers proven with a factor (a TOTP code, a security key), so the
+ * holder of an authenticator app or key answers without a devicebasedauth.org session (plan §4.3).
+ */
+export async function gateLinks(route, request, env) {
+  const link = await verifyToken(route.params.token, 'dbag_', env.TOKEN_SIGNING_KEY, 2048);
+  assert(link && typeof link.a === 'string' && typeof link.r === 'string', 'invalid_link', 'This approval link is invalid or has expired', 404);
+  if (request.method === 'GET') return rpc(env.ACCOUNTS, link.a, 'link-gate-request', { id: link.r });
+  const answer = cleanAnswer(await readJson(request, 32768));
+  return rpc(env.ACCOUNTS, link.a, 'answer-gate-request', { id: link.r, ...answer, answerer: { kind: 'link', device_id: null }, account: link.a });
 }
 
 /**
@@ -34,9 +68,6 @@ export async function gateRequests(route, request, env, auth) {
   const device_id = who.kind === 'device' ? who.device_id : undefined;
   if (request.method === 'GET' && !route.params.id) return rpc(env.ACCOUNTS, auth.account, 'list-gate-requests', { device_id });
   if (request.method === 'GET') return rpc(env.ACCOUNTS, auth.account, 'get-gate-request', { id: route.params.id, device_id });
-  const body = await readJson(request, 4096);
-  assert(body.entry === undefined || (Number.isSafeInteger(body.entry) && body.entry >= 0 && body.entry < 3), 'invalid_answer', 'entry must be 0, 1 or 2');
-  assert(typeof body.gate === 'string' && body.gate.length <= 80, 'invalid_answer', 'gate is required ("owner" or a gate id)');
-  assert(body.decision === 'allow' || body.decision === 'deny', 'invalid_answer', 'decision must be "allow" or "deny"');
-  return rpc(env.ACCOUNTS, auth.account, 'answer-gate-request', { id: route.params.id, entry: body.entry, gate: body.gate, decision: body.decision, answerer: who });
+  const answer = cleanAnswer(await readJson(request, 32768));
+  return rpc(env.ACCOUNTS, auth.account, 'answer-gate-request', { id: route.params.id, ...answer, answerer: who, account: auth.account });
 }

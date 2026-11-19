@@ -7,7 +7,7 @@ import { price } from '../utils/pricing.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
 import { hasDbaAction } from '../auth/reverify.js';
-import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
+import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, activateGate, approvalLink, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -46,6 +46,8 @@ export class AccountDO {
     this.proofs = new Map(); this.rates = new Map();
     // New gate requests per (device, gate) in the last hour (in memory, like the request limit).
     this.gateRates = new Map();
+    // Wrong TOTP codes and security-key answers per gate (in memory; a guessing limit).
+    this.factorFailures = new Map();
     // Work that outlives the request (security notices). Tests await it with settle().
     this.inflight = new Set();
   }
@@ -568,11 +570,11 @@ export class AccountDO {
   // Up to MAX_SUBSCRIPTIONS browsers, kept in one row so issuance reads them with one get.
 
   /** Send a notice to every subscribed browser after the response; drop browsers that left. */
-  notify({ title, body, path, tag }, now) {
+  notify({ title, body, path, url, tag }, now) {
     this.background((async () => {
       const subs = (await this.storage.get('push:subs')) || [];
       if (!subs.length) return;
-      const results = await broadcast(this.env, subs, { title, body, url: `${this.env.APP_ORIGIN || ''}/app.html${path || ''}`, tag }, now);
+      const results = await broadcast(this.env, subs, { title, body, url: url || `${this.env.APP_ORIGIN || ''}/app.html${path || ''}`, tag }, now);
       await this.dropGone(results.filter(r => r.gone).map(r => r.id));
     })());
   }
@@ -628,7 +630,7 @@ export class AccountDO {
    * gate) and usage counters. candidates: grant indexes that passed every static check, in order,
    * with their online needs ({ index, uses, step_up, gates, gates_reuse_s, fail_open }).
    */
-  async op_authorize({ cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country, token_namespace = null, gate_policy = null }, now) {
+  async op_authorize({ account = null, cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country, token_namespace = null, gate_policy = null }, now) {
     const nowSeconds = Math.floor(now / 1000);
     for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
     let asked = null; let byTimeout = [];
@@ -698,7 +700,7 @@ export class AccountDO {
           }
           if (!decision) {
             const deadline = Math.max(...req.entries.map(e => e.deadline));
-            decision = { allow: false, code: needed.candidate.step_up ? 'step_up_required' : 'gate_pending', reasons, gate_request: { id: req.id, retry_after: RETRY_AFTER_S, deadline: Math.ceil(deadline / 1000) } };
+            decision = { allow: false, code: needed.candidate.step_up ? 'step_up_required' : 'gate_pending', reasons, gate_request: { id: req.id, retry_after: RETRY_AFTER_S, deadline: Math.ceil(deadline / 1000), ...(account && hasFactorGates(req) ? { approve_url: await approvalLink(this.env, account, req) } : {}) } };
             if (needed.candidate.step_up) decision.step_up = { id: req.id, expires_in: Math.max(1, Math.ceil((deadline - now) / 1000)) };
           }
         } else if (denied) {
@@ -711,7 +713,7 @@ export class AccountDO {
       if (!alarm || alarm > wake) await tx.setAlarm(wake);
       return decision;
     });
-    if (asked) this.announceGateRequest(asked, now);
+    if (asked) await this.announceGateRequest(asked, now, account);
     this.announceTimeouts(byTimeout, now);
     return decision;
   }
@@ -748,7 +750,9 @@ export class AccountDO {
     const subscribed = ((await tx.get('push:subs')) || []).length > 0;
     const devices = new Map();
     for (const gate of gates.values()) if (gate.kind === 'dba-device') devices.set(gate.device_id, await tx.get(`device:${gate.device_id}`));
-    const delivery = gate => gate.kind === 'owner' ? (subscribed ? 'sent' : 'failed') : (devices.get(gate.device_id) && !devices.get(gate.device_id).revoked_at ? 'sent' : 'failed');
+    // Owner, TOTP and security-key gates are reached through the owner's browsers (the notice links
+    // to the approval page); a dba-device gate polls, so it is reached unless revoked.
+    const delivery = gate => gate.kind === 'dba-device' ? (devices.get(gate.device_id) && !devices.get(gate.device_id).revoked_at ? 'sent' : 'failed') : (subscribed ? 'sent' : 'failed');
     const req = newRequest({ cred, ...subject, candidate, gates, now, delivery });
     const contacted = contactedGates(req);
     if (contacted.length) {
@@ -774,12 +778,17 @@ export class AccountDO {
     }
   }
 
-  /** Tell the gates about a new request: owner gates by Web Push; dba-device gates poll. */
-  announceGateRequest(req, now) {
-    if (req.unpaid || !req.entries.some(e => e.gates.some(g => g.id === 'owner' && g.state === 'sent'))) return;
-    const wait = Math.max(...req.entries.filter(e => e.gates.some(g => g.id === 'owner')).map(e => e.timeout_s));
+  /**
+   * Tell the gates about a new request: owner, TOTP and security-key gates by Web Push to the
+   * owner's browsers (factor gates with a link to the approval page); dba-device gates poll.
+   */
+  async announceGateRequest(req, now, account) {
+    const pushed = req.entries.filter(e => e.gates.some(g => g.state === 'sent' && (g.id === 'owner' || FACTOR_KINDS.includes(g.kind))));
+    if (req.unpaid || !pushed.length) return;
+    const wait = Math.max(...pushed.map(e => e.timeout_s));
     const minutes = Math.round(wait / 60);
-    this.notify({ title: 'Approval needed', body: `${noticeText(req.device_name) || 'A device'} asks to ${noticeText(req.action, 120)}${req.resource ? ` on ${noticeText(req.resource, 120)}` : ''} at ${noticeText(req.audience)}. Approve or deny within ${minutes >= 1 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${wait} seconds`}.`, path: '#approvals', tag: `gate-${req.id}` }, now);
+    const link = account && hasFactorGates(req) ? await approvalLink(this.env, account, req) : null;
+    this.notify({ title: 'Approval needed', body: `${noticeText(req.device_name) || 'A device'} asks to ${noticeText(req.action, 120)}${req.resource ? ` on ${noticeText(req.resource, 120)}` : ''} at ${noticeText(req.audience)}. Approve or deny within ${minutes >= 1 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${wait} seconds`}.`, ...(link ? { url: link } : { path: '#approvals' }), tag: `gate-${req.id}` }, now);
   }
 
   async op_decisions({ cid, limit = PAGE }) {
@@ -832,14 +841,44 @@ export class AccountDO {
     return { items: [OWNER_GATE, ...[...rows.values()].map(visibleGate)] };
   }
 
-  async op_create_gate({ input }, now) {
-    const gate = await this.tx(async tx => {
-      const created = await createGate(tx, input, now);
-      await this.audit(tx, now, 'gate.created', { id: created.id, kind: created.kind, device_id: created.device_id });
+  async op_create_gate({ input, account }, now) {
+    const { gate, setup } = await this.tx(async tx => {
+      const created = await createGate(tx, input, now, { env: this.env, account });
+      await this.audit(tx, now, 'gate.created', { id: created.gate.id, kind: created.gate.kind, ...(created.gate.device_id ? { device_id: created.gate.device_id } : {}) });
       return created;
     });
-    this.notify({ title: 'Gate added', body: `“${noticeText(gate.label)}” (${gate.kind}) can now approve or refuse requests for your account.`, path: '#gates', tag: `gate-added-${gate.id}` }, now);
+    if (gate.state === 'active') this.announceGate(gate, now);
+    return { ...visibleGate(gate), ...(setup ? { setup } : {}) };
+  }
+
+  /** Finish setting up a TOTP or security-key gate. */
+  async op_activate_gate({ id, body, account }, now) {
+    const gate = await this.tx(async tx => {
+      const done = await activateGate(tx, id, body, now, { env: this.env, account });
+      await this.audit(tx, now, 'gate.activated', { id, kind: done.kind });
+      return done;
+    });
+    this.announceGate(gate, now);
     return visibleGate(gate);
+  }
+
+  /** Gate changes are announced at once, like dba:* issuance (plan §8). */
+  announceGate(gate, now) {
+    this.notify({ title: 'Gate added', body: `“${noticeText(gate.label)}” (${gate.kind}) can now approve or refuse requests for your account.`, path: '#gates', tag: `gate-added-${gate.id}` }, now);
+  }
+
+  /** A request as the approval page shows it, with what it needs to offer factors. */
+  async op_link_gate_request({ id }, now) {
+    const byTimeout = [];
+    const view = await this.tx(async tx => {
+      byTimeout.length = 0;
+      const req = await tx.get(requestKey(id));
+      assert(req && requestUntil(req) > now, 'not_found', 'This request is over (answered, or its time ran out)', 404);
+      await this.refreshed(tx, req, now, byTimeout);
+      return { ...visibleRequest(req, now), factors: await factorView(tx, req, this.env) };
+    });
+    this.announceTimeouts(byTimeout, now);
+    return view;
   }
 
   /** Delete a gate. Requests waiting on it can no longer pass through it (nothing to time out). */
@@ -882,13 +921,13 @@ export class AccountDO {
     return found;
   }
 
-  async op_answer_gate_request({ id, entry, gate, decision, answerer }, now) {
+  async op_answer_gate_request({ id, entry, gate, decision, answerer, proof, account }, now) {
     const byTimeout = [];
     const req = await this.tx(async tx => {
       byTimeout.length = 0;
       const found = await tx.get(requestKey(id));
       assert(found && requestUntil(found) > now, 'not_found', 'Gate request not found or expired', 404);
-      await answerRequest(tx, found, { entry, gate, decision, answerer }, now);
+      await answerRequest(tx, found, { entry, gate, decision, answerer, proof }, now, { env: this.env, account, failures: this.factorFailures });
       await this.audit(tx, now, decision === 'allow' ? 'gate.approved' : 'gate.refused', { id, gate, cid: found.cid, action: found.action, audience: found.audience, by: answerer.device_id ?? 'session' });
       // This answer may finish a request whose other entries passed by timeout.
       if (found.outcome === 'allow' && found.by_timeout) await this.auditSettled(tx, found, now, byTimeout);

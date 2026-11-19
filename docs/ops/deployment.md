@@ -33,6 +33,13 @@ tokens are issued, master plan §10) need a VAPID key: store the output of
 subscribe to this exact key, so replacing it silently ends every subscription (owners would have to
 turn notices on again). Without it the dashboard does not offer notices.
 
+TOTP gates (STATUS B7) keep each authenticator app's seed sealed with AES-256-GCM. Store
+`[{"kid":"gate-2026-11","key":"<output of openssl rand -base64 32>"}]` as `DBA_GATE_SEALING_KEYS`.
+To rotate, put a new key **first** (it seals; every listed key still opens) and keep the old one
+until no gate uses it. A leaked sealing key together with a copy of the Durable Object storage
+exposes every TOTP seed: delete and re-add every TOTP gate after rotating. Without the secret the
+dashboard cannot add TOTP gates (other gates work).
+
 ## 3. Clerk
 
 Create a separate Clerk application for devicebasedauth.org (Google and GitHub sign-in, like

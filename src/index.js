@@ -10,7 +10,7 @@ import { createCredential, listCredentials, getCredential, credentialDecisions, 
 import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
-import { gates, gateRequests } from './api/gates.js';
+import { gates, gateRequests, gateLinks } from './api/gates.js';
 import { pushSubscriptions, pushPublicKey } from './api/push.js';
 import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
 import { inspect } from './api/inspect.js';
@@ -83,7 +83,10 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/step-ups/:id/deny`, access: SESSION, handler: 'step-up-decide' },
   { method: 'GET', path: `${V1}/gates`, access: 'gates:read', handler: 'gates' },
   { method: 'POST', path: `${V1}/gates`, access: 'gates:write', handler: 'gates' },
+  { method: 'POST', path: `${V1}/gates/:id/activate`, access: 'gates:write', handler: 'gates' },
   { method: 'DELETE', path: `${V1}/gates/:id`, access: 'gates:write', handler: 'gates' },
+  { method: 'GET', path: `${V1}/gate-links/:token`, access: PUBLIC, handler: 'gate-links', free: true },
+  { method: 'POST', path: `${V1}/gate-links/:token/answer`, access: PUBLIC, handler: 'gate-links', free: true },
   { method: 'GET', path: `${V1}/gate-requests`, access: AUTHENTICATED, handler: 'gate-requests' },
   { method: 'GET', path: `${V1}/gate-requests/:id`, access: AUTHENTICATED, handler: 'gate-requests' },
   { method: 'POST', path: `${V1}/gate-requests/:id/answer`, access: AUTHENTICATED, handler: 'gate-requests' },
@@ -190,6 +193,7 @@ async function handle(route, request, env, auth) {
     case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve'), approver_device: auth.device?.payload.sub });
     case 'gates': return gates(route, request, env, auth);
     case 'gate-requests': return gateRequests(route, request, env, auth);
+    case 'gate-links': return gateLinks(route, request, env);
     case 'audiences': return audiences(route, request, env, auth);
     case 'audience-usage': return audienceUsage(route, request, env, auth);
     case 'audience-webhook-test': return audienceWebhookTest(route, request, env, auth);

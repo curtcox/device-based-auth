@@ -22,7 +22,7 @@ export async function testEnv(overrides = {}) {
     const pair = await generateKeyPair(true);
     issuerKeysJson = JSON.stringify([{ kid: 'test-1', jwk: await crypto.subtle.exportKey('jwk', pair.privateKey) }]);
   }
-  const env = { ENVIRONMENT: 'local', APP_ORIGIN: ORIGIN, ISSUER: ORIGIN, STATUS_ORIGIN: `${ORIGIN}/status`, STATUS_SHARDS: '2', TOKEN_SIGNING_KEY: 'test-token-key', ISSUER_KEYS: issuerKeysJson, OPERATOR_ACCOUNT: 'operator', STATUS_BUCKET: memoryBucket(), ...overrides };
+  const env = { ENVIRONMENT: 'local', APP_ORIGIN: ORIGIN, ISSUER: ORIGIN, STATUS_ORIGIN: `${ORIGIN}/status`, STATUS_SHARDS: '2', TOKEN_SIGNING_KEY: 'test-token-key', GATE_SEALING_KEYS: JSON.stringify([{ kid: 'test-sealing-1', key: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))) }]), ISSUER_KEYS: issuerKeysJson, OPERATOR_ACCOUNT: 'operator', STATUS_BUCKET: memoryBucket(), ...overrides };
   env.ACCOUNTS = namespace(AccountDO, env); env.STATUS = namespace(StatusListDO, env); env.REGISTRY = namespace(RegistryDO, env); env.ENROLLMENTS = namespace(EnrollmentDO, env); env.SAFETY = namespace(SafetyDO, env);
   return env;
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { testEnv, call, newDevice, enroll, meter } from '../test-utils/env.js';
 import { inspectCredential, createProof, signJws, sha256b64u, b64u } from '../packages/verify/src/index.js';
 import { OPERATIONS } from './utils/cost-policy.js';
+import { hotp } from './services/totp.js';
 
 // The worst cases in src/utils/cost-policy.js are what prices are floored on (AGENTS.md: every
 // price must pass the price-floor test). These tests measure what the code really does, so a
@@ -110,6 +111,21 @@ describe('cost policy matches the code', () => {
       const pending = (await ask()).body.gate_request;
       m.reset();
       return call(env, 'POST', `/api/v1/gate-requests/${pending.id}/answer`, { auth: 'alice', body: { gate: 'owner', decision: 'allow' } });
+    }), later(1, 2 + 1));
+    // A TOTP answer on the approval page (no authentication request; it rewrites the gate row).
+    const created = (await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'totp', label: 'App' } })).body;
+    const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = 0; let value = 0; const secret = [];
+    for (const c of created.setup.secret) { value = (value << 5) | A.indexOf(c); bits += 5; if (bits >= 8) { secret.push((value >>> (bits - 8)) & 255); bits -= 8; } }
+    const code = () => hotp(new Uint8Array(secret), Math.floor(t / 30000));
+    await call(env, 'POST', `/api/v1/gates/${created.id}/activate`, { auth: 'alice', body: { code: await code() } });
+    const totpDevice = await newDevice();
+    const totpCredential = (await enroll(env, 'alice', totpDevice, { grants: [{ actions: ['hashbin:content:write'], require: { gates: [{ any: [created.id] }] } }] })).approve.body.credential;
+    const askTotp = async () => call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${key}`, body: { credential: totpCredential, proof: await createProof({ privateKey: totpDevice.privateKey, publicJwk: totpDevice.publicJwk, method: 'POST', url, credential: totpCredential }), request: { method: 'POST', url }, audience: 'hashbin.org', action: 'hashbin:content:write' } });
+    within('gate', await measured(async () => {
+      t += 30000;
+      const link = (await askTotp()).body.gate_request.approve_url.split('#')[1];
+      m.reset();
+      return call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate: created.id, decision: 'allow', totp: { code: await code() } } });
     }), later(1, 2 + 1));
     // Settling by timeout inside a decision: the decision's own rows plus the gate's settlement.
     withinSum(['decision', 'gate'], await measured(async () => { await ask(); t += 61000; m.reset(); return ask(); }), later(0, 2));

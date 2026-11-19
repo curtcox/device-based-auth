@@ -59,9 +59,11 @@ export const OPERATIONS = Object.freeze({
   // updates the row and writes an audit row (kept 13 months, then deleted by compaction); the
   // decision that uses the approval deletes the row, or the alarm prunes it (1 DO request).
   // Worst case instead of an answer: it settles by timeout, which writes the row and an audit row
-  // (+ its later delete) the same way. Notices: Web Push to up to 5 browsers (10 ms), and the
-  // announcement of an allow by timeout (10 ms more).
-  gate: { workerRequests: 1, doRequests: 3, rowWrites: 8, cpuMs: 22, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
+  // (+ its later delete) the same way. A TOTP or security-key answer also rewrites the gate row
+  // (the last step used, the key's signature counter): 1 row, ~3 ms (HMAC, AES-GCM, ECDSA).
+  // Notices: Web Push to up to 5 browsers (10 ms), and the announcement of an allow by timeout
+  // (10 ms more).
+  gate: { workerRequests: 1, doRequests: 3, rowWrites: 9, cpuMs: 25, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
   // Authentication (with the rate limit), registry read, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
   // the charge's ledger and receipt rows and the audit row.
   audience: { workerRequests: 1, doRequests: 4, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }
