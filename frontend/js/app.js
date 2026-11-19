@@ -289,6 +289,21 @@ async function credential(cid) {
       await render();
     }, { confirmLabel: 'Yes, revoke it' }));
 
+  // Periodic confirmation (STATUS B7): when it was last confirmed, and "stop trusting now".
+  const confirmedUntil = cred.confirmed_until ? cred.confirmed_until / 1000 : 0;
+  const confirmation = cred.confirm && cred.state === 'active'
+    ? h('div', { class: 'panel', id: 'confirmation-area' },
+      h('p', {}, h('strong', {}, 'Periodic confirmation: '), `every ${duration(cred.confirm.every_s)}, by ${cred.confirm.gates.map(e => e.any.join(' or ')).join(', then ')}. `,
+        confirmedUntil > Date.now() / 1000 ? `Confirmed until ${date(confirmedUntil, true)} (${relative(confirmedUntil)})${cred.confirmed_by_timeout ? ', by timeout' : ''}.` : 'Not confirmed now: sites refuse it until its gates confirm it again.'),
+      confirmedUntil > Date.now() / 1000
+        ? h('div', { class: 'actions' }, confirmButton('Stop trusting now', `Stop trusting “${name}” until its gates confirm it again? Online checks refuse it at once; offline verifiers accept its last confirmation until ${date(confirmedUntil, true)}. Revoke it to stop those too.`, async () => {
+          await api(`/api/v1/credentials/${enc(cid)}/unconfirm`, { method: 'POST', body: {} });
+          flash('success', `Stopped trusting ${cid} until it is confirmed again.`);
+          await render();
+        }, { confirmLabel: 'Yes, stop trusting it' }))
+        : null)
+    : null;
+
   const check = h('form', { class: 'row', id: 'check-action' },
     h('label', {}, 'Action', h('input', { name: 'action', placeholder: cred.grants[0]?.actions?.[0] || 'ns:verb', required: true })),
     h('label', {}, 'Resource (optional)', h('input', { name: 'resource' })),
@@ -323,6 +338,7 @@ async function credential(cid) {
       ['Status list', h('span', { class: 'mono small' }, `${decoded?.payload?.status?.status_list?.uri ?? ''} #${cred.status?.idx ?? '?'}`)]
     ]),
     revoke,
+    confirmation,
     h('h2', {}, 'What it allows'),
     h('ul', { class: 'english', id: 'grant-descriptions' }, (cred.descriptions || []).map(text => h('li', {}, text))),
     h('details', {}, h('summary', {}, 'Grants as JSON'), jsonBlock(cred.grants)),

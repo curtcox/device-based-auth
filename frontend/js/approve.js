@@ -74,6 +74,7 @@ function approvalForm() {
       h('p', { class: 'hint' }, 'You can remove actions or add constraints such as time windows, places or a spend cap. The ', h('a', { href: '/tools/builder.html', target: '_blank', rel: 'noopener' }, 'grant builder'), ' writes them for you.'),
       h('textarea', { name: 'grants', rows: 10, spellcheck: 'false', value: grantsText }), problems, preview),
     privacy,
+    confirmSection(),
     h('p', { class: 'small muted' }, 'The credential is readable by every site it is shown to, including the device name and any places in its grants.'),
     h('div', { class: 'actions' },
       h('button', { type: 'submit', name: 'decision', value: 'approve', id: 'approve-button' }, `Approve for ${usd(info.price_microdollars)}`),
@@ -116,6 +117,8 @@ function approvalForm() {
     if (name && name !== info.device?.name) body.device_name = name;
     if (grants) body.grants = grants;
     if (lifetime !== info.lifetime_seconds) body.lifetime_seconds = lifetime;
+    const confirm = readConfirm(form);
+    if (confirm) body.confirm = confirm;
     for (const b of form.querySelectorAll('button')) b.disabled = true;
     try { finish('approved', await api('/api/v1/enrollments/approve', { method: 'POST', body })); }
     catch (err) { replace(out, failure(err)); for (const b of form.querySelectorAll('button')) b.disabled = false; }
@@ -126,6 +129,37 @@ function approvalForm() {
     catch (err) { replace(out, failure(err)); for (const b of form.querySelectorAll('button')) b.disabled = false; }
   });
   return [form, out];
+}
+
+/**
+ * "Require periodic confirmation" (todo/additional_gates.md §3.4): the owner may decide that this
+ * device works only while one of their gates confirms it every so often. The gates are loaded
+ * from the account; nothing is added unless the box is ticked.
+ */
+function confirmSection() {
+  const select = h('select', { name: 'confirm_gate', id: 'confirm-gate', disabled: true }, h('option', { value: '' }, 'Loading your gates…'));
+  const section = h('details', { id: 'confirm-section' }, h('summary', {}, 'Require periodic confirmation (optional)'),
+    h('p', { class: 'hint' }, 'The device then works only while one of your gates has confirmed it recently: it asks, the gate approves, and sites check the confirmation, even offline. Each confirmation is charged to this account (see ', h('a', { href: '/pricing.html', target: '_blank', rel: 'noopener' }, 'Pricing'), '). Set up gates on the ', h('a', { href: '/app.html#gates', target: '_blank', rel: 'noopener' }, 'Gates page'), '.'),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'confirm_on', id: 'confirm-on' }), ' Require confirmation'),
+    h('label', {}, 'Confirmed by', select),
+    h('div', { class: 'row' },
+      h('label', {}, 'Every (hours)', h('input', { name: 'confirm_every', type: 'number', min: '1', max: '168', step: '1', value: '24' })),
+      h('label', {}, 'Time to answer (minutes)', h('input', { name: 'confirm_timeout', type: 'number', min: '1', max: '60', step: '1', value: '5' })),
+      h('label', {}, 'If nobody answers', h('select', { name: 'confirm_on_timeout' }, h('option', { value: 'deny' }, 'refuse'), h('option', { value: 'allow' }, 'confirm anyway')))));
+  api('/api/v1/gates').then(({ items }) => {
+    const usable = items.filter(g => (g.state ?? 'active') === 'active');
+    replace(select, usable.map(g => h('option', { value: g.id }, `${g.label} (${g.kind})`)));
+    select.disabled = false;
+  }, () => { replace(select, h('option', { value: '' }, 'Could not load your gates')); });
+  return section;
+}
+
+/** The confirm block from the form, or null when not asked for. */
+function readConfirm(form) {
+  if (!form.elements.confirm_on?.checked || !field(form, 'confirm_gate')) return null;
+  const hours = Math.min(168, Math.max(1, Math.round(Number(field(form, 'confirm_every')) || 24)));
+  const minutes = Math.min(60, Math.max(1, Math.round(Number(field(form, 'confirm_timeout')) || 5)));
+  return { gates: [{ any: [field(form, 'confirm_gate')], timeout_s: minutes * 60, on_timeout: field(form, 'confirm_on_timeout') }], every_s: hours * 3600 };
 }
 
 function failure(error) {

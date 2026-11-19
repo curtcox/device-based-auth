@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { separateVisitors, signIn, fund, uniqueName, startEnrollment } from './helpers.js';
+import { createProof } from '../../packages/verify/src/index.js';
+import { separateVisitors, signIn, fund, uniqueName, startEnrollment, enrollViaApi, asLocal } from './helpers.js';
 
 separateVisitors();
 
@@ -75,4 +76,38 @@ test('the approval page warns about a grant that pinpoints a place and offers a 
   await expect(page.getByText('Approved — the device will pick up its credential')).toBeVisible();
   const credentials = await (await request.get('/api/v1/credentials', { headers: { Authorization: `LocalDev ${owner}` } })).json();
   expect(credentials.items[0].grants[0].where.areas).toEqual([{ lat: 38.63, lon: -90.2, radius_m: 1000 }]);
+});
+
+test('the owner can require periodic confirmation by one of their gates when approving (STATUS B7 G9)', async ({ page, request }) => {
+  const owner = uniqueName('confirmer');
+  await fund(request, owner);
+  const phone = await enrollViaApi(request, owner, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:approvals:answer'] }], name: 'Phone' });
+  const gate = await (await request.post('/api/v1/gates', { headers: asLocal(owner), data: { kind: 'dba-device', label: 'My phone', device_id: phone.device_id } })).json();
+  const start = await startEnrollment(request, { name: 'Shared laptop' });
+  await signIn(page, owner);
+  await page.goto(`/approve.html#${start.request}`);
+  await page.getByText('Require periodic confirmation').click();
+  await expect(page.locator('#confirm-gate')).toContainText('My phone (dba-device)');
+  await page.locator('#confirm-gate').selectOption(gate.id);
+  await page.getByLabel('Require confirmation').check();
+  await page.getByLabel('Every (hours)').fill('8');
+  await page.getByRole('button', { name: /^Approve for/ }).click();
+  await expect(page.getByText('Approved — the device will pick up its credential')).toBeVisible();
+  const { credential } = await (await request.get(start.poll_url.replace(/^https?:\/\/[^/]+/, ''))).json();
+  const payload = JSON.parse(Buffer.from(credential.split('.')[1], 'base64url'));
+  expect(payload.confirm).toEqual({ gates: [{ any: [gate.id], timeout_s: 300, on_timeout: 'deny' }], every_s: 28800 });
+
+  // The laptop asks, the phone allows; the dashboard shows it confirmed and can stop trusting it.
+  const signed = async (device, cred, method, path, data) => request.fetch(path, { method, data, headers: { Authorization: `DBA ${cred}`, DPoP: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method, url: new URL(path, page.url()).href, credential: cred }) } });
+  const path = `/api/v1/credentials/${payload.cid}/confirm`;
+  expect((await (await signed(start.device, credential, 'POST', path, {})).json()).status).toBe('pending');
+  const [waiting] = (await (await signed(phone.device, phone.credential, 'GET', '/api/v1/gate-requests')).json()).items;
+  expect((await signed(phone.device, phone.credential, 'POST', `/api/v1/gate-requests/${waiting.id}/answer`, { ...waiting.answer_as[0], decision: 'allow' })).ok()).toBeTruthy();
+  expect((await (await signed(start.device, credential, 'POST', path, {})).json()).status).toBe('confirmed');
+  await page.goto(`/app.html#credential/${payload.cid}`);
+  await expect(page.locator('#confirmation-area')).toContainText('every 8 hours');
+  await expect(page.locator('#confirmation-area')).toContainText('Confirmed until');
+  await page.getByRole('button', { name: 'Stop trusting now' }).click();
+  await page.getByRole('button', { name: 'Yes, stop trusting it' }).click();
+  await expect(page.locator('#confirmation-area')).toContainText('Not confirmed now');
 });

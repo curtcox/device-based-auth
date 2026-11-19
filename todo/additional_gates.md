@@ -495,6 +495,11 @@ STATUS row updated.
   not wait for one. `fetchWithGates(input, init, { timeoutMs, onPending })` is the plan's
   "authorizeWithGates": it resends with a fresh proof every `retry_after` s while the site answers
   403 `gate_pending`. Released as `frontend/sdk/v1.2.0/`.
+- **G9, approval page and credential page (2026-11-19).** The enrollment approval page has
+  "Require periodic confirmation" (one gate from the account, every 1–168 hours, 1–60 minutes to
+  answer, refuse or confirm when nobody answers) sent as `confirm` in the approve body. The
+  dashboard's credential page shows the confirmation state and "Stop trusting now" (`…/unconfirm`).
+  Playwright covers both, with a Node-side device confirming through a phone gate.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).
