@@ -87,6 +87,7 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/gates`, access: 'gates:read', handler: 'gates' },
   { method: 'POST', path: `${V1}/gates`, access: 'gates:write', handler: 'gates' },
   { method: 'POST', path: `${V1}/gates/:id/activate`, access: 'gates:write', handler: 'gates' },
+  { method: 'POST', path: `${V1}/gates/:id/test`, access: 'gates:write', handler: 'gates' },
   { method: 'DELETE', path: `${V1}/gates/:id`, access: 'gates:write', handler: 'gates' },
   { method: 'GET', path: `${V1}/gate-links/:token`, access: PUBLIC, handler: 'gate-links', free: true },
   { method: 'POST', path: `${V1}/gate-links/:token/answer`, access: PUBLIC, handler: 'gate-links', free: true },

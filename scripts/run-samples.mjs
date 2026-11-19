@@ -53,7 +53,7 @@ const SAMPLES = [
   {
     name: 'gate_webhook.py', run: gateWebhookPython,
     needs: () => has('python3', ['-c', 'import cryptography, requests']) || 'python3 with cryptography and requests',
-    expect: [/^\{"url": "http:\/\/localhost:\d+\/dba-gate", "public_jwk": \{"kty": "EC"/m, /^ok {3}approved at once/m, /^ok {3}refused at once/m, /^ok {3}approved by a late, signed answer/m]
+    expect: [/^\{"url": "http:\/\/localhost:\d+\/dba-gate", "public_jwk": \{"kty": "EC"/m, /^ok {3}answers a test message/m, /^ok {3}approved at once/m, /^ok {3}refused at once/m, /^ok {3}approved by a late, signed answer/m]
   },
   {
     // The owner approves the laptop (the second enrollment) with "confirm every hour with Sample phone".
@@ -252,6 +252,8 @@ async function checkGateService(service, label) {
   const check = (label, pass, detail) => { ok &&= pass; lines.push(`${pass ? 'ok  ' : 'FAIL'} ${label}: ${detail}`); };
   try {
     const gate = await api('POST', '/api/v1/gates', { kind: 'webhook', label, url: service.url, public_jwk: service.publicJwk });
+    const tested = await api('POST', `/api/v1/gates/${gate.id}/test`, {});
+    check('answers a test message', tested.delivered === true, JSON.stringify({ delivered: tested.delivered, status: tested.status, decision: tested.decision }));
     const device = await enrollDevice({ origin: ORIGIN, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write', 'hashbin:content:delete'], require: { gates: [{ any: [gate.id], timeout_s: 60 }] } }], name: 'gated sample', onApprovalUrl: url => approve(new URL(url).hash.slice(1)) });
     await api('POST', '/api/v1/dev/deposit', { amount_microdollars: 1_000_000 }, 'operator');
     const key = await api('POST', '/api/v1/keys', { name: 'gate sample verifier', scopes: ['authorize'] }, 'operator');

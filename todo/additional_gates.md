@@ -521,6 +521,10 @@ STATUS row updated.
   plan said "answer as the connected account's owner"; that would let an agent holding an API key
   pose as the owner gate, which G2 refuses for every key, so only a device holding
   `dba:approvals:answer` answers, as its own dba-device gate (API keys: 403 `insufficient_scope`).
+- **G9, webhook test (2026-11-19).** `POST /api/v1/gates/{id}/test` (gates:write, read price) posts a
+  `dba-gate+jwt` with `type: "gate.test"` (no request or callback, `exp` = `iat` + 60) and reports
+  `{ delivered, status, decision }`; only webhook gates (the others would reach a person). Dashboard
+  "Test" button, `dba gates test`, and both sample services answer it in CI.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

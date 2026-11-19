@@ -121,7 +121,7 @@ opens a gate request and POSTs the service a compact JWS:
 | `aud` | The gate's URL, exactly as registered: a service checks it is its own. |
 | `iat`, `exp` | When it was sent, and the entry's deadline: an answer after `exp` is refused. |
 | `jti` | Unique id of this message. |
-| `type` | `gate.request` |
+| `type` | `gate.request` (or `gate.test`, below) |
 | `account`, `gate` | The account and the gate (`gate_…`) being asked. |
 | `request`, `entry` | The gate request (`gtr_…`) and which of its entries this gate answers (0–2). |
 | `number` | The request's two-digit number, shown wherever it is approved. |
@@ -142,6 +142,10 @@ A non-2xx status, a timeout or a connection failure marks the gate `failed` for 
 entry then waits for its deadline like an unanswered one (decision D12: an unreachable gate is
 silence). The first answer to an entry settles it; later answers are refused (409), and answers
 after the deadline 410. Webhook gates are charged at their own price per request
-(docs/business/pricing.md). Runnable services are in
+(docs/business/pricing.md). `POST /api/v1/gates/{id}/test` sends the same signed message with `type: "gate.test"`, `exp` a
+minute after `iat`, and no `request`, `entry`, `callback` or request details; whatever the
+service answers is reported back to the caller and decides nothing.
+
+Runnable services are in
 [`docs/samples/gate-webhook.mjs`](../docs/samples/gate-webhook.mjs) (Node) and
 [`docs/samples/gate_webhook.py`](../docs/samples/gate_webhook.py) (Python).

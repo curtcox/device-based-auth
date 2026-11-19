@@ -201,3 +201,16 @@ test('Duo Push and Okta Verify gates are added from the Gates page, their secret
   await page.getByRole('button', { name: 'Add Duo Push' }).click();
   await expect(page.locator('#flash')).toContainText('api_host must be your Duo API hostname');
 });
+
+test('a webhook gate can be tested from the Gates page (STATUS B7 G9)', async ({ page, request }) => {
+  const owner = uniqueName('hooktest');
+  await fund(request, owner);
+  const { generateKeyPair, exportPublicJwk } = await import('../../packages/verify/src/index.js');
+  const jwk = await exportPublicJwk((await generateKeyPair(true)).publicKey);
+  // Nothing listens on port 9, so the test reports that the service did not answer.
+  const gate = await (await request.post('/api/v1/gates', { headers: asLocal(owner), data: { kind: 'webhook', label: 'Ops approvals', url: 'http://localhost:9/dba-gate', public_jwk: jwk } })).json();
+  await signIn(page, owner);
+  await page.getByRole('link', { name: 'Gates', exact: true }).click();
+  await page.locator(`[data-test="${gate.id}"]`).click();
+  await expect(page.locator('#flash')).toContainText('“Ops approvals” did not answer');
+});

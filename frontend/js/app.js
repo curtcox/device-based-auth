@@ -424,6 +424,22 @@ async function approvals(_arg, current) {
 
 const GATE_KINDS = { owner: 'Account owner', 'dba-device': 'Device', totp: 'Authenticator app (TOTP)', webauthn: 'Security key or passkey', webhook: 'Approval service (webhook)', duo: 'Duo Push', 'okta-verify': 'Okta Verify push' };
 
+/** Send a webhook gate a signed gate.test message and say what its service answered. */
+function testGateButton(gate) {
+  const button = h('button', { type: 'button', class: 'secondary small', dataset: { test: gate.id } }, `Test (${usd(config.prices.read)})`);
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const r = await api(`/api/v1/gates/${enc(gate.id)}/test`, { method: 'POST', body: {} });
+      if (r.delivered) flash('success', `“${gate.label}” answered HTTP ${r.status}${r.decision ? ` with “${r.decision}” (a test decides nothing)` : ''}.`);
+      else flash('error', `“${gate.label}” did not answer: ${r.status ? `HTTP ${r.status}` : r.error || 'no answer'}. It must answer 2xx within 10 seconds, without redirecting.`);
+      await refreshStrip();
+    } catch (error) { flash('error', error.message); }
+    finally { button.disabled = false; }
+  });
+  return button;
+}
+
 async function gatesView(_arg, current) {
   const [gates, devices] = await Promise.all([api('/api/v1/gates'), api('/api/v1/devices')]);
   const setup = h('div', { id: 'gate-setup' });
@@ -431,10 +447,10 @@ async function gatesView(_arg, current) {
     [h('strong', {}, g.label), h('div', { class: 'small muted' }, GATE_KINDS[g.kind] || g.kind)],
     h('span', { class: 'mono small' }, g.id),
     g.builtin ? badge('active', 'built in') : badge(g.state === 'active' ? 'active' : 'pending', g.state),
-    g.builtin ? '' : confirmButton('Delete', `Delete gate “${g.label}”? Grants that name only this gate will deny.`, async () => {
+    g.builtin ? '' : [g.kind === 'webhook' ? testGateButton(g) : null, confirmButton('Delete', `Delete gate “${g.label}”? Grants that name only this gate will deny.`, async () => {
       await api(`/api/v1/gates/${enc(g.id)}`, { method: 'DELETE' });
       flash('success', `Deleted gate “${g.label}”.`); await render();
-    }, { confirmLabel: 'Yes, delete' })
+    }, { confirmLabel: 'Yes, delete' })]
   ]);
   const label = (name, value) => h('label', {}, 'Label', h('input', { name, required: true, maxlength: 80, value }));
   const deviceForm = h('form', { class: 'stack', id: 'gate-device-form' },

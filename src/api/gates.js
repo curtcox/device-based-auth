@@ -2,7 +2,8 @@ import { assert, readJson, readText } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { canAccess, SESSION } from '../auth/scopes.js';
 import { requireRecentSignIn } from '../auth/reverify.js';
-import { cleanGateInput } from '../durable-objects/gates.js';
+import { cleanGateInput, signGateTest, postGateEvent } from '../durable-objects/gates.js';
+import { price } from '../utils/pricing.js';
 import { verifyToken } from '../auth/tokens.js';
 
 /**
@@ -12,11 +13,26 @@ import { verifyToken } from '../auth/tokens.js';
  */
 export async function gates(route, request, env, auth) {
   if (request.method === 'GET') return rpc(env.ACCOUNTS, auth.account, 'list-gates');
+  if (new URL(request.url).pathname.endsWith('/test')) return testGate(route, env, auth);
   requireRecentSignIn(auth, 'change your gates');
   if (request.method === 'DELETE') return rpc(env.ACCOUNTS, auth.account, 'delete-gate', { id: route.params.id });
   if (route.params.id) return rpc(env.ACCOUNTS, auth.account, 'activate-gate', { id: route.params.id, body: await readJson(request, 16384), account: auth.account });
   const input = cleanGateInput(await readJson(request, 8192), env);
   return rpc(env.ACCOUNTS, auth.account, 'create-gate', { input, account: auth.account });
+}
+
+/**
+ * POST /api/v1/gates/:id/test: send a webhook gate a signed gate.test message now and report what
+ * its service answered (read price). No recent sign-in: it changes nothing. Other kinds would
+ * reach a person (a push, a notice), so only webhook gates can be tested.
+ */
+async function testGate(route, env, auth) {
+  const gate = (await rpc(env.ACCOUNTS, auth.account, 'list-gates')).items.find(g => g.id === route.params.id);
+  assert(gate, 'not_found', 'Gate not found', 404);
+  assert(gate.kind === 'webhook', 'not_testable', 'Only approval-service (webhook) gates can be tested; test the others by using a grant that names them', 409);
+  await rpc(env.ACCOUNTS, auth.account, 'charge', { kind: 'read', amount: price('read'), aggregate: true, detail: { gate: gate.id } });
+  const result = await postGateEvent(env, gate.url, await signGateTest(env, { gate, account: auth.account }));
+  return { gate: gate.id, url: gate.url, delivered: result.delivered, status: result.status, decision: result.decision ?? null, ...(result.error ? { error: result.error } : {}), cost_microdollars: price('read') };
 }
 
 /** A TOTP code or a security-key assertion offered as proof with an answer. */

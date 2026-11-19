@@ -324,6 +324,22 @@ describe('webhook gates (G5)', () => {
     return { gate: created.body.id, seen, lateAnswer };
   }
 
+  it('tests a webhook gate with a signed gate.test message and reports the answer (G9)', async () => {
+    const { gate, seen } = await service(payload => (payload.type === 'gate.test' ? { decision: 'deny' } : 500));
+    const before = await balance('alice');
+    const result = await call(env, 'POST', `/api/v1/gates/${gate}/test`, { auth: 'alice' });
+    expect(result.body).toMatchObject({ gate, delivered: true, status: 200, decision: 'deny', cost_microdollars: price('read') });
+    expect(before - await balance('alice')).toBe(price('read'));
+    expect(seen[0].header.typ).toBe('dba-gate+jwt');
+    expect(seen[0].payload).toMatchObject({ type: 'gate.test', aud: 'https://approvals.example.com/dba', gate, account: 'alice' });
+    expect(seen[0].payload.request).toBeUndefined();
+    expect(seen[0].payload.exp - seen[0].payload.iat).toBe(60);
+    env.WEBHOOK_FETCH = async () => { throw new TypeError('connection refused'); };
+    expect((await call(env, 'POST', `/api/v1/gates/${gate}/test`, { auth: 'alice' })).body).toMatchObject({ delivered: false, error: 'network_error' });
+    expect((await call(env, 'POST', '/api/v1/gates/owner/test', { auth: 'alice' })).body.code).toBe('not_testable');
+    expect((await call(env, 'POST', '/api/v1/gates/gate_00000000/test', { auth: 'alice' })).status).toBe(404);
+  });
+
   it('refuses webhook URLs that are not public https hosts', async () => {
     const key = await exportPublicJwk((await generateKeyPair(true)).publicKey);
     for (const url of ['http://approvals.example.com/x', 'https://10.0.0.1/x', 'https://user:pw@approvals.example.com/', 'https://approvals.example.com:8443/', 'https://intranet/x']) {

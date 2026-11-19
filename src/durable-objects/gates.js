@@ -484,6 +484,18 @@ export async function signGateEvent(env, { req, entryIndex, gate, account, callb
 }
 
 /**
+ * A test message for a webhook gate (dashboard "Test", `dba gates test`): signed like a gate
+ * request but `type: "gate.test"`, with no request, entry or callback. Services verify it the
+ * same way; whatever they answer is reported back and nothing is decided.
+ */
+export async function signGateTest(env, { gate, account }) {
+  const signer = await activeSigner(env);
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { iss: issuerName(env), aud: gate.url, iat: now, exp: now + 60, jti: randomId('gev', 16), type: 'gate.test', account, gate: gate.id };
+  return signJws({ typ: GATE_EVENT_TYP, kid: signer.kid }, payload, signer.key);
+}
+
+/**
  * POST a gate request to a webhook gate. Returns { delivered, decision? }: a 2xx is delivered; a
  * 200 whose JSON says { "decision": "allow" | "deny" } answers at once. Never follows redirects.
  */

@@ -77,6 +77,7 @@ Gates and confirmation:
                                             device with dba:gates:read).
   dba gates add --kind dba-device --label TEXT --device dev_…
   dba gates add --kind webhook --label TEXT --url https://… --public-jwk JSON
+  dba gates test GATE                       Send a webhook gate a signed test message (5 µ$).
   dba gates remove GATE                     Changing gates needs DBA_API_KEY with gates:write (a device
                                             cannot: that needs a recent sign-in). TOTP, security keys,
                                             Duo and Okta Verify are set up on the dashboard's Gates page.
@@ -588,13 +589,21 @@ async function gatesCommand(profile, { options, positionals }) {
     out(`Added gate ${created.id} (${created.kind}, ${created.state ?? 'active'}). Name it in grants: "require": { "gates": [{ "any": ["${created.id}"] }] }`);
     return;
   }
+  if (sub === 'test') {
+    if (!id) throw new UsageError('Usage: dba gates test GATE');
+    const result = await profile.client.request('POST', `/api/v1/gates/${encodeURIComponent(id)}/test`, { ...await accountAuth(profile, 'gates:write'), body: {} });
+    if (options.json) { out(JSON.stringify(result, null, 2)); return; }
+    if (!result.delivered) throw new ApiError(`${id} did not answer the test: ${result.status ? `HTTP ${result.status}` : result.error || 'no answer'}.`, 'gate_test_failed');
+    out(`${id} answered HTTP ${result.status}${result.decision ? ` with "${result.decision}" (a test decides nothing)` : ''}.`);
+    return;
+  }
   if (sub === 'remove') {
     if (!id) throw new UsageError('Usage: dba gates remove GATE');
     await profile.client.request('DELETE', `/api/v1/gates/${encodeURIComponent(id)}`, await accountAuth(profile, 'gates:write'));
     out(`Removed gate ${id}. Requests that needed only it are now denied.`);
     return;
   }
-  throw new UsageError(`Unknown gates command "${sub}" (list, add, remove)`);
+  throw new UsageError(`Unknown gates command "${sub}" (list, add, test, remove)`);
 }
 
 async function approvals(profile, { options, positionals }) {
