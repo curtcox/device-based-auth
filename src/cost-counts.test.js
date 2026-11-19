@@ -126,3 +126,19 @@ describe('MCP tool calls as a device', () => {
     expect(denied.body.result.isError).toBe(true);
   });
 });
+
+describe('day rollover', () => {
+  it('writes yesterday\'s aggregate rows once, however often the account is read', async () => {
+    const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'k', scopes: ['credentials:read'] } })).body.secret;
+    await call(env, 'GET', '/api/v1/credentials', { auth: `ApiKey ${key}` }); // a metered read: yesterday's aggregate
+    t += DAY; m.reset();
+    await call(env, 'GET', '/api/v1/account', { auth: 'alice' });
+    const first = m.read().rowWrites;
+    expect(first).toBe(2); // the aggregate ledger row and the rolled balance row
+    m.reset();
+    for (let i = 0; i < 3; i++) await call(env, 'GET', '/api/v1/account', { auth: 'alice' });
+    expect(m.read().rowWrites).toBe(0);
+    const ledger = (await call(env, 'GET', '/api/v1/transactions', { auth: 'alice' })).body.items;
+    expect(ledger.filter(r => r.aggregate)).toHaveLength(1);
+  });
+});

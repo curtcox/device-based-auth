@@ -97,6 +97,7 @@ export async function oidcToken(request, env) {
   const params = type.includes('application/json') ? await readJson(request) : Object.fromEntries(new URLSearchParams(await readText(request, 16384)));
   if (params.grant_type === 'refresh_token') {
     const tokens = await refreshMcpTokens(env, params);
+    if (tokens?.unavailable) return oauthError('temporarily_unavailable', 'The account\'s devicebasedauth.org balance is empty; the refresh token still works after a deposit', 503);
     return tokens ? tokenJson(tokens) : oauthError('invalid_grant', 'Refresh token is invalid, used or revoked');
   }
   if (params.grant_type !== 'authorization_code') return oauthError('unsupported_grant_type', 'Only authorization_code and refresh_token are supported');

@@ -41,7 +41,7 @@ handler adds a Durable Object call or a storage write.
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 10 ms, 1 KB × 13 months | 12 | 20 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 6 rows (balance, daily aggregate row, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 8 | 14 | **14** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 4 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
-| Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
+| Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
 | Register or change an audience | Audience owner | 1 Worker req, 4 DO req, 8 rows (incl. later deletions), 4 KB × 13 months | 20 | 33 | **100** |
 | Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
@@ -82,7 +82,14 @@ compaction deletes, revocation, webhooks) and fails when they exceed `OPERATIONS
 found metered reads making 4 DO requests where 3 were counted (5 before authentication took over
 the rate-limit check, which every authenticated request used to spend a DO request on), an
 audience change making 4, and connected MCP apps writing a "last used" row every hour, which is
-gone (the hourly refresh records `refreshed_at`).
+gone (the hourly refresh records `refreshed_at`). It also found the MCP refresh grant writing a
+row per refresh without charging; a refresh now costs a token (5 µ$, about $0.004 a month for an
+app connected around the clock), and keeps its refresh digest on the balance row so it writes no
+row of its own.
+
+The first read of a new day writes yesterday's aggregate ledger rows and saves the rolled balance
+row once (one row a day at most that no operation counts, on accounts active the day before);
+before that fix, every read wrote the aggregate rows again until something was charged.
 
 ### Security notices ride on the issue price
 

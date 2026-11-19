@@ -11,6 +11,7 @@
  * other API keys. Access tokens are short ES256 JWTs naming that record; every use checks it, so
  * revoking the key cuts the app off at once.
  */
+import { price } from '../utils/pricing.js';
 import { assert, ApiError } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { randomId } from '../utils/ids.js';
@@ -126,11 +127,14 @@ export async function refreshMcpTokens(env, params) {
   const refresh = await signToken(REFRESH_PREFIX, { account: data.account, id: data.id, n: randomId('r', 12) }, env.TOKEN_SIGNING_KEY);
   let key;
   try {
-    key = await rpc(env.ACCOUNTS, data.account, 'rotate-oauth-key', { id: data.id, hash: await digest(params.refresh_token), client: await clientDigest(params.client_id || ''), new_hash: await digest(refresh) });
-  } catch (error) { if (error instanceof ApiError && error.status < 500) return null; throw error; }
-  const scopes = params.scope ? mcpScopes(params.scope) : key.scopes;
-  if (!scopes.every(s => key.scopes.includes(s))) return null;
-  return tokenResponse(env, { account: data.account, id: data.id, scopes, clientId: params.client_id, refresh });
+    key = await rpc(env.ACCOUNTS, data.account, 'rotate-oauth-key', { id: data.id, hash: await digest(params.refresh_token), client: await clientDigest(params.client_id || ''), new_hash: await digest(refresh), scopes: params.scope ? mcpScopes(params.scope) : undefined, price: price('token') });
+  } catch (error) {
+    // An empty balance leaves the refresh token as it was, so the app can try again after a deposit.
+    if (error instanceof ApiError && error.status === 402) return { unavailable: true };
+    if (error instanceof ApiError && error.status < 500) return null;
+    throw error;
+  }
+  return tokenResponse(env, { account: data.account, id: data.id, scopes: key.scopes, clientId: params.client_id, refresh });
 }
 
 async function tokenResponse(env, { account, id, scopes, clientId, refresh }) {

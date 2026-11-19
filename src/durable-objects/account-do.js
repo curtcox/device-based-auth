@@ -97,10 +97,11 @@ export class AccountDO {
     });
   }
 
-  async op_account(_args, now) {
+  /** The account summary. `funds_check: true` (a pre-check before a charge) writes nothing. */
+  async op_account({ funds_check = false }, now) {
     return this.tx(async tx => {
       const profile = (await tx.get('profile')) || {};
-      const state = await readBalance(tx, now);
+      const state = await readBalance(tx, now, funds_check ? { flush: false } : undefined);
       return { account: profile.account, created_at: profile.created_at, balance_microdollars: state.balance_microdollars, month: state.month, today: state.day };
     });
   }
@@ -169,7 +170,8 @@ export class AccountDO {
 
   async op_list_keys() {
     const keys = await this.storage.list({ prefix: 'key:' });
-    return { items: [...keys.values()].map(visibleKey) };
+    const refreshed = (await this.storage.get('balance'))?.refresh || {};
+    return { items: [...keys.values()].map(k => visibleKey(refreshed[k.id] ? { ...k, refreshed_at: refreshed[k.id].at } : k)) };
   }
 
   /** A connected app's access token: the record must exist, be an app, and not be revoked. */
@@ -186,20 +188,28 @@ export class AccountDO {
    * Rotate a connected app's refresh token. Presenting an old one means a copy leaked (or the app
    * raced itself): the connection is revoked (OAuth 2.1 §4.3.1) and the caller refused.
    */
-  async op_rotate_oauth_key({ id, hash, client, new_hash }, now) {
+  async op_rotate_oauth_key({ id, hash, client, new_hash, scopes, price }, now) {
     const outcome = await this.tx(async tx => {
       const key = await tx.get(`key:${id}`);
       if (!key || key.kind !== 'oauth' || key.revoked_at || key.oauth.client !== client) return { refused: true };
-      if (key.hash !== hash) {
+      // The current refresh token's digest lives on the balance row once the app has refreshed
+      // (see below); before that, on the key record.
+      const current = (await readBalance(tx, now, { flush: false })).refresh?.[id]?.hash ?? key.hash;
+      if (current !== hash) {
         key.revoked_at = now; key.revoked_reason = 'refresh token reused';
         await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.revoked', { key_id: id, reason: key.revoked_reason });
         await scheduleCompaction(tx, now);
+        await forgetRefresh(tx, id, now);
         return { refused: true };
       }
-      key.hash = new_hash; key.refreshed_at = now;
-      await tx.put(`key:${id}`, key);
-      return { scopes: key.scopes };
+      const granted = scopes ?? key.scopes;
+      if (!granted.every(s => key.scopes.includes(s))) return { refused: true, scope: true };
+      // A refresh issues an hour's access token: charged as a token. The new digest rides on the
+      // balance row the charge writes anyway, so the refresh costs no row of its own.
+      const paid = await charge(tx, { kind: 'token', amount: price, aggregate: true, annotate: state => { (state.refresh ||= {})[id] = { hash: new_hash, at: now }; } }, now);
+      return { scopes: granted, charged: paid.charged };
     });
+    assert(!outcome.scope, 'invalid_scope', 'scope must be within what was approved', 400);
     assert(!outcome.refused, 'invalid_grant', 'Refresh token is invalid, used or revoked', 400);
     return outcome;
   }
@@ -207,7 +217,7 @@ export class AccountDO {
   async op_revoke_key({ id }, now) {
     return this.tx(async tx => {
       const key = await tx.get(`key:${id}`); assert(key, 'not_found', 'API key not found', 404);
-      if (!key.revoked_at) { key.revoked_at = now; await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.revoked', { key_id: id }); await scheduleCompaction(tx, now); }
+      if (!key.revoked_at) { key.revoked_at = now; await tx.put(`key:${id}`, key); await this.audit(tx, now, 'key.revoked', { key_id: id }); await scheduleCompaction(tx, now); if (key.kind === 'oauth') await forgetRefresh(tx, id, now); }
       return visibleKey(key);
     });
   }
@@ -278,7 +288,7 @@ export class AccountDO {
         token = await tx.get(`etok:${enrollment_token.id}`);
         assert(token && token.hash === enrollment_token.hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
       }
-      const issuedToday = (await readBalance(tx, now)).day.counts?.issue || 0; // before this charge counts
+      const issuedToday = (await readBalance(tx, now, { flush: false })).day.counts?.issue || 0; // before this charge counts
       const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid }, receipt: { cid: record.cid, ...(fingerprint ? { fingerprint } : {}) }, annotate: subscribed ? state => { announce = nextNotice(state, now, urgent); } : undefined }, now);
       // The same charge id again (an Idempotency-Key retry, two approvals of one enrollment racing):
       // hand back what the first request issued. Storing this one would be a credential nobody paid for.
@@ -813,6 +823,14 @@ export class AccountDO {
     const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt, shortLived === null ? null : Math.max(shortLived, now + 60000)].filter(t => t !== null);
     if (next.length) await this.storage.setAlarm(Math.min(...next));
   }
+}
+
+/** Drop a revoked app connection's refresh state from the balance row. */
+async function forgetRefresh(tx, id, now) {
+  const state = await readBalance(tx, now, { flush: true });
+  if (!state.refresh?.[id]) return;
+  delete state.refresh[id];
+  await tx.put('balance', state);
 }
 
 /** Make sure compaction will look at this account once the rows written now age out. */

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { testEnv, call, worker, ORIGIN } from '../test-utils/env.js';
+import { testEnv, call, worker, ORIGIN, meter } from '../test-utils/env.js';
+import { OPERATIONS } from './utils/cost-policy.js';
 import { sha256b64u, decodeJws } from '../packages/verify/src/index.js';
+import { price } from './utils/pricing.js';
 
 // Master plan §7.4: the MCP server is OAuth-protected, following the MCP authorization spec, so
 // MCP clients connect with discovery, registration, PKCE and refresh tokens instead of a pasted key.
@@ -119,6 +121,41 @@ describe('MCP OAuth authorization and tokens', () => {
     expect(cut.headers.get('WWW-Authenticate')).toContain('error="invalid_token"');
     const audit = await call(env, 'GET', '/api/v1/audit', { auth: 'alice' });
     expect(audit.body.items.some(e => e.type === 'key.revoked' && e.reason === 'refresh token reused')).toBe(true);
+  });
+
+  it('charges each refresh as a token, keeps the refresh token through an empty balance, and shows when it last refreshed', async () => {
+    const first = await connect();
+    const before = (await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.balance_microdollars;
+    const second = await form({ grant_type: 'refresh_token', refresh_token: first.refresh_token, client_id: first.client_id });
+    expect(second.status).toBe(200);
+    const after = (await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body;
+    expect(before - after.balance_microdollars).toBe(price('token'));
+    expect(after.today.aggregates.token).toEqual({ count: 1, amount: price('token') });
+    const keys = (await call(env, 'GET', '/api/v1/keys', { auth: 'alice' })).body.items;
+    expect(keys[0].refreshed_at).toBeGreaterThan(0);
+    // Empty balance: refused without rotating, so the same refresh token works after a deposit.
+    const account = [...env.ACCOUNTS.objects.values()].find(o => o.storage.rows.has('profile') && o.storage.rows.get('profile').account === 'alice');
+    const balance = account.storage.rows.get('balance'); const kept = balance.balance_microdollars; balance.balance_microdollars = 0;
+    const empty = await form({ grant_type: 'refresh_token', refresh_token: second.body.refresh_token, client_id: first.client_id });
+    expect(empty).toMatchObject({ status: 503, body: { error: 'temporarily_unavailable' } });
+    account.storage.rows.get('balance').balance_microdollars = kept;
+    expect((await form({ grant_type: 'refresh_token', refresh_token: second.body.refresh_token, client_id: first.client_id })).status).toBe(200);
+    // Revoking the connection drops its refresh state from the balance row.
+    await call(env, 'DELETE', `/api/v1/keys/${keys[0].id}`, { auth: 'alice' });
+    expect(account.storage.rows.get('balance').refresh).toEqual({});
+  });
+
+  it('a refresh stays within what a token is priced on (cost policy)', async () => {
+    const first = await connect();
+    const warm = await form({ grant_type: 'refresh_token', refresh_token: first.refresh_token, client_id: first.client_id });
+    const realNow = Date.now; const t = realNow() + 86400000; Date.now = () => t;
+    try {
+      const m = meter(env); m.reset();
+      expect((await form({ grant_type: 'refresh_token', refresh_token: warm.body.refresh_token, client_id: first.client_id })).status).toBe(200);
+      const got = m.read();
+      expect(got.doRequests).toBeLessThanOrEqual(OPERATIONS.token.doRequests);
+      expect(got.rowWrites).toBeLessThanOrEqual(OPERATIONS.token.rowWrites);
+    } finally { Date.now = realNow; }
   });
 
   it('stops working the moment the owner revokes it in the dashboard', async () => {

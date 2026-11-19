@@ -87,7 +87,7 @@ async function allocate(env) {
 
 /** Refuse early (before allocating or signing) when the balance cannot cover the price. */
 export async function requireFunds(env, account, amount) {
-  const state = await rpc(env.ACCOUNTS, account, 'account');
+  const state = await rpc(env.ACCOUNTS, account, 'account', { funds_check: true });
   assert(state.balance_microdollars >= amount, 'insufficient_balance', 'Insufficient balance', 402, { needed_microdollars: amount - state.balance_microdollars, price_microdollars: amount });
 }
 

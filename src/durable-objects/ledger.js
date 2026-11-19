@@ -10,20 +10,30 @@ const day = now => new Date(now).toISOString().slice(0, 10);
 const month = now => new Date(now).toISOString().slice(0, 7);
 const ledgerKey = (at, id) => `ledger:${new Date(at).toISOString()}:${id}`;
 
-/** Read the balance row, rolling day and month summaries forward. Writes happen in save(). */
-export async function readBalance(tx, now = Date.now()) {
+/**
+ * Read the balance row, rolling day and month summaries forward. On the first read of a new day
+ * that writes yesterday's aggregate ledger rows and last month's summary:
+ * - flush 'persist' (the default, for plain readers) also saves the rolled balance row, so later
+ *   reads do not write them again (they used to, on every read until something was charged);
+ * - flush true is for callers that save the balance row themselves (charges, deposits);
+ * - flush false writes nothing, for a read just before a charge in the same transaction (the
+ *   charge then flushes once instead of twice).
+ */
+export async function readBalance(tx, now = Date.now(), { flush = 'persist' } = {}) {
   const state = (await tx.get('balance')) || { balance_microdollars: 0 };
   const rolled = { ...state };
+  const stale = (rolled.day && rolled.day.period !== day(now)) || (rolled.month && rolled.month.period !== month(now));
   if (rolled.day && rolled.day.period !== day(now)) {
     // Flush yesterday's aggregated small charges (reads, decisions, tokens) as one ledger row.
     for (const [kind, agg] of Object.entries(rolled.day.aggregates || {})) {
-      if (agg.amount > 0) await tx.put(ledgerKey(Date.parse(`${rolled.day.period}T23:59:59.999Z`), `agg-${kind}-${rolled.day.period}`), { id: `agg-${kind}-${rolled.day.period}`, kind, amount_microdollars: -agg.amount, count: agg.count, aggregate: true, period: rolled.day.period, created_at: Date.parse(`${rolled.day.period}T23:59:59.999Z`) });
+      if (flush && agg.amount > 0) await tx.put(ledgerKey(Date.parse(`${rolled.day.period}T23:59:59.999Z`), `agg-${kind}-${rolled.day.period}`), { id: `agg-${kind}-${rolled.day.period}`, kind, amount_microdollars: -agg.amount, count: agg.count, aggregate: true, period: rolled.day.period, created_at: Date.parse(`${rolled.day.period}T23:59:59.999Z`) });
     }
     rolled.day = null;
   }
-  if (rolled.month && rolled.month.period !== month(now)) { await tx.put(`month:${rolled.month.period}`, rolled.month); rolled.month = null; }
+  if (rolled.month && rolled.month.period !== month(now)) { if (flush) await tx.put(`month:${rolled.month.period}`, rolled.month); rolled.month = null; }
   rolled.day ||= { period: day(now), aggregates: {} };
   rolled.month ||= { period: month(now), spent_microdollars: 0, by_kind: {}, counts: {} };
+  if (stale && flush === 'persist') await tx.put('balance', rolled);
   return rolled;
 }
 
@@ -42,7 +52,7 @@ export async function charge(tx, { id, kind, amount, aggregate = false, detail, 
     const prior = await tx.get(`receipt:${id}`);
     if (prior) return { ...prior, duplicate: true };
   }
-  const state = await readBalance(tx, now);
+  const state = await readBalance(tx, now, { flush: true });
   assert(state.balance_microdollars >= amount, 'insufficient_balance', 'Insufficient balance', 402, { needed_microdollars: amount - state.balance_microdollars, price_microdollars: amount });
   state.balance_microdollars -= amount;
   state.month.spent_microdollars += amount;
@@ -75,7 +85,7 @@ export async function charge(tx, { id, kind, amount, aggregate = false, detail, 
 export async function deposit(tx, { id, amount, kind = 'deposit' }, now = Date.now()) {
   money(amount);
   if (await tx.get(`deposit:${id}`)) return { duplicate: true };
-  const state = await readBalance(tx, now);
+  const state = await readBalance(tx, now, { flush: true });
   state.balance_microdollars = money(state.balance_microdollars + amount);
   await tx.put(ledgerKey(now, id), { id, kind, amount_microdollars: amount, created_at: now });
   await tx.put(`deposit:${id}`, { amount, created_at: now });
