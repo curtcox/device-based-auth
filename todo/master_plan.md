@@ -58,6 +58,7 @@ cost policy, route table) rather than rewriting it.
 | **Device credential** | The signed document (a JWS) binding a device public key to grants for one or more audiences. The "certificate" in the original brief. |
 | **Proof** | A per-request signature made with the device's private key (DPoP proof JWT) showing the presenter holds the key the credential names. |
 | **Status list** | A compressed bitstring published at a URL; bit *n* set = credential with status index *n* is revoked. |
+| **Gate** | A device or service that must say yes before DBA allows an action (authorization gate) or trusts a sign-in or credential (authentication gate): the account owner, a DBA device, a TOTP app, a security key or passkey, a customer webhook, or Duo/Okta push (§6.4). |
 | **Enrollment** | The flow that gets a device's public key to DBA and the account owner's approval back, ending in an issued credential. |
 
 ---
@@ -147,7 +148,9 @@ Rules:
 | `limits.uses` | Max uses per period. Needs a counter → **online authorization only** (§6.2). | DBA online |
 | `limits.spend_usd_per_month` | Passed to the audience as a caveat (maps to hashbin/cronly spending caps). | The audience |
 | `require.online` | Forces online authorization for every use (instant revocation, usage counters, audit). | DBA online |
-| `require.step_up` | The action needs a fresh user approval (push/passkey) at use time. | DBA online |
+| `require.step_up` | The action needs a fresh user approval (push/passkey) at use time. Same as `require.gates` with the `owner` gate. | DBA online |
+| `require.gates` | Gate entries that must each approve the use; deny on no answer unless the entry says `on_timeout: "allow"` (§6.4). | DBA online |
+| `require.confirmation` | The credential's top-level `confirm` block applies: it authenticates only with a recent confirmation from its gates (§6.4). | Anyone (signed confirmation) |
 
 ### 3.4 Evaluation algorithm
 
@@ -293,8 +296,10 @@ if (!result.allow) return Response.json({ error: 'forbidden', reasons: result.re
 ```
 
 It fetches and caches the JWKS and status lists (both CDN-served; cache hits cost DBA nothing).
-Offline verification cannot enforce `limits.uses`, `require.online` or `require.step_up`; grants
-with those constraints deny offline and tell the verifier to go online.
+Offline verification cannot enforce `limits.uses`, `require.online`, `require.step_up` or
+`require.gates`; grants with those constraints deny offline and tell the verifier to go online.
+A credential with periodic confirmation (§6.4) also needs a current `DBA-Confirmation`, which
+offline verifiers check for free.
 
 ### 6.2 Online (`POST /api/v1/authorize`, metered)
 
@@ -310,6 +315,40 @@ A device can exchange its credential (with a proof) for a ≤ 10-minute bearer a
 audience: `dba token --aud hashbin.org` prints it, so shell scripts can do
 `curl -H "Authorization: Bearer $(dba token --aud hashbin.org)"`. This trades key binding for
 convenience only for minutes. Audiences decide whether to accept these tokens.
+
+### 6.4 Additional gates (authentication and authorization)
+
+Detailed plan: [`todo/additional_gates.md`](additional_gates.md) (STATUS B7; owner's choices D12,
+prices D13). Generalizes `require.step_up`.
+
+- **Authorization gate**: *this action is allowed as long as it is approved by this device or
+  service.* A grant's `require.gates` lists entries; each entry names 1–5 gates (any one may
+  answer), a timeout and what happens on no answer. All entries must allow. Online only.
+- **Authentication gate**: *this identity is trusted as valid as long as it is confirmed by this
+  device or service.* Applied at sign-in (Sign in with DBA, §9.2, and the DBA dashboard, which
+  then needs recovery codes) and optionally over time: a credential with a `confirm` block works
+  only while the device holds a confirmation (a short-lived `dba-confirmation+jwt` signed by the
+  issuer) no older than `every_s`, so offline verifiers enforce it for free.
+- **Gate kinds**: the account owner (today's step-up), a named DBA device answering with its own
+  key, TOTP authenticator apps, WebAuthn security keys and passkeys, a customer webhook service
+  (asymmetric signatures both ways), Duo Push and Okta Verify.
+- **Fail closed by default**: a deny, or no answer before the timeout, denies. An entry may opt
+  into `on_timeout: "allow"`; then no answer by the deadline allows, whether the approver stayed
+  silent or could not be reached (D12). This is a veto window, not a check: anyone who can keep
+  the gate from answering gets through after the wait. Every allow by timeout is audited,
+  announced to the owner, and marked in the decision (`by: "timeout"`), the confirmation
+  (`by_timeout`) and the ID token (`acr`). An explicit deny, a deleted gate, or a gate the
+  audience's policy rejects always denies; allow-on-timeout is never answerable inline by the
+  person it gates.
+- **Audiences decide too**: an action catalog entry (or OIDC client) can require gates, limit
+  their kinds, and forbid allow-on-timeout (`fail_open: false`). Account owners can add gates but
+  never weaken an audience's policy; offline verifiers load the catalog and go online for gated
+  actions.
+- **Secrets**: TOTP seeds and Duo/Okta API credentials are sealed with a rotatable Worker key and
+  never returned or logged. Device private keys still never reach DBA.
+- **Money**: each gate contacted is a prepaid operation billed to the account whose gates they
+  are; the audience still pays the decision. A gate request the owner cannot pay for is not sent
+  and counts as unreachable.
 
 ---
 
@@ -476,6 +515,9 @@ package, conformance vectors and the integration checklists (`todo/integrate_has
   (and push to registered DBA devices) on every issuance; per-account issuance rate limits.
 - **Issuer key compromise**: rotation runbook, short default lifetimes, `kid` pinning, mass
   force-renew.
+- **Gates** (§6.4): push-fatigue limits (one waiting request per subject, number matching at
+  sign-in, per-device rate limits that deny rather than count as silence), no self-approval for
+  any gate kind, and gate configuration changes behind a recent sign-in.
 - **Replay**: DPoP `jti` + `iat` window; online authorize keeps a replay cache; docs tell offline
   verifiers to keep a 2-minute `jti` cache (verify library does it in-isolate by default; shared
   replay via a DO is optional).
@@ -522,6 +564,7 @@ STATUS.md AGENTS.md      Status (single source of truth) and contributor guide
 | 8 | cronly integration (§9.1, §9.2 Stage A then B) | cronly accepts DBA device keys and DBA sign-in in production |
 | 9 | hashbin integration | Same for hashbin |
 | 10 | Launch hardening: cost brake, monitoring, security review, legal pages, production acceptance | Launch checklist in STATUS.md all ✅ |
+| 11 | Additional gates (§6.4), phases G1–G9 of [`todo/additional_gates.md`](additional_gates.md) | Gated authorization, sign-in and periodic confirmation work online and offline; every new vector passes in all three verifiers |
 
 ---
 
