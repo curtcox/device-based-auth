@@ -1051,7 +1051,7 @@ export class AccountDO {
   }
 
   /**
-   * A sign-in through Sign in with devicebasedauth.org (todo/additional_gates.md §5.1): resolve its
+   * A sign-in through Sign in with devicebasedauth.org (done/additional_gates.md §5.1): resolve its
    * gates (the account's for this site, or its default; and the site's policy), open or read their
    * request, and once they pass (or when there are none) store the authorization code with the
    * claims to put in the ID token. One account request either way, as before gates.
@@ -1106,7 +1106,7 @@ export class AccountDO {
     return result;
   }
 
-  // ---- Periodic confirmation (todo/additional_gates.md §3.4, §5.3) ------------------------
+  // ---- Periodic confirmation (done/additional_gates.md §3.4, §5.3) ------------------------
 
   /**
    * Confirm a credential that carries confirm: open (or read) its `confirm` gate request; once its
@@ -1163,7 +1163,7 @@ export class AccountDO {
     });
   }
 
-  // ---- The dashboard's own sign-in gate (todo/additional_gates.md §5.2) -----------------
+  // ---- The dashboard's own sign-in gate (done/additional_gates.md §5.2) -----------------
 
   async op_dashboard_status({ session }, now) {
     return { dashboard: await dashboardState(this.storage, session, now), recovery_codes_left: ((await this.storage.get('recovery'))?.hashes?.length ?? 0) };

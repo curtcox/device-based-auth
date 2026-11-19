@@ -1,5 +1,5 @@
 /**
- * The gate approval page (STATUS B7, todo/additional_gates.md §4.3), opened from a security
+ * The gate approval page (STATUS B7, done/additional_gates.md §4.3), opened from a security
  * notice or a site's gate_request.approve_url. The signed link is the URL fragment, so it never
  * reaches server logs or Referer headers. Whoever holds the authenticator app or security key a
  * gate names answers here, signed in or not: the factor is the authentication. Everything shown

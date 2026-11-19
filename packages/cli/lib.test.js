@@ -72,7 +72,8 @@ import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, keyStoreOption, osSecretStore, powershellEncoded, dpapiScript, saveDeviceKey, forgetDeviceKey, SECRET_SERVICE, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
   curlRequest, curlArgs, curlHeaderFile, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList,
-  needsConfirmation, currentConfirmation, waitForConfirmation, confirmationHeaders, formatGateList, gateInputFromOptions, describeGateRequest, answerFor
+  needsConfirmation, currentConfirmation, waitForConfirmation, confirmationHeaders, formatGateList, gateInputFromOptions, describeGateRequest, answerFor,
+  curlWaitOption, pendingGate, waitThroughGates, describePendingGate
 } from './lib.js';
 import { verifyJws, verifyProof, inspectCredential, jwkThumbprint, sha256b64u, generateKeyPair } from '../verify/src/index.js';
 import { testEnv, call, worker, ORIGIN } from '../../test-utils/env.js';
@@ -639,5 +640,49 @@ describe('OS secret store', () => {
     expect(unused.entries.size).toBe(0);
     await forgetDeviceKey(fallback.file, { secrets: unused }); // a file key: nothing to remove
     expect(unused.removed).toEqual([]);
+  });
+});
+
+describe('dba curl --dba-wait (STATUS B7 G9)', () => {
+  it('takes --dba-wait out of curl\'s arguments and refuses options that hide the response', () => {
+    expect(curlWaitOption(['-sS', 'https://x.org/'])).toEqual({ args: ['-sS', 'https://x.org/'], waitSeconds: null });
+    expect(curlWaitOption(['--dba-wait', '-X', 'DELETE', 'https://x.org/'])).toEqual({ args: ['-X', 'DELETE', 'https://x.org/'], waitSeconds: 300 });
+    expect(curlWaitOption(['https://x.org/', '--dba-wait=45']).waitSeconds).toBe(45);
+    expect(() => curlWaitOption(['--dba-wait=soon', 'https://x.org/'])).toThrow(UsageError);
+    for (const bad of [['-o', 'out'], ['--output=out'], ['-O'], ['-i'], ['--fail'], ['-sSf'], ['-D', '-'], ['-w', '%{http_code}']]) {
+      expect(() => curlWaitOption(['--dba-wait', ...bad, 'https://x.org/'])).toThrow(/drop -/);
+    }
+    // A value that merely looks like one of them is not an option; nor is -H's header text.
+    expect(curlWaitOption(['--dba-wait', '-H', '-o: x', '-d', '-i', 'https://x.org/']).args).toHaveLength(5);
+    // In a short cluster, letters after one that takes a value are that value.
+    expect(curlWaitOption(['--dba-wait', '-Hfoo: bar', 'https://x.org/']).args).toHaveLength(2);
+    expect(() => curlWaitOption(['--dba-wait', '-sHfoo: bar', 'https://x.org/'])).not.toThrow();
+  });
+
+  it('knows a gate_pending answer from any other', () => {
+    expect(pendingGate(403, JSON.stringify({ code: 'gate_pending', gate_request: { id: 'gtr_1', retry_after: 2 } }))).toEqual({ id: 'gtr_1', retry_after: 2 });
+    expect(pendingGate(403, JSON.stringify({ code: 'gate_pending' }))).toEqual({});
+    expect(pendingGate(403, JSON.stringify({ code: 'gate_denied' }))).toBeNull();
+    expect(pendingGate(200, JSON.stringify({ code: 'gate_pending' }))).toBeNull();
+    expect(pendingGate(403, '<html>')).toBeNull();
+  });
+
+  it('retries every retry_after seconds until the site answers otherwise or the wait runs out', async () => {
+    let now = 0; const sleeps = []; const told = [];
+    const pending = { status: 403, body: JSON.stringify({ code: 'gate_pending', gate_request: { id: 'gtr_9', retry_after: 3 } }) };
+    const answers = [pending, pending, { status: 200, body: 'ok' }];
+    const result = await waitThroughGates(async () => answers.shift(), { waitSeconds: 60, onPending: g => told.push(g.id), sleep: async ms => { sleeps.push(ms); now += ms; }, clock: () => now });
+    expect(result).toEqual({ response: { status: 200, body: 'ok' }, gaveUp: false });
+    expect(sleeps).toEqual([3000, 3000]);
+    expect(told).toEqual(['gtr_9']);
+    now = 0;
+    const timedOut = await waitThroughGates(async () => pending, { waitSeconds: 10, sleep: async ms => { now += ms; }, clock: () => now });
+    expect(timedOut.gaveUp).toBe(true);
+    expect(now).toBe(9000);
+  });
+
+  it('says where to approve, without the site\'s control characters', () => {
+    expect(describePendingGate({ id: 'gtr_1\u001b[2J', approve_url: 'https://devicebasedauth.org/gate.html#dbag_x' })).toBe("dba: waiting for this request's gates (request gtr_1[2J). Approve it at https://devicebasedauth.org/gate.html#dbag_x, or from the dashboard's Approvals page or `dba approvals` on a gate device.");
+    expect(describePendingGate({ approve_url: 'javascript:alert(1)' })).not.toContain('javascript');
   });
 });

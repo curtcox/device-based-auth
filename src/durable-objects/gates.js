@@ -1,5 +1,5 @@
 /**
- * Gates (STATUS B7, todo/additional_gates.md): named devices or services that must say yes before
+ * Gates (STATUS B7, done/additional_gates.md): named devices or services that must say yes before
  * devicebasedauth.org lets something happen. This module holds the account's gate registry rows
  * (`gate:<id>`) and the gate request engine (`gatereq:<id>`) the AccountDO runs; it replaces the
  * old step-up rows (a step-up is a request whose only gate is `owner`).
@@ -48,7 +48,7 @@ export const RETRY_AFTER_S = 2;
 // can still answer from the dashboard; `deleted` and `self` gates never can.
 const ANSWERABLE = new Set(['sent', 'failed', 'unpaid']);
 
-/** Authentication context classes for sign-ins (todo/additional_gates.md §5.1). */
+/** Authentication context classes for sign-ins (done/additional_gates.md §5.1). */
 export const ACR = Object.freeze({ gated: 'urn:devicebasedauth.org:acr:gated', gatedTimeout: 'urn:devicebasedauth.org:acr:gated-timeout', session: 'urn:devicebasedauth.org:acr:session' });
 // RFC 8176 authentication method references for each kind of gate that answered.
 const AMR_FOR_KIND = { totp: 'otp', webauthn: 'hwk', 'dba-device': 'swk', webhook: 'mfa' };

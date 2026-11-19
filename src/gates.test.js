@@ -6,7 +6,7 @@ import { hotp } from './services/totp.js';
 import { answerChallenge } from './services/webauthn.js';
 import { softAuthenticator } from '../test-utils/authenticator.js';
 
-// STATUS B7, phase G2 (todo/additional_gates.md): the gate registry and the gate request engine.
+// STATUS B7, phase G2 (done/additional_gates.md): the gate registry and the gate request engine.
 
 let env; const realNow = Date.now; let t;
 beforeEach(async () => {

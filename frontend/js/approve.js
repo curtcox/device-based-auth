@@ -132,7 +132,7 @@ function approvalForm() {
 }
 
 /**
- * "Require periodic confirmation" (todo/additional_gates.md §3.4): the owner may decide that this
+ * "Require periodic confirmation" (done/additional_gates.md §3.4): the owner may decide that this
  * device works only while one of their gates confirms it every so often. The gates are loaded
  * from the account; nothing is added unless the box is ticked.
  */

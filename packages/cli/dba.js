@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, tpmKeyFile, loadDeviceKey, keyStoreOption, osSecretStore, saveDeviceKey, forgetDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, curlHeaderFile, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList,
+  curlRequest, curlArgs, curlHeaderFile, curlWaitOption, waitThroughGates, describePendingGate, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList,
   needsConfirmation, currentConfirmation, waitForConfirmation, confirmationHeaders, formatGateList, gateInputFromOptions, describeGateRequest, answerFor
 } from './lib.js';
 import { inspectCredential, createProof } from '@devicebasedauth/verify';
@@ -50,6 +50,10 @@ Use the credential:
   dba headers METHOD URL                    Print Authorization and DPoP headers for one request.
   dba sign METHOD URL                       Print only the DPoP proof.
   dba curl CURL-ARGS...                     Run curl (7.55+) with the headers added (from a private file, not argv).
+                                            --dba-wait[=SECONDS] (anywhere among them): while the site
+                                            answers 403 gate_pending, send the request again with a
+                                            fresh proof until its gates decide (default 300 s; exits 1
+                                            if they have not). Prints the final body; no -o, -i, -f.
   dba token --aud SITE                      Print a 10-minute bearer token for SITE:
                                               curl -H "Authorization: Bearer $(dba token --aud hashbin.org)" ...
   dba certificate [--lifetime SECONDS]      Write an X.509 client certificate for this device's key
@@ -402,7 +406,19 @@ async function sign(profile, { positionals }) {
   out(await createProof({ privateKey: key.privateKey, publicJwk: key.publicJwk, method, url, credential }));
 }
 
-async function curl(profile, args) {
+/** Run curl to completion; with `capture`, its stdout is returned instead of shown. */
+function runCurl(args, { capture = false } = {}) {
+  const child = spawn('curl', args, { stdio: ['inherit', capture ? 'pipe' : 'inherit', 'inherit'] });
+  const chunks = [];
+  child.stdout?.on('data', chunk => chunks.push(chunk));
+  return new Promise((resolve, reject) => {
+    child.on('error', error => reject(error.code === 'ENOENT' ? new UsageError('curl is not installed') : error));
+    child.on('close', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), stdout: Buffer.concat(chunks).toString('utf8') }));
+  });
+}
+
+async function curl(profile, allArgs) {
+  const { args, waitSeconds } = curlWaitOption(allArgs);
   const { method, url } = curlRequest(args);
   const device = await usableDevice(profile);
   // The headers go to curl in a file only this user can read (see curlArgs), removed afterwards.
@@ -410,12 +426,26 @@ async function curl(profile, args) {
   try {
     const file = join(dir, 'headers');
     const confirmation = await usableConfirmation(profile, device);
-    await writeFile(file, curlHeaderFile({ ...await deviceHeaders({ ...device, method, url }), ...confirmationHeaders(confirmation) }), { mode: 0o600 });
-    const child = spawn('curl', curlArgs(args, file), { stdio: 'inherit' });
-    return await new Promise((resolve, reject) => {
-      child.on('error', error => reject(error.code === 'ENOENT' ? new UsageError('curl is not installed') : error));
-      child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
-    });
+    const writeHeaders = async () => writeFile(file, curlHeaderFile({ ...await deviceHeaders({ ...device, method, url }), ...confirmationHeaders(confirmation) }), { mode: 0o600 });
+    if (waitSeconds === null) {
+      await writeHeaders();
+      return (await runCurl(curlArgs(args, file))).code;
+    }
+    // --dba-wait: read each response; while the site answers gate_pending, send the request again
+    // with a fresh proof (a proof is used once) until it answers otherwise or the wait runs out.
+    const body = join(dir, 'body');
+    let code = 0;
+    const { response, gaveUp } = await waitThroughGates(async () => {
+      await writeHeaders();
+      await rm(body, { force: true });
+      const result = await runCurl([...curlArgs(args, file), '--no-progress-meter', '-o', body, '-w', '%{http_code}'], { capture: true });
+      code = result.code;
+      const raw = await readFile(body).catch(() => Buffer.alloc(0)); // no file: curl failed, or HEAD
+      return { status: Number(result.stdout.trim().slice(-3)) || 0, body: raw.toString('utf8'), raw };
+    }, { waitSeconds, onPending: gate => note(describePendingGate(gate)) });
+    process.stdout.write(response.raw);
+    if (gaveUp) { note(`dba: still waiting for gates after ${waitSeconds} s; giving up.`); return 1; }
+    return code;
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 

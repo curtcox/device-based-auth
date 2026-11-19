@@ -73,3 +73,55 @@ describe.runIf(process.platform === 'linux')('dba enroll with the OS secret stor
     } finally { await t.cleanup(); }
   });
 });
+
+describe.runIf(process.platform === 'linux')('dba curl --dba-wait (STATUS B7 G9)', () => {
+  it('sends the request again with a fresh proof while the site answers gate_pending, until the owner approves', async () => {
+    const { testEnv, call } = await import('../../test-utils/env.js');
+    const { createServer } = await import('node:http');
+    const env = await testEnv();
+    for (const who of ['alice', 'operator']) await call(env, 'POST', '/api/v1/dev/deposit', { auth: who, body: { amount_microdollars: 1_000_000 } });
+    const apiKey = (await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'verifier', scopes: ['authorize'] } })).body.secret;
+
+    const t = await setup();
+    const fileStore = { DBA_KEY_STORE: 'file' };
+    // A site whose deletes need the owner's approval each time, checked online.
+    const proofs = []; let approved = false; let server;
+    try {
+      await t.dba(['enroll', '--aud', 'hashbin.org', '--action', 'hashbin:content:delete', '--print-request'], fileStore);
+      const { public_jwk } = JSON.parse(await readFile(join(t.home, 'default', 'key.json'), 'utf8'));
+      const issued = await call(env, 'POST', '/api/v1/credentials', { auth: 'alice', body: { public_jwk, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:delete'], require: { gates: [{ any: ['owner'], timeout_s: 120 }] } }] } });
+      expect(issued.status).toBe(200);
+      await t.dba(['import', issued.body.credential], fileStore);
+
+      server = createServer(async (req, res) => {
+        const url = `http://127.0.0.1:${server.address().port}${req.url}`;
+        proofs.push(req.headers.dpop);
+        const decision = (await call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${apiKey}`, body: { credential: req.headers.authorization.slice(4), proof: req.headers.dpop, request: { method: req.method, url }, audience: 'hashbin.org', action: 'hashbin:content:delete', resource: 'abc' } })).body;
+        if (decision.code === 'gate_pending' && !approved) {
+          // The owner sees it and approves from the dashboard, after the first refusal.
+          approved = true;
+          setTimeout(() => call(env, 'POST', `/api/v1/gate-requests/${decision.gate_request.id}/answer`, { auth: 'alice', body: { gate: 'owner', decision: 'allow' } }), 200);
+        }
+        res.writeHead(decision.allow ? 200 : 403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(decision.allow ? { deleted: 'abc' } : { error: 'Not yet', code: decision.code, gate_request: decision.gate_request }));
+      });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      const target = `http://127.0.0.1:${server.address().port}/api/content/abc`;
+
+      const result = await t.dba(['--no-renew', 'curl', '-X', 'DELETE', '--dba-wait=30', target], fileStore);
+      expect(JSON.parse(result.stdout)).toEqual({ deleted: 'abc' });
+      expect(result.stderr).toMatch(/waiting for this request's gates \(request gtr_/);
+      expect(proofs.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(proofs).size).toBe(proofs.length); // a fresh proof each time
+
+      // Without --dba-wait, curl shows the site's answer once.
+      const once = await t.dba(['--no-renew', 'curl', '-sS', '-X', 'DELETE', target], fileStore);
+      expect(once.stdout).toContain('gate_pending');
+      // Options that would hide the answer from dba are refused.
+      await expect(t.dba(['--no-renew', 'curl', '-sSf', '--dba-wait', target], fileStore)).rejects.toMatchObject({ stderr: expect.stringContaining('drop -f') });
+    } finally {
+      server?.close();
+      await t.cleanup();
+    }
+  }, 30000);
+});

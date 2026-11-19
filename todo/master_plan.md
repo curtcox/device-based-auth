@@ -318,7 +318,7 @@ convenience only for minutes. Audiences decide whether to accept these tokens.
 
 ### 6.4 Additional gates (authentication and authorization)
 
-Detailed plan: [`todo/additional_gates.md`](additional_gates.md) (STATUS B7; owner's choices D12,
+Detailed plan: [`done/additional_gates.md`](../done/additional_gates.md) (STATUS B7; owner's choices D12,
 prices D13). Generalizes `require.step_up`.
 
 - **Authorization gate**: *this action is allowed as long as it is approved by this device or
@@ -564,7 +564,7 @@ STATUS.md AGENTS.md      Status (single source of truth) and contributor guide
 | 8 | cronly integration (§9.1, §9.2 Stage A then B) | cronly accepts DBA device keys and DBA sign-in in production |
 | 9 | hashbin integration | Same for hashbin |
 | 10 | Launch hardening: cost brake, monitoring, security review, legal pages, production acceptance | Launch checklist in STATUS.md all ✅ |
-| 11 | Additional gates (§6.4), phases G1–G9 of [`todo/additional_gates.md`](additional_gates.md) | Gated authorization, sign-in and periodic confirmation work online and offline; every new vector passes in all three verifiers |
+| 11 | Additional gates (§6.4), phases G1–G9 of [`done/additional_gates.md`](../done/additional_gates.md) | Gated authorization, sign-in and periodic confirmation work online and offline; every new vector passes in all three verifiers |
 
 ---
 

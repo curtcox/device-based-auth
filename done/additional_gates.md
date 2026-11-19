@@ -1,6 +1,6 @@
 # Additional gates on authentication and authorization
 
-Status: STATUS **B7** (work) and **D12** (owner's choices, 2026-11-19), **D13** (prices, open).
+Status: **done** (G1–G9, 2026-11-19); STATUS **B7**, **D12** (owner's choices, 2026-11-19), **D13** (prices, open).
 Design summary in the master plan §6.4. This file is written to be picked up cold.
 
 ## 1. What and why
@@ -382,7 +382,7 @@ STATUS row updated.
 | G6 ✅ | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
 | G7 ✅ | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
 | G8 ✅ | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
-| G9 🚧 | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
+| G9 ✅ | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
 
 ## 11a. Progress
 
@@ -542,8 +542,19 @@ STATUS row updated.
   (its own GF tables, zigzag, row/column mask formulas and the standard's block table) that checks
   every Reed–Solomon block's syndromes and reads the text back, for every mask. Scanning one with a
   real phone app is still worth doing once.
-- **G9 left:** `--wait` on CLI calls that hit a gate (sites pass `gate_pending` on in their own
-  way; the SDK has `fetchWithGates()`).
+- **G9, `dba curl --dba-wait` (2026-11-19).** The plan's "`--wait` on CLI calls that hit a gate".
+  Named `--dba-wait[=SECONDS]` (default 300) because it sits among curl's own arguments and must
+  never collide with a curl option; it is taken out before curl runs. In that mode dba reads each
+  response (curl writes the body to a private temp file, the status through `-w`) and, while the
+  site answers 403 `gate_pending`, sends the request again with a fresh proof every `retry_after`
+  seconds (1–60), telling the user once where to approve; then it prints the final body, or exits
+  1 if the gates have not decided in time. Options that would hide the response (`-o`, `-O`, `-D`,
+  `-w`, `-i`, `-f` and friends, also inside short clusters) are refused in that mode.
+  `packages/cli/dba.test.js` runs it against a local site that asks the real Worker's
+  `/authorize`, with an owner gate approved after the first refusal.
+- **G9 done (2026-11-19); the plan is complete.** What is left are owner steps, tracked in STATUS:
+  D13 (gate prices), live checks with real Duo and Okta accounts after L9, and scanning a TOTP QR
+  code with a real phone app once.
 - **G9, dashboard approvals (2026-11-19).** The dashboard's Approvals page lists every gate request
   still waiting or approved (`GET /api/v1/gate-requests`; step-up is its owner gate), whatever its
   purpose (use, confirmation, sign-in, dashboard, settings), with each entry's gates by label, what

@@ -1,5 +1,5 @@
 /**
- * Push MFA vendors as gates (STATUS B7, todo/additional_gates.md §4.2, phase G8): Duo Push through
+ * Push MFA vendors as gates (STATUS B7, done/additional_gates.md §4.2, phase G8): Duo Push through
  * the Duo Auth API, and Okta Verify push through the Okta Factors API. DBA starts a push when a
  * gate request opens, then polls its status (at most every POLL_INTERVAL_MS, for at most
  * MAX_POLLS polls); answers are never taken from a client. Vendor hosts are pinned to the vendors'

@@ -5,7 +5,7 @@ import { validateGrant, grantGates } from '../../packages/verify/src/grants.js';
 import { AUDIENCE_NAME } from '../durable-objects/registry-do.js';
 
 /**
- * Gate entries for sign-in (todo/additional_gates.md §3.3): the same shape as require.gates.
+ * Gate entries for sign-in (done/additional_gates.md §3.3): the same shape as require.gates.
  * The owner gate cannot gate a sign-in: the owner is the one signing in.
  */
 export function cleanSignInEntries(entries, path) {
@@ -48,7 +48,7 @@ export async function signInGates(route, request, env, auth) {
 }
 
 /**
- * The dashboard's own sign-in gate (todo/additional_gates.md §5.2). GET /api/v1/session says
+ * The dashboard's own sign-in gate (done/additional_gates.md §5.2). GET /api/v1/session says
  * whether this session is confirmed; POST …/confirm opens (or reads) its gate request, and may
  * carry this page's own answer ({ entry, gate, totp | webauthn }); POST …/recover uses a
  * recovery code. A recent sign-in does not bypass the gate.

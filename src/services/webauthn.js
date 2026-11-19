@@ -1,5 +1,5 @@
 /**
- * WebAuthn for security-key and passkey gates (STATUS B7, todo/additional_gates.md §4.3): register
+ * WebAuthn for security-key and passkey gates (STATUS B7, done/additional_gates.md §4.3): register
  * a credential (keeping only its public key), then check assertions over a challenge bound to one
  * gate request and decision. ES256 (P-256) only, which every FIDO2 security key and platform
  * passkey supports. Attestation statements are not checked: a gate trusts whoever holds the key

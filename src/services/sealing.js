@@ -1,6 +1,6 @@
 /**
  * Sealing for the customer secrets gates need (TOTP seeds now; Duo and Okta keys later), STATUS
- * B7 / todo/additional_gates.md §7. AES-256-GCM under a Worker secret, GATE_SEALING_KEYS: a JSON
+ * B7 / done/additional_gates.md §7. AES-256-GCM under a Worker secret, GATE_SEALING_KEYS: a JSON
  * list of { kid, key } (key: 32 random bytes, base64), the first one sealing and every one
  * unsealing, so a key can be rotated by putting a new one first and re-sealing at leisure.
  * Each blob has its own random nonce and is bound (AAD) to the account and gate it belongs to, so

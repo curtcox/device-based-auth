@@ -123,7 +123,7 @@ export async function audiences(route, request, env, auth) {
   if (body.catalog !== undefined) changes.catalog = cleanCatalog(current.namespace, body.catalog);
   if (body.redirect_uris !== undefined) changes.redirect_uris = cleanRedirects(body.redirect_uris);
   if (body.accept_access_tokens !== undefined) changes.accept_access_tokens = body.accept_access_tokens !== false;
-  // The site's own demand for sign-in gates (todo/additional_gates.md §6); null removes it.
+  // The site's own demand for sign-in gates (done/additional_gates.md §6); null removes it.
   if (body.sign_in_gates !== undefined) changes.sign_in_gates = body.sign_in_gates === null ? null : cleanGatePolicy(body.sign_in_gates, 'sign_in_gates') ?? null;
   if (body.revocation_webhook !== undefined) changes.revocation_webhook = cleanWebhookUrl(body.revocation_webhook, current.name, env);
   const paid = await rpc(env.ACCOUNTS, auth.account, 'charge', { id: `audience-${current.name}-${Date.now()}`, kind: 'audience', amount: price('audience') });
