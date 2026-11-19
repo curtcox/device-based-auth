@@ -352,7 +352,7 @@ async function approvals(_arg, current) {
 // ---------------------------------------------------------------------------------------------
 // Gates (STATUS B7): devices and factors that approve requests named in require.gates
 
-const GATE_KINDS = { owner: 'Account owner', 'dba-device': 'Device', totp: 'Authenticator app (TOTP)', webauthn: 'Security key or passkey' };
+const GATE_KINDS = { owner: 'Account owner', 'dba-device': 'Device', totp: 'Authenticator app (TOTP)', webauthn: 'Security key or passkey', webhook: 'Approval service (webhook)' };
 
 async function gatesView(_arg, current) {
   const [gates, devices] = await Promise.all([api('/api/v1/gates'), api('/api/v1/devices')]);
@@ -423,6 +423,21 @@ async function gatesView(_arg, current) {
       } catch (error) { flash('error', error.name === 'NotAllowedError' ? 'The security key did not answer (cancelled or timed out).' : error.message); }
     });
   });
+  const hookForm = h('form', { class: 'stack', id: 'gate-webhook-form' },
+    h('h3', {}, 'Your approval service'),
+    h('p', { class: 'muted small' }, 'An https endpoint you run. It receives each request signed by devicebasedauth.org and answers allow or deny (spec/events.md §6).'),
+    label('label', 'Approval service'),
+    h('label', {}, 'URL', h('input', { name: 'url', type: 'url', required: true, placeholder: 'https://approvals.example.com/dba' })),
+    h('label', {}, 'Public key (JWK) for late answers', h('textarea', { name: 'public_jwk', rows: 3, required: true, spellcheck: 'false', placeholder: '{ "kty": "EC", "crv": "P-256", "x": "…", "y": "…" }' })),
+    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Add approval service')));
+  hookForm.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(hookForm, async () => {
+      let jwk; try { jwk = JSON.parse(field(hookForm, 'public_jwk')); } catch { flash('error', 'The public key must be a JSON JWK.'); return; }
+      try { const g = await api('/api/v1/gates', { method: 'POST', body: { kind: 'webhook', label: field(hookForm, 'label'), url: field(hookForm, 'url'), public_jwk: jwk } }); flash('success', `Added gate ${g.id}.`); await render(); }
+      catch (error) { flash('error', error.message); }
+    });
+  });
   if (!current()) return [];
   return [
     h('h1', {}, 'Gates'),
@@ -430,7 +445,7 @@ async function gatesView(_arg, current) {
     table(['Gate', 'Id', 'State', ''], rows, { id: 'gate-list' }),
     setup,
     h('h2', {}, 'Add a gate'),
-    h('div', { class: 'grid' }, deviceForm, totpForm, keyForm)
+    h('div', { class: 'grid' }, deviceForm, totpForm, keyForm, hookForm)
   ];
 }
 

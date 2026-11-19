@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { testEnv, call, newDevice, enroll, settle, runAlarms } from '../test-utils/env.js';
-import { inspectCredential, createProof } from '../packages/verify/src/index.js';
+import { inspectCredential, createProof, generateKeyPair, exportPublicJwk, signJws, verifyJws, decodeJws } from '../packages/verify/src/index.js';
 import { price } from './utils/pricing.js';
 import { hotp } from './services/totp.js';
 import { answerChallenge } from './services/webauthn.js';
@@ -48,7 +48,7 @@ describe('gate registry', () => {
     const list = (await call(env, 'GET', '/api/v1/gates', { auth: 'alice' })).body.items;
     expect(list.map(g => g.id)).toEqual(['owner', gate]);
     expect(list[1]).toMatchObject({ kind: 'dba-device', label: 'Phone', device_id: deviceId, state: 'active' });
-    expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'webhook', label: 'x' } })).body.code).toBe('gate_kind_not_available');
+    expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'duo', label: 'x' } })).body.code).toBe('gate_kind_not_available');
     expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'dba-device', label: 'x', device_id: 'dev_NOTMYDEVICE1' } })).body.code).toBe('unknown_device');
     expect((await call(env, 'DELETE', `/api/v1/gates/${gate}`, { auth: 'alice' })).body.deleted).toBe(true);
     expect((await call(env, 'GET', '/api/v1/gates', { auth: 'alice' })).body.items).toHaveLength(1);
@@ -300,5 +300,83 @@ describe('TOTP and security-key gates (G4)', () => {
     expect((await call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate: created.id, decision: 'allow', webauthn: await sign('deny') } })).body.code).toBe('invalid_webauthn');
     expect((await call(env, 'POST', `/api/v1/gate-links/${link}/answer`, { body: { gate: created.id, decision: 'allow', webauthn: await sign('allow') } })).body.status).toBe('allowed');
     expect((await ask()).allow).toBe(true);
+  });
+});
+
+describe('webhook gates (G5)', () => {
+  /** A fake approval service: answers each signed gate request with `reply(payload)`. */
+  async function service(reply) {
+    const pair = await generateKeyPair(true);
+    const seen = [];
+    env.WEBHOOK_FETCH = async (url, init) => {
+      const { header, payload } = decodeJws(init.body);
+      seen.push({ url, header, payload, jws: init.body });
+      const r = await reply(payload);
+      if (r === 'down') throw new TypeError('connection refused');
+      return typeof r === 'number' ? new Response(null, { status: r }) : Response.json(r);
+    };
+    const created = await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'webhook', label: 'Approvals service', url: 'https://approvals.example.com/dba', public_jwk: await exportPublicJwk(pair.publicKey) } });
+    expect(created.body).toMatchObject({ kind: 'webhook', state: 'active', url: 'https://approvals.example.com/dba' });
+    const lateAnswer = (payload, decision, key = pair.privateKey) => signJws({ typ: 'dba-gate-answer+jwt' }, { gate: payload.gate, request: payload.request, entry: payload.entry, decision, iat: Math.floor(t / 1000) }, key);
+    return { gate: created.body.id, seen, lateAnswer };
+  }
+
+  it('refuses webhook URLs that are not public https hosts', async () => {
+    const key = await exportPublicJwk((await generateKeyPair(true)).publicKey);
+    for (const url of ['http://approvals.example.com/x', 'https://10.0.0.1/x', 'https://user:pw@approvals.example.com/', 'https://approvals.example.com:8443/', 'https://intranet/x']) {
+      expect((await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'webhook', label: 'x', url, public_jwk: key } })).body.code, url).toBe('invalid_gate');
+    }
+  });
+
+  it('posts a request signed by the issuer and takes an answer in the response', async () => {
+    const { gate, seen } = await service(payload => ({ decision: payload.action === 'hashbin:content:delete' ? 'allow' : 'deny' }));
+    const { ask } = await asker([{ actions: ['hashbin:content:delete', 'hashbin:content:write'], require: { gates: [{ any: [gate] }] } }]);
+    expect((await ask()).code).toBe('gate_pending');
+    await settle(env);
+    expect(seen).toHaveLength(1);
+    const jwks = (await call(env, 'GET', '/.well-known/jwks.json')).body;
+    expect(seen[0].header.typ).toBe('dba-gate+jwt');
+    expect(await verifyJws(seen[0].jws, jwks.keys.find(k => k.kid === seen[0].header.kid))).toBeTruthy();
+    expect(seen[0].payload).toMatchObject({ type: 'gate.request', gate, entry: 0, action: 'hashbin:content:delete', audience: 'hashbin.org', device: { name: 'Test device' }, callback: expect.stringMatching(/\/api\/v1\/gate-links\/dbag_.*\/callback$/) });
+    expect((await ask()).allow).toBe(true);
+    expect((await ask('hashbin:content:write')).code).toBe('gate_pending');
+    await settle(env);
+    expect((await ask('hashbin:content:write')).code).toBe('gate_denied');
+  });
+
+  it('takes a late answer signed with the registered key, and refuses one signed by another', async () => {
+    const { gate, seen, lateAnswer } = await service(() => 202);
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [gate] }] } }]);
+    await ask(); await settle(env);
+    const { payload } = seen[0];
+    const callback = payload.callback.replace('http://localhost:8787', '');
+    const forged = await lateAnswer(payload, 'allow', (await generateKeyPair(true)).privateKey);
+    expect((await call(env, 'POST', callback, { body: forged, headers: { 'Content-Type': 'application/jwt' } })).body.code).toBe('invalid_signature');
+    expect((await ask()).code).toBe('gate_pending');
+    const answered = await call(env, 'POST', callback, { body: await lateAnswer(payload, 'allow'), headers: { 'Content-Type': 'application/jwt' } });
+    expect(answered.body).toMatchObject({ status: 'allowed' });
+    expect((await ask()).allow).toBe(true);
+  });
+
+  it('follows on_timeout when the service cannot be reached', async () => {
+    const { gate } = await service(() => 'down');
+    const { ask } = await asker([
+      { actions: ['hashbin:content:delete'], require: { gates: [{ any: [gate], timeout_s: 30, on_timeout: 'allow' }] } },
+      { actions: ['hashbin:content:write'], require: { gates: [{ any: [gate], timeout_s: 30 }] } }
+    ]);
+    const pending = await ask('hashbin:content:delete'); await ask('hashbin:content:write');
+    await settle(env);
+    expect((await call(env, 'GET', `/api/v1/gate-requests/${pending.gate_request.id}`, { auth: 'alice' })).body.entries[0].gates[0].delivery).toBe('failed');
+    t += 31000;
+    expect((await ask('hashbin:content:delete')).allow).toBe(true);
+    expect((await ask('hashbin:content:write')).code).toBe('gate_denied');
+  });
+
+  it('charges the webhook price for a webhook gate', async () => {
+    const { gate } = await service(() => 202);
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [gate] }] } }]);
+    const before = await balance('alice');
+    await ask(); await settle(env);
+    expect(before - await balance('alice')).toBe(price('gate_webhook'));
   });
 });

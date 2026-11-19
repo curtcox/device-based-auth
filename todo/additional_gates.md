@@ -378,7 +378,7 @@ STATUS row updated.
 | G2 ✅ | Gate registry (`gate:` rows, CRUD routes, scopes `gates:read`/`gates:write`), `gatereq:` engine replacing `stepup:`, `owner` and `dba-device` kinds, `/authorize` integration, timeouts both ways, audit and notices, D13 prices in cost policy | Concurrency tests: one answer settles; timeout allow/deny; deleted gate denies; balance refusal behaves per §2; cost-count test covers the new ops |
 | G3 ✅ | Audience gate policy: catalog field, issuance check, `/authorize` check, verify library `catalog` option | An ungated grant for a required action is refused online and gets `online_required` offline |
 | G4 ✅ | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
-| G5 | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
+| G5 ✅ | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
 | G6 | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
 | G7 | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
 | G8 | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
@@ -428,6 +428,13 @@ STATUS row updated.
   delivered with the owner's Web Push (a notice linking to the approval page), so "failed" means no
   push subscription. Not done: a QR code for the otpauth URI (the page shows the secret and an
   `otpauth:` link), and inline answers on the OIDC consent page (G6).
+- **G5 done (2026-11-19).** Webhook gates: `{ kind: "webhook", label, url, public_jwk }`, active at
+  once; URL https on a public host name, default port (localhost http in local mode). DBA posts
+  after the decision answers `gate_pending` (in the background, 10 s timeout), so the first answer
+  is seen on the site's next retry; the late answer goes to `/api/v1/gate-links/<link>/callback`
+  (the approval link's token). The format is spec/events.md §6. Price `gate_webhook` (22 µ$,
+  proposed). The Node sample service runs in CI; a Python one and the dashboard's "test" button
+  for webhook gates are left for G9.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

@@ -3770,7 +3770,7 @@
     "/api/v1/gates": {
       "get": {
         "operationId": "get_api_v1_gates",
-        "summary": "The account's gates: devices (and later services) that approve requests (require.gates). GET lists them with the built-in owner gate; POST adds one: { kind: \"dba-device\", label, device_id }, { kind: \"totp\", label } (answers with setup.secret and setup.otpauth_uri, shown once) or { kind: \"webauthn\", label, user_verification? } (answers with setup.public_key, options for navigator.credentials.create); POST …/activate finishes a TOTP gate ({ code }) or a security key ({ registration: { clientDataJSON, attestationObject } }); DELETE removes one. Changes need a recent sign-in.",
+        "summary": "The account's gates: devices (and later services) that approve requests (require.gates). GET lists them with the built-in owner gate; POST adds one: { kind: \"dba-device\", label, device_id }, { kind: \"totp\", label } (answers with setup.secret and setup.otpauth_uri, shown once) or { kind: \"webauthn\", label, user_verification? } (answers with setup.public_key, options for navigator.credentials.create) or { kind: \"webhook\", label, url, public_jwk } (your approval service: DBA posts it a dba-gate+jwt per request, spec/events.md §6); POST …/activate finishes a TOTP gate ({ code }) or a security key ({ registration: { clientDataJSON, attestationObject } }); DELETE removes one. Changes need a recent sign-in.",
         "x-access": "gates:read",
         "security": [
           {
@@ -3838,7 +3838,7 @@
       },
       "post": {
         "operationId": "post_api_v1_gates",
-        "summary": "The account's gates: devices (and later services) that approve requests (require.gates). GET lists them with the built-in owner gate; POST adds one: { kind: \"dba-device\", label, device_id }, { kind: \"totp\", label } (answers with setup.secret and setup.otpauth_uri, shown once) or { kind: \"webauthn\", label, user_verification? } (answers with setup.public_key, options for navigator.credentials.create); POST …/activate finishes a TOTP gate ({ code }) or a security key ({ registration: { clientDataJSON, attestationObject } }); DELETE removes one. Changes need a recent sign-in.",
+        "summary": "The account's gates: devices (and later services) that approve requests (require.gates). GET lists them with the built-in owner gate; POST adds one: { kind: \"dba-device\", label, device_id }, { kind: \"totp\", label } (answers with setup.secret and setup.otpauth_uri, shown once) or { kind: \"webauthn\", label, user_verification? } (answers with setup.public_key, options for navigator.credentials.create) or { kind: \"webhook\", label, url, public_jwk } (your approval service: DBA posts it a dba-gate+jwt per request, spec/events.md §6); POST …/activate finishes a TOTP gate ({ code }) or a security key ({ registration: { clientDataJSON, attestationObject } }); DELETE removes one. Changes need a recent sign-in.",
         "x-access": "gates:write",
         "security": [
           {
@@ -3908,7 +3908,7 @@
     "/api/v1/gates/{id}/activate": {
       "post": {
         "operationId": "post_api_v1_gates_id_activate",
-        "summary": "The account's gates: devices (and later services) that approve requests (require.gates). GET lists them with the built-in owner gate; POST adds one: { kind: \"dba-device\", label, device_id }, { kind: \"totp\", label } (answers with setup.secret and setup.otpauth_uri, shown once) or { kind: \"webauthn\", label, user_verification? } (answers with setup.public_key, options for navigator.credentials.create); POST …/activate finishes a TOTP gate ({ code }) or a security key ({ registration: { clientDataJSON, attestationObject } }); DELETE removes one. Changes need a recent sign-in.",
+        "summary": "The account's gates: devices (and later services) that approve requests (require.gates). GET lists them with the built-in owner gate; POST adds one: { kind: \"dba-device\", label, device_id }, { kind: \"totp\", label } (answers with setup.secret and setup.otpauth_uri, shown once) or { kind: \"webauthn\", label, user_verification? } (answers with setup.public_key, options for navigator.credentials.create) or { kind: \"webhook\", label, url, public_jwk } (your approval service: DBA posts it a dba-gate+jwt per request, spec/events.md §6); POST …/activate finishes a TOTP gate ({ code }) or a security key ({ registration: { clientDataJSON, attestationObject } }); DELETE removes one. Changes need a recent sign-in.",
         "x-access": "gates:write",
         "security": [
           {
@@ -3987,7 +3987,7 @@
     "/api/v1/gates/{id}": {
       "delete": {
         "operationId": "delete_api_v1_gates_id",
-        "summary": "The account's gates: devices (and later services) that approve requests (require.gates). GET lists them with the built-in owner gate; POST adds one: { kind: \"dba-device\", label, device_id }, { kind: \"totp\", label } (answers with setup.secret and setup.otpauth_uri, shown once) or { kind: \"webauthn\", label, user_verification? } (answers with setup.public_key, options for navigator.credentials.create); POST …/activate finishes a TOTP gate ({ code }) or a security key ({ registration: { clientDataJSON, attestationObject } }); DELETE removes one. Changes need a recent sign-in.",
+        "summary": "The account's gates: devices (and later services) that approve requests (require.gates). GET lists them with the built-in owner gate; POST adds one: { kind: \"dba-device\", label, device_id }, { kind: \"totp\", label } (answers with setup.secret and setup.otpauth_uri, shown once) or { kind: \"webauthn\", label, user_verification? } (answers with setup.public_key, options for navigator.credentials.create) or { kind: \"webhook\", label, url, public_jwk } (your approval service: DBA posts it a dba-gate+jwt per request, spec/events.md §6); POST …/activate finishes a TOTP gate ({ code }) or a security key ({ registration: { clientDataJSON, attestationObject } }); DELETE removes one. Changes need a recent sign-in.",
         "x-access": "gates:write",
         "security": [
           {
@@ -4066,7 +4066,7 @@
     "/api/v1/gate-links/{token}": {
       "get": {
         "operationId": "get_api_v1_gate_links_token",
-        "summary": "The approval page's view of one gate request, named by a signed link (/gate.html#<link>, sent to the owner's browsers and returned as gate_request.approve_url): GET shows the request and the factors that may answer it; POST …/answer { entry?, gate, decision, totp: { code } | webauthn: { credential_id, clientDataJSON, authenticatorData, signature } } answers with a TOTP code or a security key, no sign-in needed. The security-key challenge is base64url(SHA-256(\"dba-gate-answer\\n<request id>\\n<entry>\\n<decision>\\n<salt>\")).",
+        "summary": "The approval page's view of one gate request, named by a signed link (/gate.html#<link>, sent to the owner's browsers and returned as gate_request.approve_url): GET shows the request and the factors that may answer it; POST …/answer { entry?, gate, decision, totp: { code } | webauthn: { credential_id, clientDataJSON, authenticatorData, signature } } answers with a TOTP code or a security key, no sign-in needed; POST …/callback takes a webhook gate's late answer (a JWS, typ dba-gate-answer+jwt, signed with the key the gate registered). The security-key challenge is base64url(SHA-256(\"dba-gate-answer\\n<request id>\\n<entry>\\n<decision>\\n<salt>\")).",
         "x-access": "public",
         "security": [],
         "parameters": [
@@ -4134,7 +4134,75 @@
     "/api/v1/gate-links/{token}/answer": {
       "post": {
         "operationId": "post_api_v1_gate_links_token_answer",
-        "summary": "The approval page's view of one gate request, named by a signed link (/gate.html#<link>, sent to the owner's browsers and returned as gate_request.approve_url): GET shows the request and the factors that may answer it; POST …/answer { entry?, gate, decision, totp: { code } | webauthn: { credential_id, clientDataJSON, authenticatorData, signature } } answers with a TOTP code or a security key, no sign-in needed. The security-key challenge is base64url(SHA-256(\"dba-gate-answer\\n<request id>\\n<entry>\\n<decision>\\n<salt>\")).",
+        "summary": "The approval page's view of one gate request, named by a signed link (/gate.html#<link>, sent to the owner's browsers and returned as gate_request.approve_url): GET shows the request and the factors that may answer it; POST …/answer { entry?, gate, decision, totp: { code } | webauthn: { credential_id, clientDataJSON, authenticatorData, signature } } answers with a TOTP code or a security key, no sign-in needed; POST …/callback takes a webhook gate's late answer (a JWS, typ dba-gate-answer+jwt, signed with the key the gate registered). The security-key challenge is base64url(SHA-256(\"dba-gate-answer\\n<request id>\\n<entry>\\n<decision>\\n<salt>\")).",
+        "x-access": "public",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/gate-links/{token}/callback": {
+      "post": {
+        "operationId": "post_api_v1_gate_links_token_callback",
+        "summary": "The approval page's view of one gate request, named by a signed link (/gate.html#<link>, sent to the owner's browsers and returned as gate_request.approve_url): GET shows the request and the factors that may answer it; POST …/answer { entry?, gate, decision, totp: { code } | webauthn: { credential_id, clientDataJSON, authenticatorData, signature } } answers with a TOTP code or a security key, no sign-in needed; POST …/callback takes a webhook gate's late answer (a JWS, typ dba-gate-answer+jwt, signed with the key the gate registered). The security-key challenge is base64url(SHA-256(\"dba-gate-answer\\n<request id>\\n<entry>\\n<decision>\\n<salt>\")).",
         "x-access": "public",
         "security": [],
         "parameters": [

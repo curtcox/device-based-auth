@@ -87,6 +87,7 @@ export const API_ROUTES = [
   { method: 'DELETE', path: `${V1}/gates/:id`, access: 'gates:write', handler: 'gates' },
   { method: 'GET', path: `${V1}/gate-links/:token`, access: PUBLIC, handler: 'gate-links', free: true },
   { method: 'POST', path: `${V1}/gate-links/:token/answer`, access: PUBLIC, handler: 'gate-links', free: true },
+  { method: 'POST', path: `${V1}/gate-links/:token/callback`, access: PUBLIC, handler: 'gate-links', free: true },
   { method: 'GET', path: `${V1}/gate-requests`, access: AUTHENTICATED, handler: 'gate-requests' },
   { method: 'GET', path: `${V1}/gate-requests/:id`, access: AUTHENTICATED, handler: 'gate-requests' },
   { method: 'POST', path: `${V1}/gate-requests/:id/answer`, access: AUTHENTICATED, handler: 'gate-requests' },

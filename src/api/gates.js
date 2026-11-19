@@ -1,4 +1,4 @@
-import { assert, readJson } from '../utils/errors.js';
+import { assert, readJson, readText } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { canAccess, SESSION } from '../auth/scopes.js';
 import { requireRecentSignIn } from '../auth/reverify.js';
@@ -15,7 +15,7 @@ export async function gates(route, request, env, auth) {
   requireRecentSignIn(auth, 'change your gates');
   if (request.method === 'DELETE') return rpc(env.ACCOUNTS, auth.account, 'delete-gate', { id: route.params.id });
   if (route.params.id) return rpc(env.ACCOUNTS, auth.account, 'activate-gate', { id: route.params.id, body: await readJson(request, 16384), account: auth.account });
-  const input = cleanGateInput(await readJson(request, 4096));
+  const input = cleanGateInput(await readJson(request, 8192), env);
   return rpc(env.ACCOUNTS, auth.account, 'create-gate', { input, account: auth.account });
 }
 
@@ -47,6 +47,8 @@ export async function gateLinks(route, request, env) {
   const link = await verifyToken(route.params.token, 'dbag_', env.TOKEN_SIGNING_KEY, 2048);
   assert(link && typeof link.a === 'string' && typeof link.r === 'string', 'invalid_link', 'This approval link is invalid or has expired', 404);
   if (request.method === 'GET') return rpc(env.ACCOUNTS, link.a, 'link-gate-request', { id: link.r });
+  // A webhook gate's late answer, signed with the key it registered (spec/events.md §6).
+  if (new URL(request.url).pathname.endsWith('/callback')) return rpc(env.ACCOUNTS, link.a, 'webhook-gate-answer', { id: link.r, jws: await readText(request, 8192), account: link.a });
   const answer = cleanAnswer(await readJson(request, 32768));
   return rpc(env.ACCOUNTS, link.a, 'answer-gate-request', { id: link.r, ...answer, answerer: { kind: 'link', device_id: null }, account: link.a });
 }

@@ -15,11 +15,19 @@ import { signToken } from '../auth/tokens.js';
 import { seal, unseal } from '../services/sealing.js';
 import { matchStep, otpauthUri, base32 } from '../services/totp.js';
 import { creationOptions, verifyRegistration, verifyAssertion, answerChallenge, rpIdFor, WebAuthnError } from '../services/webauthn.js';
+import { publicJwk, verifyJws, decodeJws, signJws } from '../../packages/verify/src/jose.js';
+import { activeSigner, issuerName } from '../services/issuer.js';
 
 /** Gates an account may register (the built-in `owner` gate is not stored). */
 export const MAX_GATES = 20;
 /** Kinds that can be registered today; G5–G8 add webhook, duo and okta-verify. */
-export const STORED_KINDS = Object.freeze(['dba-device', 'totp', 'webauthn']);
+export const STORED_KINDS = Object.freeze(['dba-device', 'totp', 'webauthn', 'webhook']);
+/** typ of the signed gate request DBA posts to a webhook gate (spec/events.md §6). */
+export const GATE_EVENT_TYP = 'dba-gate+jwt';
+/** typ of a webhook gate's signed late answer. */
+export const GATE_ANSWER_TYP = 'dba-gate-answer+jwt';
+/** How long DBA waits for a webhook gate's response (an unanswered POST is "failed"). */
+export const WEBHOOK_TIMEOUT_MS = 10000;
 /** Kinds answered with a factor (a code, a security key) on the approval page, without a session. */
 export const FACTOR_KINDS = Object.freeze(['totp', 'webauthn']);
 /** A TOTP or security-key registration must be finished within this long. */
@@ -49,15 +57,30 @@ export function visibleGate(gate) {
     id: gate.id, kind: gate.kind, label: gate.label, state: gate.state ?? 'active',
     ...(gate.device_id ? { device_id: gate.device_id } : {}),
     ...(gate.kind === 'webauthn' ? { user_verification: gate.user_verification } : {}),
+    ...(gate.kind === 'webhook' ? { url: gate.url, public_jwk: gate.public_jwk } : {}),
     created_at: gate.created_at, ...(gate.activated_at ? { activated_at: gate.activated_at } : {})
   };
+}
+
+/**
+ * A webhook gate's URL: https, a public host name (no IP literals, no localhost), the default
+ * port, no credentials or fragment. Local development also allows http on localhost.
+ */
+export function cleanGateWebhookUrl(value, env = {}) {
+  let u; try { u = new URL(String(value ?? '')); } catch { assert(false, 'invalid_gate', 'url must be the https URL of your approval service'); }
+  const local = env.ENVIRONMENT === 'local' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname.endsWith('.localhost'));
+  assert(u.protocol === 'https:' || (local && u.protocol === 'http:'), 'invalid_gate', 'url must use https');
+  assert(!u.username && !u.password && !u.hash, 'invalid_gate', 'url cannot contain credentials or a fragment');
+  assert(local || (!u.port && u.hostname.includes('.') && !/^[\d.]+$/.test(u.hostname) && !u.hostname.startsWith('[') && !u.hostname.endsWith('.localhost') && !u.hostname.endsWith('.local') && !u.hostname.endsWith('.internal')), 'invalid_gate', 'url must name a public host by its domain name, on the default port');
+  assert(u.toString().length <= 2048, 'invalid_gate', 'url is too long');
+  return u.toString();
 }
 
 /** Usable in grants and requests: registered, and (for factors) set up. */
 export const gateActive = gate => !!gate && (gate.state ?? 'active') === 'active';
 
 /** Clean a request to create a gate (validated again in the DO against its devices). */
-export function cleanGateInput(body) {
+export function cleanGateInput(body, env = {}) {
   assert(body && typeof body === 'object', 'invalid_gate', 'Send a JSON object');
   assert(STORED_KINDS.includes(body.kind), 'gate_kind_not_available', `kind must be one of ${STORED_KINDS.join(', ')} (owner is built in; TOTP, security keys, webhooks, Duo and Okta Verify come later)`);
   const label = typeof body.label === 'string' ? body.label.replace(/[\p{Cc}\p{Cf}]/gu, '').trim().slice(0, 80) : '';
@@ -65,6 +88,11 @@ export function cleanGateInput(body) {
   if (body.kind === 'dba-device') {
     assert(typeof body.device_id === 'string' && /^dev_[A-Za-z0-9]{8,64}$/.test(body.device_id), 'invalid_gate', 'device_id must name one of your devices');
     return { kind: body.kind, label, device_id: body.device_id };
+  }
+  if (body.kind === 'webhook') {
+    let key;
+    try { key = publicJwk(body.public_jwk); } catch { assert(false, 'invalid_gate', 'public_jwk must be the P-256 public key (JWK) your service signs late answers with'); }
+    return { kind: body.kind, label, url: cleanGateWebhookUrl(body.url, env), public_jwk: key };
   }
   if (body.kind === 'webauthn') {
     assert(body.user_verification === undefined || ['required', 'preferred'].includes(body.user_verification), 'invalid_gate', 'user_verification must be "required" or "preferred"');
@@ -87,6 +115,8 @@ export async function createGate(tx, input, now, { env, account }) {
     const device = await tx.get(`device:${input.device_id}`);
     assert(device && !device.revoked_at, 'unknown_device', 'device_id must name one of your devices that is not revoked', 400);
     gate.device_id = input.device_id; gate.state = 'active';
+  } else if (input.kind === 'webhook') {
+    gate.url = input.url; gate.public_jwk = input.public_jwk; gate.state = 'active';
   } else if (input.kind === 'totp') {
     assert(env.GATE_SEALING_KEYS, 'gate_kind_unavailable', 'TOTP gates are not available on this server (no sealing key configured)', 503);
     const secret = crypto.getRandomValues(new Uint8Array(20));
@@ -125,11 +155,24 @@ export async function activateGate(tx, id, body, now, { env, account }) {
   return gate;
 }
 
-/** A link to the approval page for one request (HMAC-signed; it routes itself to the account). */
-export async function approvalLink(env, account, req) {
+/** The signed link token for one request (HMAC; it routes itself to the account). */
+export async function linkToken(env, account, req) {
   const exp = Math.ceil(Math.max(...req.entries.map(e => e.deadline)) / 1000) + 60;
-  return `${env.APP_ORIGIN}/gate.html#${await signToken(LINK_PREFIX, { a: account, r: req.id, exp }, env.TOKEN_SIGNING_KEY)}`;
+  return signToken(LINK_PREFIX, { a: account, r: req.id, exp }, env.TOKEN_SIGNING_KEY);
 }
+
+/** A link to the approval page for one request. */
+export async function approvalLink(env, account, req) {
+  return `${env.APP_ORIGIN}/gate.html#${await linkToken(env, account, req)}`;
+}
+
+/** Where a webhook gate sends a late answer for one request. */
+export async function callbackUrl(env, account, req) {
+  return `${env.APP_ORIGIN}/api/v1/gate-links/${await linkToken(env, account, req)}/callback`;
+}
+
+/** Webhook gates DBA has to post this request to. */
+export const webhookTargets = req => req.entries.flatMap((e, i) => e.gates.filter(g => g.kind === 'webhook' && g.state === 'sent').map(g => ({ entry: i, gate: g.id })));
 
 /** Does a request have gates answered on the approval page? */
 export const hasFactorGates = req => req.entries.some(e => e.gates.some(g => FACTOR_KINDS.includes(g.kind) && g.state !== 'deleted'));
@@ -308,6 +351,8 @@ export async function answerRequest(tx, req, { entry: entryIndex, gate: gateId, 
     assert(answerer.kind === 'owner', 'not_the_gate', 'Only the account owner (a signed-in browser or dashboard device) answers for the owner gate', 403);
   } else if (gate.kind === 'dba-device') {
     assert(answerer.kind === 'device' && answerer.device_id === gate.device_id, 'not_the_gate', `Only device ${gate.device_id} answers for gate ${gate.id}`, 403);
+  } else if (gate.kind === 'webhook') {
+    assert(answerer.kind === 'webhook' && answerer.gate === gate.id, 'not_the_gate', `Only the service behind gate ${gate.id} answers for it`, 403);
   } else if (FACTOR_KINDS.includes(gate.kind)) {
     // The factor is the authentication: whoever holds the authenticator app or the security key
     // answers, signed in or not (plan §4.3). Each wrong try counts against the gate.
@@ -354,4 +399,61 @@ export async function factorView(tx, req, env) {
       })
     }))
   };
+}
+
+/**
+ * The signed gate request DBA posts to a webhook gate (spec/events.md §6): who asks for what,
+ * which entry it answers, until when, and where to send a late answer.
+ */
+export async function signGateEvent(env, { req, entryIndex, gate, account, callback }) {
+  const signer = await activeSigner(env);
+  const entry = req.entries[entryIndex];
+  const payload = {
+    iss: issuerName(env), aud: gate.url, iat: Math.floor(Date.now() / 1000), exp: Math.ceil(entry.deadline / 1000), jti: randomId('gev', 16),
+    type: 'gate.request', account, gate: gate.id, request: req.id, entry: entryIndex, number: req.number,
+    device: { id: req.device_id, name: req.device_name }, action: req.action, resource: req.resource, audience: req.audience,
+    on_timeout: entry.on_timeout, callback
+  };
+  return signJws({ typ: GATE_EVENT_TYP, kid: signer.kid }, payload, signer.key);
+}
+
+/**
+ * POST a gate request to a webhook gate. Returns { delivered, decision? }: a 2xx is delivered; a
+ * 200 whose JSON says { "decision": "allow" | "deny" } answers at once. Never follows redirects.
+ */
+export async function postGateEvent(env, url, jws) {
+  const fetcher = env.WEBHOOK_FETCH || fetch;
+  try {
+    const response = await fetcher(url, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/jwt', Accept: 'application/json', 'User-Agent': 'devicebasedauth.org-gates/1' }, body: jws, signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS) });
+    if (response.status < 200 || response.status >= 300) { try { await response.body?.cancel(); } catch { /* ignore */ } return { delivered: false, status: response.status }; }
+    let decision = null;
+    if (response.status === 200) {
+      const text = (await response.text()).slice(0, 4096);
+      try { const body = JSON.parse(text); if (body?.decision === 'allow' || body?.decision === 'deny') decision = body.decision; } catch { /* a 200 without an answer is a delivery */ }
+    } else { try { await response.body?.cancel(); } catch { /* ignore */ } }
+    return { delivered: true, status: response.status, decision };
+  } catch (error) {
+    return { delivered: false, status: 0, error: error.name === 'TimeoutError' ? 'timeout' : 'network_error' };
+  }
+}
+
+/**
+ * A webhook gate's late answer: a compact JWS (ES256, typ dba-gate-answer+jwt) signed by the key
+ * the gate registered, over { gate, request, entry, decision, iat }. Returns those claims.
+ */
+export async function verifyGateAnswer(tx, jws, requestId, now) {
+  let decoded;
+  try { decoded = decodeJws(String(jws ?? '').trim()); } catch { assert(false, 'invalid_answer', 'The body must be a compact JWS'); }
+  const { header, payload } = decoded;
+  assert(header.typ === GATE_ANSWER_TYP && header.alg === 'ES256', 'invalid_answer', `The answer must be an ES256 JWS with typ ${GATE_ANSWER_TYP}`);
+  assert(typeof payload.gate === 'string' && payload.request === requestId, 'invalid_answer', 'The answer names another request');
+  const gate = await tx.get(gateKey(payload.gate));
+  assert(gate?.kind === 'webhook', 'not_a_gate', 'The answer names no webhook gate of this account', 403);
+  let signed = false;
+  try { signed = !!await verifyJws(jws.trim(), gate.public_jwk); } catch { signed = false; }
+  assert(signed, 'invalid_signature', 'The answer is not signed by the key this gate registered', 403);
+  assert(Number.isSafeInteger(payload.iat) && Math.abs(payload.iat - now / 1000) <= 300, 'stale_answer', 'The answer\'s iat must be within 5 minutes of now', 400);
+  assert(Number.isSafeInteger(payload.entry) && payload.entry >= 0 && payload.entry < 3, 'invalid_answer', 'entry must be 0, 1 or 2');
+  assert(payload.decision === 'allow' || payload.decision === 'deny', 'invalid_answer', 'decision must be "allow" or "deny"');
+  return { gate: gate.id, entry: payload.entry, decision: payload.decision };
 }

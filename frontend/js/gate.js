@@ -15,7 +15,7 @@ const encoder = new TextEncoder();
 let view = null;
 
 const seconds = n => n % 3600 === 0 ? `${n / 3600} hour${n === 3600 ? '' : 's'}` : n % 60 === 0 ? `${n / 60} minute${n === 60 ? '' : 's'}` : `${n} seconds`;
-const KIND = { owner: 'the account owner, from the dashboard', 'dba-device': 'a device, from its own app', totp: 'an authenticator app code', webauthn: 'a security key or passkey' };
+const KIND = { owner: 'the account owner, from the dashboard', 'dba-device': 'a device, from its own app', totp: 'an authenticator app code', webauthn: 'a security key or passkey', webhook: 'an approval service' };
 
 /** The challenge a security key signs for one answer (mirrors src/services/webauthn.js). */
 async function challengeFor(entry, decision) {

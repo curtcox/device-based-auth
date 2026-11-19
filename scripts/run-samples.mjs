@@ -49,6 +49,7 @@ const SAMPLES = [
     expect: [/^ALLOW publish: hashbin:content:write by account sample-owner/m, /^DENY {2}replayed request: 401 replayed_proof/m, /^DENY {2}delete: 403 forbidden \[\["action_not_granted"\]\]/m, /^DENY {2}anonymous: 401 credential_required/m]
   },
   { name: 'worker-middleware.mjs', run: workerMiddleware },
+  { name: 'gate-webhook.mjs', run: gateWebhook },
   {
     name: 'python_device.py', command: ['python3', 'docs/samples/python_device.py'],
     needs: () => has('python3', ['-c', 'import cryptography, requests']) || 'python3 with cryptography and requests',
@@ -191,6 +192,46 @@ async function workerMiddleware() {
     await expect('publish after the pushed revocation', await signedRequest(device, 'POST', 'https://hashbin.org/api/content'), 401, 'revoked');
     await api('PATCH', '/api/v1/audiences/hashbin.org', { revocation_webhook: null }, 'operator');
   } finally { hook.close(); }
+  return { code: ok ? 0 : 1, output: `${lines.join('\n')}\n` };
+}
+
+/**
+ * The webhook gate sample: start the approval service, register it as a gate, enroll a device
+ * whose grants need it, and ask hashbin.org's online check (as the local operator, who owns
+ * hashbin.org) for an action it approves at once, one it refuses, and one it answers late.
+ */
+async function gateWebhook() {
+  const { startApprovalService } = await import('../docs/samples/gate-webhook.mjs');
+  const service = await startApprovalService({ origin: ORIGIN, decide: request => request.action === 'hashbin:content:write' ? (request.resource?.startsWith('later:') ? 'later' : 'allow') : 'deny' });
+  const lines = []; let ok = true;
+  const check = (label, pass, detail) => { ok &&= pass; lines.push(`${pass ? 'ok  ' : 'FAIL'} ${label}: ${detail}`); };
+  try {
+    const gate = await api('POST', '/api/v1/gates', { kind: 'webhook', label: 'Sample approval service', url: service.url, public_jwk: service.publicJwk });
+    const device = await enrollDevice({ origin: ORIGIN, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write', 'hashbin:content:delete'], require: { gates: [{ any: [gate.id], timeout_s: 60 }] } }], name: 'gated sample', onApprovalUrl: url => approve(new URL(url).hash.slice(1)) });
+    await api('POST', '/api/v1/dev/deposit', { amount_microdollars: 1_000_000 }, 'operator');
+    const key = await api('POST', '/api/v1/keys', { name: 'gate sample verifier', scopes: ['authorize'] }, 'operator');
+    const ask = async (action, resource) => {
+      const request = await signedRequest(device, 'POST', 'https://hashbin.org/api/content');
+      const response = await fetch(`${ORIGIN}/api/v1/authorize`, { method: 'POST', headers: { Authorization: `ApiKey ${key.secret}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ credential: device.credential, proof: request.headers.get('DPoP'), request: { method: 'POST', url: request.url }, audience: 'hashbin.org', action, resource }) });
+      return response.json();
+    };
+    // Ask until the gate settles (the site retries after gate_request.retry_after seconds).
+    const settle = async (action, resource) => {
+      for (let i = 0; i < 30; i++) {
+        const decision = await ask(action, resource);
+        if (decision.code !== 'gate_pending') return decision;
+        if (resource?.startsWith('later:') && service.pending.length) await service.answerLater(service.pending.shift(), 'allow');
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      return { code: 'still pending' };
+    };
+    const write = await settle('hashbin:content:write', 'doc-1');
+    check('approved at once', write.allow === true, JSON.stringify({ allow: write.allow, gates: write.gates }));
+    const del = await settle('hashbin:content:delete', 'doc-1');
+    check('refused at once', del.code === 'gate_denied', del.code);
+    const late = await settle('hashbin:content:write', 'later:doc-2');
+    check('approved by a late, signed answer', late.allow === true, JSON.stringify({ allow: late.allow, code: late.code }));
+  } finally { service.close(); }
   return { code: ok ? 0 : 1, output: `${lines.join('\n')}\n` };
 }
 

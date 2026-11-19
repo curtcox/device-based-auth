@@ -7,7 +7,7 @@ import { price } from '../utils/pricing.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
 import { hasDbaAction } from '../auth/reverify.js';
-import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, activateGate, approvalLink, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
+import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -714,8 +714,64 @@ export class AccountDO {
       return decision;
     });
     if (asked) await this.announceGateRequest(asked, now, account);
+    if (asked && account && webhookTargets(asked).length) this.background(this.deliverWebhooks(asked.id, account));
     this.announceTimeouts(byTimeout, now);
     return decision;
+  }
+
+  /**
+   * Post a new request to its webhook gates (after the decision has answered gate_pending). A
+   * service that answers at once settles its entry; one that cannot be reached is marked
+   * "failed" and its entry waits for its timeout (plan §2).
+   */
+  async deliverWebhooks(id, account) {
+    const req = await this.storage.get(requestKey(id));
+    if (!req) return;
+    const callback = await callbackUrl(this.env, account, req);
+    const results = await Promise.all(webhookTargets(req).map(async ({ entry, gate: gateId }) => {
+      const gate = await this.storage.get(gateKey(gateId));
+      if (!gate) return null;
+      const jws = await signGateEvent(this.env, { req, entryIndex: entry, gate, account, callback });
+      return { entry, gate: gateId, result: await postGateEvent(this.env, gate.url, jws) };
+    }));
+    const now = Date.now();
+    const byTimeout = [];
+    await this.tx(async tx => {
+      byTimeout.length = 0;
+      const fresh = await tx.get(requestKey(id));
+      if (!fresh) return;
+      for (const r of results.filter(Boolean)) {
+        if (!r.result.delivered) {
+          const g = fresh.entries[r.entry].gates.find(x => x.id === r.gate);
+          if (g && g.state === 'sent') g.state = 'failed';
+        } else if (r.result.decision) {
+          try {
+            await answerRequest(tx, fresh, { entry: r.entry, gate: r.gate, decision: r.result.decision, answerer: { kind: 'webhook', gate: r.gate } }, now);
+            await this.audit(tx, now, r.result.decision === 'allow' ? 'gate.approved' : 'gate.refused', { id, gate: r.gate, cid: fresh.cid, action: fresh.action, audience: fresh.audience, by: 'webhook' });
+          } catch { /* settled or past its deadline meanwhile */ }
+        }
+      }
+      await this.refreshed(tx, fresh, now, byTimeout);
+      await tx.put(requestKey(id), fresh);
+    });
+    this.announceTimeouts(byTimeout, now);
+  }
+
+  /** A webhook gate's late answer (POST …/gate-links/<link>/callback). */
+  async op_webhook_gate_answer({ id, jws }, now) {
+    const byTimeout = [];
+    const req = await this.tx(async tx => {
+      byTimeout.length = 0;
+      const found = await tx.get(requestKey(id));
+      assert(found && requestUntil(found) > now, 'not_found', 'Gate request not found or expired', 404);
+      const answer = await verifyGateAnswer(tx, jws, id, now);
+      await answerRequest(tx, found, { ...answer, answerer: { kind: 'webhook', gate: answer.gate } }, now);
+      await this.audit(tx, now, answer.decision === 'allow' ? 'gate.approved' : 'gate.refused', { id, gate: answer.gate, cid: found.cid, action: found.action, audience: found.audience, by: 'webhook' });
+      if (found.outcome === 'allow' && found.by_timeout) await this.auditSettled(tx, found, now, byTimeout);
+      return found;
+    });
+    this.announceTimeouts(byTimeout, now);
+    return { id, status: visibleRequest(req, now).status };
   }
 
   /** Bring a request up to date in a transaction: store what changed, audit it if it settled. */
@@ -751,12 +807,15 @@ export class AccountDO {
     const devices = new Map();
     for (const gate of gates.values()) if (gate.kind === 'dba-device') devices.set(gate.device_id, await tx.get(`device:${gate.device_id}`));
     // Owner, TOTP and security-key gates are reached through the owner's browsers (the notice links
-    // to the approval page); a dba-device gate polls, so it is reached unless revoked.
-    const delivery = gate => gate.kind === 'dba-device' ? (devices.get(gate.device_id) && !devices.get(gate.device_id).revoked_at ? 'sent' : 'failed') : (subscribed ? 'sent' : 'failed');
+    // to the approval page); a dba-device gate polls, so it is reached unless revoked; a webhook
+    // gate is posted to after the decision answers ("sent" until that POST fails).
+    const delivery = gate => gate.kind === 'webhook' ? 'sent' : gate.kind === 'dba-device' ? (devices.get(gate.device_id) && !devices.get(gate.device_id).revoked_at ? 'sent' : 'failed') : (subscribed ? 'sent' : 'failed');
     const req = newRequest({ cred, ...subject, candidate, gates, now, delivery });
     const contacted = contactedGates(req);
     if (contacted.length) {
-      try { await charge(tx, { kind: 'gate', amount: price('gate') * contacted.length, aggregate: true }, now); }
+      // Webhook gates cost more (a signed subrequest; plan §9), so each gate is priced by its kind.
+      const amount = contacted.reduce((sum, id) => sum + price(gates.get(id)?.kind === 'webhook' ? 'gate_webhook' : 'gate'), 0);
+      try { await charge(tx, { kind: 'gate', amount, aggregate: true }, now); }
       catch (error) {
         if (error.code !== 'insufficient_balance') throw error;
         for (const entry of req.entries) for (const g of entry.gates) if (g.state === 'sent' || g.state === 'failed') g.state = 'unpaid';
@@ -844,7 +903,7 @@ export class AccountDO {
   async op_create_gate({ input, account }, now) {
     const { gate, setup } = await this.tx(async tx => {
       const created = await createGate(tx, input, now, { env: this.env, account });
-      await this.audit(tx, now, 'gate.created', { id: created.gate.id, kind: created.gate.kind, ...(created.gate.device_id ? { device_id: created.gate.device_id } : {}) });
+      await this.audit(tx, now, 'gate.created', { id: created.gate.id, kind: created.gate.kind, ...(created.gate.device_id ? { device_id: created.gate.device_id } : {}), ...(created.gate.url ? { url: created.gate.url } : {}) });
       return created;
     });
     if (gate.state === 'active') this.announceGate(gate, now);

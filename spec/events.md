@@ -103,3 +103,44 @@ return new Response(null, { status: result.ok ? 204 : result.status });
   nothing to receive events.
 - Key rotation (`renew` with `new_key_proof`) retires the old status entry without an event; the
   credential itself stays valid under its new key.
+
+## 6. Gate requests (webhook gates)
+
+A **webhook gate** (STATUS B7, `POST /api/v1/gates { kind: "webhook", label, url, public_jwk }`)
+is the account owner's own approval service. When a grant that names it is used, devicebasedauth.org
+opens a gate request and POSTs the service a compact JWS:
+
+- Header: `typ: dba-gate+jwt`, `alg: ES256`, `kid` of an issuer key in the JWKS (the same keys
+  that sign credentials).
+- Body, `Content-Type: application/jwt`, `User-Agent: devicebasedauth.org-gates/1`; redirects are
+  not followed; DBA waits at most 10 seconds.
+
+| Claim | Meaning |
+|-------|---------|
+| `iss` | The issuer. |
+| `aud` | The gate's URL, exactly as registered: a service checks it is its own. |
+| `iat`, `exp` | When it was sent, and the entry's deadline: an answer after `exp` is refused. |
+| `jti` | Unique id of this message. |
+| `type` | `gate.request` |
+| `account`, `gate` | The account and the gate (`gate_…`) being asked. |
+| `request`, `entry` | The gate request (`gtr_…`) and which of its entries this gate answers (0–2). |
+| `number` | The request's two-digit number, shown wherever it is approved. |
+| `device` | `{ id, name }` of the device that asks (the name is the owner's label; treat it as text). |
+| `action`, `resource`, `audience` | What it asks to do, on what, at which site. |
+| `on_timeout` | `deny` or `allow`: what happens if no answer arrives by `exp`. |
+| `callback` | Where to send a late answer. |
+
+The service answers in one of two ways:
+
+1. **At once**: status `200` with JSON `{ "decision": "allow" }` or `{ "decision": "deny" }`.
+2. **Later**: any other `2xx` (`202`), then a POST to `callback` of a compact JWS signed by the key
+   registered as `public_jwk` (ES256), `typ: dba-gate-answer+jwt`, over
+   `{ "gate", "request", "entry", "decision": "allow" | "deny", "iat" }` (`iat` within 5 minutes of
+   DBA's clock). The response says the request's `status`.
+
+A non-2xx status, a timeout or a connection failure marks the gate `failed` for that request; the
+entry then waits for its deadline like an unanswered one (decision D12: an unreachable gate is
+silence). The first answer to an entry settles it; later answers are refused (409), and answers
+after the deadline 410. Webhook gates are charged at their own price per request
+(docs/business/pricing.md). A runnable service is in
+[`docs/samples/gate-webhook.mjs`](../docs/samples/gate-webhook.mjs).
