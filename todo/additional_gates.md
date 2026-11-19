@@ -517,6 +517,10 @@ STATUS row updated.
 - **G9, docs (2026-11-19).** `/docs/#gates` ("Gates: approvals and confirmation": kinds,
   `require.gates`, `gate_pending` handling, how each kind answers, periodic confirmation, sign-in
   gates, links to the CI samples) and a Gates section in `llms.txt` (scopes list updated).
+- **G9, MCP (2026-11-19).** Tools `list_gates`, `list_gate_requests`, `answer_gate_request`. The
+  plan said "answer as the connected account's owner"; that would let an agent holding an API key
+  pose as the owner gate, which G2 refuses for every key, so only a device holding
+  `dba:approvals:answer` answers, as its own dba-device gate (API keys: 403 `insufficient_scope`).
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

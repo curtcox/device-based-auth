@@ -632,3 +632,32 @@ describe('Duo and Okta Verify gates (G8)', () => {
     expect(before - await balance('alice')).toBe(price('gate_vendor'));
   });
 });
+
+describe('MCP gate tools (G9)', () => {
+  it('a device answers as its own gate over MCP; an API key cannot see or answer gate requests', async () => {
+    const phone = await newDevice();
+    const credential = (await enroll(env, 'alice', phone, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:approvals:answer'] }], name: 'Agent phone' })).approve.body.credential;
+    const gate = (await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'dba-device', label: 'Agent phone', device_id: inspectCredential(credential).payload.sub } })).body.id;
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [gate], timeout_s: 120 }] } }]);
+    expect((await ask()).code).toBe('gate_pending');
+    let id = 0;
+    const tool = async (name, args = {}, auth = {}) => {
+      const res = await call(env, 'POST', '/mcp', { ...auth, body: { jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } } });
+      return { isError: !!res.body.result.isError, value: JSON.parse(res.body.result.content[0].text) };
+    };
+    const asPhone = async () => ({ headers: await phone.headers('POST', '/mcp', credential) });
+    const listed = await tool('list_gate_requests', {}, await asPhone());
+    expect(listed.isError).toBe(false);
+    const [req] = listed.value.items;
+    expect(req.answer_as).toEqual([{ entry: 0, gate }]);
+    const answered = await tool('answer_gate_request', { id: req.id, decision: 'allow', ...req.answer_as[0] }, await asPhone());
+    expect(answered).toMatchObject({ isError: false, value: { status: 'allowed' } });
+    expect(await ask()).toMatchObject({ allow: true });
+
+    const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'agent', scopes: ['gates:read', 'credentials:read'] } })).body.secret;
+    const gates = await tool('list_gates', {}, { auth: `ApiKey ${key}` });
+    expect(gates.value.items.map(g => g.id)).toEqual(['owner', gate]);
+    expect(await tool('list_gate_requests', {}, { auth: `ApiKey ${key}` })).toMatchObject({ isError: true, value: { code: 'insufficient_scope' } });
+    expect(await tool('answer_gate_request', { id: req.id, decision: 'allow', gate: 'owner' }, { auth: `ApiKey ${key}` })).toMatchObject({ isError: true, value: { code: 'insufficient_scope' } });
+  });
+});

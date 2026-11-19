@@ -415,6 +415,8 @@ const tokens = await fetch(&#39;https://devicebasedauth.org/oauth/token&#39;, {
 <tr><td><code>quote</code></td><td>Price of an operation in micro-dollars.</td></tr>
 <tr><td><code>inspect_credential</code></td><td>Decode and verify a credential; optionally check an action.</td></tr>
 <tr><td><code>evaluate_grants</code></td><td>Evaluate grants for an action at a time and place, offline and free.</td></tr>
+<tr><td><code>list_gates</code></td><td>The account's gates and their ids, for <code>require.gates</code> (<code>gates:read</code>).</td></tr>
+<tr><td><code>list_gate_requests</code>, <code>answer_gate_request</code></td><td>For a device holding <code>dba:approvals:answer</code>: what waits for it, and its answer as its own gate. API keys and connected apps cannot see or answer gate requests, so an agent can never pose as the owner or another gate.</td></tr>
 </tbody></table>
 <pre class="code"><code>curl -sS https://devicebasedauth.org/mcp \
   -H &quot;Authorization: ApiKey $DBA_API_KEY&quot; -H &#39;Content-Type: application/json&#39; \
