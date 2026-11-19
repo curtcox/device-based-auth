@@ -331,5 +331,18 @@ the same 60 s skew as credentials. Conformance vectors: `confirmations` in
 [`vectors/credentials.json`](vectors/credentials.json), checked against the `valid credential`.
 
 Online, devicebasedauth.org uses its own record of the credential's last confirmation instead of
-the header, so the account owner can end it at once ("Stop trusting this device now"); offline
-verifiers stop accepting the device within `every_s` at most, or at once on revocation.
+the header, so the account owner can end it at once (`POST /api/v1/credentials/{cid}/unconfirm`,
+"Stop trusting this device now"); offline verifiers stop accepting the device within `every_s` at
+most, or at once on revocation.
+
+**Getting one.** The device calls `POST /api/v1/credentials/{cid}/confirm` with its credential and
+a DPoP proof. DBA opens a gate request for the credential's `confirm.gates` and answers
+`{ status: "pending", gate_request }` until they pass (ask again every `retry_after` seconds), then
+`{ status: "confirmed", confirmation, expires_at }`; a refusal is `{ status: "denied" }`. Devices
+should ask again at about two thirds of `every_s`, early enough for the gates' timeouts.
+
+**What needs one.** Every grant of a credential with `confirm` carries `require.confirmation`
+(issuance adds it; it cannot be set by hand), so its offline and online uses need a current
+confirmation. Renewal and rotation need one too. Access tokens (§6) and X.509 certificates (§6a)
+never outlive it, and tokens carry the grants without `require.confirmation` (they have no device
+key to bind a confirmation to). Credentials with `dba:*` grants cannot carry `confirm`.

@@ -2778,6 +2778,185 @@
         "x-billable": "renew"
       }
     },
+    "/api/v1/credentials/{cid}/confirm": {
+      "post": {
+        "operationId": "post_api_v1_credentials_cid_confirm",
+        "summary": "Confirm a credential that carries confirm: { gates, every_s } (spec/credential.md §9), from its own device: opens (or reads) a gate request for its confirm gates; once they pass, answers { status: \"confirmed\", confirmation } — a dba-confirmation+jwt to send as the DBA-Confirmation header, valid every_s seconds. Ask again every retry_after seconds while it waits. Charges the confirmation price when one is issued.",
+        "x-access": "device",
+        "security": [
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op confirm) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "x-billable": "confirm"
+      }
+    },
+    "/api/v1/credentials/{cid}/unconfirm": {
+      "post": {
+        "operationId": "post_api_v1_credentials_cid_unconfirm",
+        "summary": "Stop trusting a device now: ends the credential's current confirmation for online checks (/authorize) at once. Offline verifiers accept its last confirmation until that expires; revoke the credential to stop those too.",
+        "x-access": "credentials:revoke",
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "description": "Requires scope `credentials:revoke` (API key), a signed-in session, or a device credential with `dba:credentials:revoke`."
+      }
+    },
     "/api/v1/devices": {
       "get": {
         "operationId": "get_api_v1_devices",

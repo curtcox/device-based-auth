@@ -243,9 +243,9 @@ describe('online authorization', () => {
     expect((await call(env, 'GET', '/api/v1/step-ups', { auth: 'alice' })).body.items).toHaveLength(0);
   });
 
-  it('refuses confirmations until they can be used, and gates that do not exist (STATUS B7)', async () => {
+  it('refuses require.confirmation set by hand, and gates that do not exist (STATUS B7)', async () => {
     await fund(env, 'alice');
-    for (const [require, code] of [[{ confirmation: true }, 'confirmation_not_available'], [{ gates: [{ any: ['gate_NOSUCHGATE1'] }] }, 'unknown_gate']]) {
+    for (const [require, code] of [[{ confirmation: true }, 'invalid_grants'], [{ gates: [{ any: ['gate_NOSUCHGATE1'] }] }, 'unknown_gate']]) {
       const { approve } = await enroll(env, 'alice', await newDevice(), { grants: [{ actions: ['hashbin:content:write'], require }] });
       expect(approve.body.code).toBe(code);
       expect(approve.status).toBe(400);

@@ -1,3 +1,4 @@
+import { confirmationUntil } from '../services/credentials.js';
 import { assert, readJson } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { price } from '../utils/pricing.js';
@@ -43,7 +44,8 @@ export async function deviceCertificateFor(request, env, auth) {
   // thumbprint was checked against the credential's cnf.jkt).
   const devicePublicJwk = publicJwk(decodeJws(request.headers.get('DPoP')).header.jwk);
   const now = Date.now();
-  const notAfter = Math.min(now + lifetime * 1000, payload.exp * 1000);
+  // A certificate never outlives the credential's current confirmation, when it needs one.
+  const notAfter = Math.min(now + lifetime * 1000, payload.exp * 1000, confirmationUntil(auth.device, now));
   assert(notAfter > now + 60000, 'credential_expiring', 'The credential expires too soon; renew it first', 409);
   const paid = await rpc(env.ACCOUNTS, payload.acct, 'charge', { kind: 'token', amount: price('token'), aggregate: true, now });
   const [active] = await caCertificates(env);

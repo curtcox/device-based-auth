@@ -380,7 +380,7 @@ STATUS row updated.
 | G4 ✅ | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
 | G5 ✅ | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
 | G6 ✅ | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
-| G7 | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
+| G7 ✅ | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
 | G8 | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
 | G9 | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
 
@@ -455,6 +455,16 @@ STATUS row updated.
   locked session cannot use `/gate-requests/{id}/answer`, which could approve other requests). A
   confirmation lasts 7 days (`dashsess:` rows, pruned). Recovery codes: 10, shown once, SHA-256
   hashed, each once; using one is audited and announced.
+- **G7 done (2026-11-19).** `confirm` is accepted on `POST /api/v1/credentials` and on enrollment
+  approval (`confirm` in the approve body: the owner decides); issuance adds
+  `require.confirmation` to every grant (refused by hand) and refuses `confirm` with `dba:*`
+  grants. A credential starts unconfirmed. `confirm` gate requests are keyed by credential; a
+  confirmation is charged `confirm` (12 µ$, proposed) when issued, its gates as gate requests.
+  Online, `/authorize` gives the evaluator a stand-in confirmation and the account checks
+  `confirmed_until` (and `confirmed_by_timeout` against `fail_open: false`). Tokens drop
+  `require.confirmation` and end by `confirmed_until`; certificates too. Not yet (G9): the SDK and
+  CLI asking for confirmations on their own, the dashboard's "Stop trusting" button, and
+  `DBA-Confirmation` in the Python and Go verifiers.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

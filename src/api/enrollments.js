@@ -110,7 +110,7 @@ export async function approveEnrollment(request, env, auth) {
   if (hasDbaAction(body.grants ?? data.grants)) requireRecentSignIn(auth, 'approve a device with permissions on devicebasedauth.org itself (dba:*)');
   const issued = await reinstatingIssue(auth, reinstate => issueCredential(env, auth.account, {
     public_jwk: data.jwk, device: { ...data.device, ...(body.device_name ? { name: body.device_name } : {}) },
-    aud: body.aud ?? data.aud, grants: body.grants ?? data.grants, lifetime_seconds: body.lifetime_seconds ?? data.lifetime
+    aud: body.aud ?? data.aud, grants: body.grants ?? data.grants, lifetime_seconds: body.lifetime_seconds ?? data.lifetime, ...(body.confirm ? { confirm: body.confirm } : {})
   }, { source: 'enrollment', chargeId: `enroll-${data.id}`, attestation: data.attestation, reinstate }));
   await rpc(env.ENROLLMENTS, data.id, 'put', { result: { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, account: auth.account } });
   return { status: 'approved', credential: issued.credential, cid: issued.cid, device_id: issued.device_id, return_origin: data.return_origin, enrollment_id: data.id, cost_microdollars: issued.charged, balance_microdollars: issued.balance_microdollars };

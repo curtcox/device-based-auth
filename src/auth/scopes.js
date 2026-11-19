@@ -35,7 +35,7 @@ export function isDashboardSession(auth) {
  * Routes a dashboard session may use while its sign-in gate has not confirmed it (plan §5.2):
  * the gate flow itself, who am I, and revocation (the panic button must always work).
  */
-export const UNLOCKED_WHILE_GATED = new Set(['dashboard-session', 'whoami', 'revoke-credential', 'revoke-device', 'revoke-all', 'revoke-self']);
+export const UNLOCKED_WHILE_GATED = new Set(['dashboard-session', 'whoami', 'revoke-credential', 'revoke-device', 'revoke-all', 'revoke-self', 'unconfirm']);
 
 /** Check route access; undeclared access always denies. */
 export function canAccess(auth, access) {

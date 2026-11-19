@@ -6,7 +6,7 @@ import { keys } from './api/keys.js';
 import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment, attestationChallenge, tpmActivation } from './api/enrollments.js';
 import { enrollmentTokens, redeemEnrollmentToken } from './api/enrollment-tokens.js';
 import { caBundle, deviceCertificateFor } from './api/certificates.js';
-import { createCredential, listCredentials, getCredential, credentialDecisions, revoke, revokeSelf, renew, token, whoami } from './api/credentials.js';
+import { createCredential, listCredentials, getCredential, credentialDecisions, revoke, revokeSelf, renew, token, whoami, confirmCredential, unconfirmCredential } from './api/credentials.js';
 import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
@@ -71,6 +71,8 @@ export const API_ROUTES = [
   { method: 'DELETE', path: `${V1}/credentials/:cid`, access: 'credentials:revoke', handler: 'revoke-credential' },
   { method: 'GET', path: `${V1}/credentials/:cid/decisions`, access: 'credentials:read', handler: 'credentials-decisions' },
   { method: 'POST', path: `${V1}/credentials/:cid/renew`, access: DEVICE, handler: 'renew', billable: 'renew' },
+  { method: 'POST', path: `${V1}/credentials/:cid/confirm`, access: DEVICE, handler: 'confirm', billable: 'confirm' },
+  { method: 'POST', path: `${V1}/credentials/:cid/unconfirm`, access: 'credentials:revoke', handler: 'unconfirm' },
   { method: 'GET', path: `${V1}/devices`, access: 'credentials:read', handler: 'devices-list' },
   { method: 'GET', path: `${V1}/devices/:id`, access: 'credentials:read', handler: 'devices-get' },
   { method: 'POST', path: `${V1}/devices/:id/revoke`, access: 'credentials:revoke', handler: 'revoke-device' },
@@ -193,6 +195,8 @@ async function handle(route, request, env, auth) {
     case 'revoke-credential': case 'revoke-device': case 'revoke-all': return revoke(route, request, env, auth);
     case 'revoke-self': return revokeSelf(env, auth);
     case 'renew': return renew(route, request, env, auth);
+    case 'confirm': return confirmCredential(route, env, auth);
+    case 'unconfirm': return unconfirmCredential(route, env, auth);
     case 'token': return token(request, env, auth);
     case 'certificate': return deviceCertificateFor(request, env, auth);
     case 'ca-bundle': return caBundle(env);

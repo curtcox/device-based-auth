@@ -47,21 +47,33 @@ export function cleanJwk(jwk) {
  * namespace of one of the credential's audiences, and must be in that audience's catalog
  * (or be a wildcard within the namespace).
  */
-export async function validateIssue(env, { aud, grants, lifetime_seconds }) {
+/**
+ * A credential's confirm block (spec/credential.md §3, §9): it authenticates only while its device
+ * holds a confirmation from these gates no older than every_s seconds.
+ */
+export function cleanConfirm(confirm) {
+  if (confirm === undefined || confirm === null) return null;
+  assert(confirm && typeof confirm === 'object' && !Array.isArray(confirm) && Object.keys(confirm).every(k => ['gates', 'every_s'].includes(k)), 'invalid_confirm', 'confirm must be { gates, every_s }');
+  assert(Number.isSafeInteger(confirm.every_s) && confirm.every_s >= 300 && confirm.every_s <= 604800, 'invalid_confirm', 'confirm.every_s must be an integer from 300 to 604,800 seconds');
+  const problems = validateGrants([{ actions: ['x:y'], require: { gates: confirm.gates } }]).map(p => p.replace('grants[0].require.gates', 'confirm.gates'));
+  assert(!problems.length, 'invalid_confirm', problems.join('; '));
+  return { gates: confirm.gates.map(e => ({ any: [...e.any], ...(e.timeout_s !== undefined ? { timeout_s: e.timeout_s } : {}), ...(e.on_timeout !== undefined ? { on_timeout: e.on_timeout } : {}) })), every_s: confirm.every_s };
+}
+
+export async function validateIssue(env, { aud, grants, lifetime_seconds, confirm: request_confirm }) {
   assert(Array.isArray(aud) && aud.length >= 1 && aud.length <= 8 && aud.every(a => typeof a === 'string'), 'invalid_audience', 'aud must list 1–8 audience names');
   const audiences = await rpc(env.REGISTRY, 'global', 'get-many', { names: [...new Set(aud)] });
   const problems = validateGrants(grants);
   assert(!problems.length, 'invalid_grants', problems.join('; '));
-  // Confirmations are in the grant vocabulary (spec/evaluation.md §3.6) before the issuance and
-  // confirm endpoints that make them usable exist (STATUS B7, phase G7): refuse them rather than
-  // issue a credential that could never be used.
+  // require.confirmation is set by issuance from the credential's confirm block, never by hand.
   for (const [i, grant] of grants.entries()) {
-    assert(grant.require?.confirmation === undefined, 'confirmation_not_available', `grants[${i}]: require.confirmation is not available yet`);
+    assert(grant.require?.confirmation === undefined, 'invalid_grants', `grants[${i}]: require.confirmation is set from the credential's confirm block; send confirm: { gates, every_s } instead`);
   }
   // devicebasedauth.org checks dba:* grants itself, per request, with no counters or approvals.
   for (const [i, grant] of grants.entries()) {
     const dba = grant.actions.some(a => a === '*' || a.startsWith('dba:'));
     assert(!dba || (grant.limits?.uses === undefined && !grant.require?.step_up && !grant.require?.gates), 'invalid_grants', `grants[${i}]: dba:* actions cannot have limits.uses, require.step_up or require.gates; put them in a grant of their own without these`);
+    assert(!dba || !request_confirm, 'invalid_confirm', `grants[${i}]: a credential with dba:* actions cannot need confirmation (devicebasedauth.org checks those per request); issue it separately`);
   }
   const namespaces = new Map(Object.values(audiences).map(a => [a.namespace, a]));
   for (const [i, grant] of grants.entries()) for (const action of grant.actions) {
@@ -83,7 +95,7 @@ export async function validateIssue(env, { aud, grants, lifetime_seconds }) {
   }
   const lifetime = lifetime_seconds ?? LIFETIME.default;
   assert(Number.isSafeInteger(lifetime) && lifetime >= LIFETIME.min && lifetime <= LIFETIME.max, 'invalid_lifetime', `lifetime_seconds must be ${LIFETIME.min}–${LIFETIME.max}`);
-  return { aud: [...new Set(aud)], grants, lifetime, audiences, gatePolicies };
+  return { aud: [...new Set(aud)], grants, lifetime, audiences, gatePolicies, confirm: cleanConfirm(request_confirm) };
 }
 
 // Shards this isolate has seen full. A shard never empties (indexes are not reused), so once full
@@ -137,7 +149,11 @@ export async function issueCredential(env, account, request, { source, chargeId,
   // `attestation` comes only from a verified key attestation (services/attestation.js), never
   // from a request body: cleanDevice drops anything else the caller put in device.
   const device = withAttestation(cleanDevice(request.device), attestation, Math.floor(now / 1000));
-  const { aud, grants, lifetime, gatePolicies } = await validateIssue(env, request);
+  const validated = await validateIssue(env, request);
+  const { aud, lifetime, gatePolicies, confirm } = validated;
+  // A confirm block makes every grant need a current confirmation, so verifiers that do not know
+  // confirmations deny the credential instead of ignoring the block (spec/credential.md §3).
+  const grants = confirm ? validated.grants.map(g => ({ ...g, require: { ...g.require, confirmation: true } })) : validated.grants;
   // Audiences bound a credential as much as grants do: a site may accept any credential naming it
   // to identify the account, so a delegate cannot name a site its delegator could not.
   if (parentAud) assert(aud.every(a => parentAud.includes(a)), 'not_narrower', `aud must be within the delegating credential's audiences (${parentAud.join(', ')})`, 403);
@@ -150,14 +166,14 @@ export async function issueCredential(env, account, request, { source, chargeId,
   const iat = Math.floor(now / 1000);
   const exp = Math.min(iat + lifetime, maxExp ?? Infinity);
   assert(exp > iat + 60, 'parent_expiring', 'The delegating credential expires too soon to issue from', 409);
-  const payload = { iss: issuerName(env), sub: deviceId, acct: account, aud, cid, jti: `${cid}.1`, iat, nbf: iat, exp, cnf: { jkt }, device, grants, status: { status_list: { idx: status.idx, uri: status.uri } }, ver: 1 };
+  const payload = { iss: issuerName(env), sub: deviceId, acct: account, aud, cid, jti: `${cid}.1`, iat, nbf: iat, exp, cnf: { jkt }, device, grants, status: { status_list: { idx: status.idx, uri: status.uri } }, ver: 1, ...(confirm ? { confirm } : {}) };
   const credential = await signCredential(payload, await activeSigner(env));
   const usageFrom = parentGrants ? sharedUsage(grants, parentGrants) : undefined;
-  const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}), ...(usageFrom ? { usage_from: usageFrom } : {}) };
+  const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(confirm ? { confirm, confirmed_until: null } : {}), ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}), ...(usageFrom ? { usage_from: usageFrom } : {}) };
   // With a caller's charge id (Idempotency-Key, an enrollment's id) a retry gets the first
   // credential back; the fingerprint tells a retry from a different request reusing the key.
   const fingerprint = chargeId ? await sha256b64u(JSON.stringify({ jkt, aud, grants, lifetime, device: cleanDevice(request.device), parentCid: parentCid ?? null })) : undefined;
-  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, gate_policies: gatePolicies, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, fingerprint, reinstate, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
+  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, extra_gates: confirm ? confirm.gates.flatMap(e => e.any) : [], gate_policies: gatePolicies, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, fingerprint, reinstate, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
   if (stored.duplicate) return { credential: stored.jws, cid: stored.cid, device_id: stored.device_id, payload: inspectCredential(stored.jws).payload, charged: 0, balance_microdollars: stored.balance_microdollars, replay: true };
   return { credential, cid, device_id: deviceId, payload, charged: stored.charged, balance_microdollars: stored.balance_microdollars };
 }
@@ -177,6 +193,8 @@ export async function renewCredential(env, device, body, now = Date.now()) {
   // anything, so only the exact credential DBA issued and stored is renewed. Byte equality, not
   // claims: a forgery reusing a real cid and jti with wider grants is refused.
   if (device.recovery) assert(record.jws === device.credential, 'unknown_credential', 'This credential is not the one devicebasedauth.org issued; enroll the device again', 403);
+  // A credential that needs confirmation renews (or rotates) only while it holds one (plan §3.4).
+  assert(!record.confirm || record.confirmed_until > now, 'confirmation_required', `Confirm this credential first (POST /api/v1/credentials/${payload.cid}/confirm)`, 403);
   let rotation = null; let jkt = record.jkt; let status = record.status; let deviceId = record.device_id;
   if (body.new_key_proof) {
     let decoded;
@@ -216,13 +234,36 @@ export async function exchangeToken(env, device, { audience }, now = Date.now())
   assert(typeof audience === 'string' && payload.aud.includes(audience), 'invalid_audience', 'audience must be one of the credential\'s audiences');
   const registered = await rpc(env.REGISTRY, 'global', 'get', { name: audience });
   assert(registered.accept_access_tokens !== false, 'access_tokens_refused', `${audience} does not accept access tokens`, 403);
-  const grants = payload.grants.map(g => ({ ...g, actions: g.actions.filter(a => actionNamespace(a) === registered.namespace) })).filter(g => g.actions.length);
+  // A token never outlives the confirmation its credential holds, so it carries no confirmation
+  // requirement of its own (it has no device key to bind a confirmation to).
+  const confirmedUntil = confirmationUntil(device, now);
+  const grants = payload.grants.map(g => {
+    const out = { ...g, actions: g.actions.filter(a => actionNamespace(a) === registered.namespace) };
+    if (g.require?.confirmation) { const require = withoutConfirmation(g.require); if (require) out.require = require; else delete out.require; }
+    return out;
+  }).filter(g => g.actions.length);
   assert(grants.length, 'no_grants', `The credential has no grants for ${audience}`);
   const paid = await rpc(env.ACCOUNTS, payload.acct, 'charge', { kind: 'token', amount: price('token'), aggregate: true, now });
   const iat = Math.floor(now / 1000);
-  const exp = Math.min(iat + ACCESS_TOKEN_SECONDS, payload.exp);
+  const exp = Math.min(iat + ACCESS_TOKEN_SECONDS, payload.exp, Math.floor(confirmedUntil / 1000));
   const token = { iss: payload.iss, sub: payload.sub, acct: payload.acct, aud: [audience], cid: payload.cid, jti: randomId('tok'), iat, nbf: iat, exp, device: payload.device, grants, status: payload.status, ver: payload.ver };
   return { access_token: await signAccessToken(token, await activeSigner(env)), token_type: 'Bearer', expires_in: exp - iat, audience, cost_microdollars: paid.charged, balance_microdollars: paid.balance_microdollars };
+}
+
+/** require without its confirmation member (undefined when nothing is left). */
+function withoutConfirmation(require) {
+  const { confirmation: _c, ...rest } = require;
+  return Object.keys(rest).length ? rest : undefined;
+}
+
+/**
+ * Until when a presenting device's credential is confirmed (ms; Infinity when it needs no
+ * confirmation). Throws 403 confirmation_required when it needs one and holds none.
+ */
+export function confirmationUntil(device, now = Date.now()) {
+  if (!device.confirmation?.required) return Infinity;
+  assert(device.confirmation.until > now + 60000, 'confirmation_required', `This credential needs a current confirmation (POST /api/v1/credentials/${device.payload.cid}/confirm)`, 403);
+  return device.confirmation.until;
 }
 
 export { CREDENTIAL_TYP };

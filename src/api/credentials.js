@@ -2,6 +2,10 @@ import { assert, readJson } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { describeGrant } from '../../packages/verify/src/grants.js';
 import { issueCredential, renewCredential, exchangeToken } from '../services/credentials.js';
+import { activeSigner, issuerName } from '../services/issuer.js';
+import { signJws } from '../../packages/verify/src/jose.js';
+import { CONFIRMATION_TYP } from '../../packages/verify/src/credential.js';
+import { price } from '../utils/pricing.js';
 import { canAccess, SESSION } from '../auth/scopes.js';
 import { requireRecentSignIn, hasDbaAction, reinstatingIssue, requireDbaActionsWithinScopes } from '../auth/reverify.js';
 
@@ -66,6 +70,25 @@ export async function renew(route, request, env, auth) {
 
 export async function token(request, env, auth) {
   return exchangeToken(env, auth.device, await readJson(request));
+}
+
+/**
+ * POST /api/v1/credentials/:cid/confirm, by the credential's own device (DPoP): open or read its
+ * confirmation request; once its gates pass, a dba-confirmation+jwt to send as DBA-Confirmation
+ * (spec/credential.md §9). Ask again every retry_after seconds while it waits.
+ */
+export async function confirmCredential(route, env, auth) {
+  assert(auth.device?.payload.cid === route.params.cid, 'forbidden', 'A credential is confirmed by its own device (present it with a DPoP proof)', 403);
+  const result = await rpc(env.ACCOUNTS, auth.account, 'confirm-credential', { account: auth.account, cid: route.params.cid });
+  if (result.status !== 'confirmed') return result;
+  const signer = await activeSigner(env);
+  const confirmation = await signJws({ typ: CONFIRMATION_TYP, kid: signer.kid }, { iss: issuerName(env), ...result.claims }, signer.key);
+  return { status: 'confirmed', confirmation, expires_at: result.claims.exp, by_timeout: result.claims.by_timeout, cost_microdollars: price('confirm') };
+}
+
+/** POST /api/v1/credentials/:cid/unconfirm: stop trusting a device now (online audiences). */
+export async function unconfirmCredential(route, env, auth) {
+  return rpc(env.ACCOUNTS, auth.account, 'unconfirm-credential', { cid: route.params.cid });
 }
 
 export async function whoami(env, auth) {

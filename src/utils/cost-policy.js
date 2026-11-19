@@ -69,6 +69,11 @@ export const OPERATIONS = Object.freeze({
   // outcome ("failed", or the synchronous answer: 1 row). A late answer arrives as a callback
   // request (the answer's Worker and DO requests, already counted).
   gate_webhook: { workerRequests: 1, doRequests: 3, rowWrites: 10, cpuMs: 28, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
+  // Issuing a confirmation (its gates are charged as gate requests): the device's request
+  // (credential status with the rate limit, the account's confirm), the credential row's
+  // confirmed_until, the charge on the balance row and the day's aggregate, an audit row (and its
+  // deletion after 13 months), and signing the confirmation JWS.
+  confirm: { workerRequests: 1, doRequests: 2, rowWrites: 5, cpuMs: 5, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
   // Authentication (with the rate limit), registry read, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
   // the charge's ledger and receipt rows and the audit row.
   audience: { workerRequests: 1, doRequests: 4, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }

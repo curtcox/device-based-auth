@@ -284,7 +284,7 @@ export class AccountDO {
    * Charge and store a newly signed credential (and its device). The Worker signs first so the
    * stored JWS is exactly what the device receives; if the charge fails nothing is kept.
    */
-  async op_store_credential({ record, gate_policies = [], device, price, charge_id, fingerprint, reinstate = false, source, enrollment_token }, now) {
+  async op_store_credential({ record, gate_policies = [], extra_gates = [], device, price, charge_id, fingerprint, reinstate = false, source, enrollment_token }, now) {
     let announce = 0; let reinstated = false;
     const urgent = hasDbaAction(record.grants);
     const stored = await this.tx(async tx => {
@@ -296,7 +296,7 @@ export class AccountDO {
         token = await tx.get(`etok:${enrollment_token.id}`);
         assert(token && token.hash === enrollment_token.hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
       }
-      await checkGatesForIssue(tx, record.grants, record.device_id, gate_policies);
+      await checkGatesForIssue(tx, [...record.grants, ...(extra_gates.length ? [{ require: { gates: [{ any: extra_gates }] } }] : [])], record.device_id, gate_policies);
       const issuedToday = (await readBalance(tx, now, { flush: false })).day.counts?.issue || 0; // before this charge counts
       const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid }, receipt: { cid: record.cid, ...(fingerprint ? { fingerprint } : {}) }, annotate: subscribed ? state => { announce = nextNotice(state, now, urgent); } : undefined }, now);
       // The same charge id again (an Idempotency-Key retry, two approvals of one enrollment racing):
@@ -397,7 +397,7 @@ export class AccountDO {
       if (this.proofs.has(proof_key)) return { exists: true, replayed: true };
       this.proofs.set(proof_key, proof_exp);
     }
-    return { exists: true, ...(dashboard ? { dashboard } : {}), ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
+    return { exists: true, ...(dashboard ? { dashboard } : {}), ...(cred.confirm ? { confirm: cred.confirm, confirmed_until: cred.confirmed_until ?? 0 } : {}), ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
   }
 
   async revokeOne(tx, cred, now, reason) {
@@ -667,6 +667,13 @@ export class AccountDO {
             const used = (await tx.get(key)) || 0;
             if (used >= candidate.uses.count) { reasons.push('usage_limit_reached'); continue; }
             usage = { key, used };
+          }
+          // Confirmation online: the account's own record (spec/credential.md §9), so "stop
+          // trusting this device now" takes effect at once.
+          if (candidate.confirmation) {
+            if (!cred.confirmed_until) { reasons.push('confirmation_required'); continue; }
+            if (cred.confirmed_until <= now) { reasons.push('confirmation_expired'); continue; }
+            if (cred.confirmed_by_timeout && candidate.fail_open === false) { reasons.push('confirmation_by_timeout_refused'); continue; }
           }
           // The audience's policy for this action (spec/evaluation.md §3.8), checked here because
           // only the account knows its gates' kinds; it applies to credentials issued before it.
@@ -978,6 +985,63 @@ export class AccountDO {
     }
     this.announceTimeouts(byTimeout, now);
     return result;
+  }
+
+  // ---- Periodic confirmation (todo/additional_gates.md §3.4, §5.3) ------------------------
+
+  /**
+   * Confirm a credential that carries confirm: open (or read) its `confirm` gate request; once its
+   * gates pass, record confirmed_until (now + every_s) and return the claims the Worker signs into
+   * a dba-confirmation+jwt. Charged the confirmation price when one is issued.
+   */
+  async op_confirm_credential({ account, cid }, now) {
+    let asked = null; const byTimeout = [];
+    const result = await this.tx(async tx => {
+      asked = null; byTimeout.length = 0;
+      const cred = await tx.get(`cred:${cid}`);
+      assert(cred && !cred.revoked_at, 'revoked', 'Credential has been revoked', 403);
+      assert(cred.confirm, 'no_confirmation', 'This credential does not need confirmation', 409);
+      const candidate = { gates: cred.confirm.gates.map(e => ({ any: e.any, timeout_s: e.timeout_s ?? 300, on_timeout: e.on_timeout ?? 'deny' })), fail_open: true };
+      const subject = { purpose: 'confirm', action: 'confirm', audience: 'devicebasedauth.org', cid, requester: cid, signature: gateSignature(candidate) };
+      let req = await findRequest(tx, subject, now);
+      if (req) await this.refreshed(tx, req, now, byTimeout);
+      else {
+        req = await this.openGateRequest(tx, cred, subject, candidate, now);
+        if (req.rate_limited) return { status: 'denied', code: 'gate_rate_limited' };
+        await this.refreshed(tx, req, now, byTimeout);
+        if (!req.outcome) asked = req;
+      }
+      if (req.outcome === 'deny') return { status: 'denied', code: 'gate_denied' };
+      if (req.outcome === 'allow') {
+        await charge(tx, { kind: 'confirm', amount: price('confirm'), aggregate: true }, now);
+        await tx.delete(requestKey(req.id));
+        const gates = howPassed(req);
+        cred.confirmed_at = now; cred.confirmed_until = now + cred.confirm.every_s * 1000; cred.confirmed_by_timeout = !!req.by_timeout;
+        await tx.put(`cred:${cid}`, cred);
+        await this.audit(tx, now, req.by_timeout ? 'credential.confirmed_by_timeout' : 'credential.confirmed', { cid, until: cred.confirmed_until });
+        return { status: 'confirmed', claims: { sub: cred.device_id, aud: cred.aud, cid, cnf: { jkt: cred.jkt }, iat: Math.floor(now / 1000), exp: Math.floor(cred.confirmed_until / 1000), gates, by_timeout: !!req.by_timeout } };
+      }
+      return { status: 'pending', gate_request: { ...visibleRequest(req, now), retry_after: RETRY_AFTER_S, ...(hasFactorGates(req) ? { approve_url: await approvalLink(this.env, account, req) } : {}) } };
+    });
+    if (asked) {
+      await this.announceGateRequest(asked, now, account);
+      if (webhookTargets(asked).length) this.background(this.deliverWebhooks(asked.id, account));
+    }
+    this.announceTimeouts(byTimeout, now);
+    return result;
+  }
+
+  /** "Stop trusting this device now": end a credential's confirmation (online audiences at once). */
+  async op_unconfirm_credential({ cid }, now) {
+    return this.tx(async tx => {
+      const cred = await tx.get(`cred:${cid}`);
+      assert(cred, 'not_found', 'Credential not found', 404);
+      assert(cred.confirm, 'no_confirmation', 'This credential does not need confirmation; revoke it instead', 409);
+      cred.confirmed_until = Math.min(cred.confirmed_until ?? 0, now);
+      await tx.put(`cred:${cid}`, cred);
+      await this.audit(tx, now, 'credential.unconfirmed', { cid });
+      return { cid, confirmed_until: cred.confirmed_until, note: 'Online checks refuse it now; offline verifiers accept its last confirmation until it expires. Revoke the credential to stop those too.' };
+    });
   }
 
   // ---- The dashboard's own sign-in gate (todo/additional_gates.md §5.2) -----------------

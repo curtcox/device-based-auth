@@ -113,6 +113,8 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `DELETE /api/v1/credentials/{cid}` (credentials:revoke): Revoke a credential (free, immediate online; status lists within a minute).
 - `GET /api/v1/credentials/{cid}/decisions` (credentials:read): Online authorization decisions for a credential (kept 90 days).
 - `POST /api/v1/credentials/{cid}/renew` (device): Renew the presented credential (same key), or rotate to a new key with new_key_proof. Device credential + DPoP. Also accepts a credential signed by a withdrawn issuer key if it is exactly the one stored; that renewal is free and answers recovered: true.
+- `POST /api/v1/credentials/{cid}/confirm` (device): Confirm a credential that carries confirm: { gates, every_s } (spec/credential.md §9), from its own device: opens (or reads) a gate request for its confirm gates; once they pass, answers { status: "confirmed", confirmation } — a dba-confirmation+jwt to send as the DBA-Confirmation header, valid every_s seconds. Ask again every retry_after seconds while it waits. Charges the confirmation price when one is issued.
+- `POST /api/v1/credentials/{cid}/unconfirm` (credentials:revoke): Stop trusting a device now: ends the credential's current confirmation for online checks (/authorize) at once. Offline verifiers accept its last confirmation until that expires; revoke the credential to stop those too.
 - `GET /api/v1/devices` (credentials:read): Devices with their credentials.
 - `GET /api/v1/devices/{id}` (credentials:read): One device.
 - `POST /api/v1/devices/{id}/revoke` (credentials:revoke): Revoke every credential of a device.
@@ -499,8 +501,21 @@ the same 60 s skew as credentials. Conformance vectors: `confirmations` in
 [`vectors/credentials.json`](https://github.com/curtcox/device-based-auth/blob/main/spec/vectors/credentials.json), checked against the `valid credential`.
 
 Online, devicebasedauth.org uses its own record of the credential's last confirmation instead of
-the header, so the account owner can end it at once ("Stop trusting this device now"); offline
-verifiers stop accepting the device within `every_s` at most, or at once on revocation.
+the header, so the account owner can end it at once (`POST /api/v1/credentials/{cid}/unconfirm`,
+"Stop trusting this device now"); offline verifiers stop accepting the device within `every_s` at
+most, or at once on revocation.
+
+**Getting one.** The device calls `POST /api/v1/credentials/{cid}/confirm` with its credential and
+a DPoP proof. DBA opens a gate request for the credential's `confirm.gates` and answers
+`{ status: "pending", gate_request }` until they pass (ask again every `retry_after` seconds), then
+`{ status: "confirmed", confirmation, expires_at }`; a refusal is `{ status: "denied" }`. Devices
+should ask again at about two thirds of `every_s`, early enough for the gates' timeouts.
+
+**What needs one.** Every grant of a credential with `confirm` carries `require.confirmation`
+(issuance adds it; it cannot be set by hand), so its offline and online uses need a current
+confirmation. Renewal and rotation need one too. Access tokens (§6) and X.509 certificates (§6a)
+never outlive it, and tokens carry the grants without `require.confirmation` (they have no device
+key to bind a confirmation to). Credentials with `dba:*` grants cannot carry `confirm`.
 
 ---
 
@@ -736,6 +751,7 @@ handler adds a Durable Object call or a storage write.
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 6 rows (balance, daily aggregate row, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 8 | 14 | **14** |
 | Gate request, per gate contacted (**proposed, D13**) | Account that owns the gates (the credential's issuer) | 1 Worker req and 3 DO req (the answer: authentication with the rate limit and the account; the alarm that prunes it), 9 rows (balance and daily aggregate row; request row; its answer or timeout settlement; an audit row and its deletion after 13 months; the row's deletion when used or pruned; for TOTP and security keys, the gate row's last step or signature counter), 25 ms (Web Push to up to 5 browsers; the notice of an allow by timeout; code and signature checks), 0.5 KB × 13 months | 12 | 20 | **20** |
 | Webhook gate request, per webhook gate contacted (**proposed, D13**) | Same | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 13 | 22 | **22** |
+| Confirmation issued (periodic confirmation, **proposed, D13**) | Account that issued the credential (its gates are charged as gate requests) | 1 Worker req, 2 DO req, 5 rows (credential row, balance and daily aggregate row, an audit row and its later deletion), 5 ms (signing), 0.5 KB × 13 months | 7 | 12 | **12** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 4 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
 | Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
