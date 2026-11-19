@@ -52,6 +52,16 @@ export const OPERATIONS = Object.freeze({
   // Consent (session check with the rate limit, registry, code put, code alarm) + token (take
   // code, registry, charge). Rows: code put, code taken, code deleted, balance, daily aggregate.
   login: { workerRequests: 2, doRequests: 7, rowWrites: 5, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 },
+  // One gate contacted by a gate request (STATUS B7, D13), billed to the account whose gates they
+  // are. Creating it rides on the decision that asks (no extra request), but adds the charge
+  // (balance row and the day's aggregate row) and the request row. Its answer is a request of its
+  // own (Worker, authentication with the rate limit, the account's answer: 2 DO requests) that
+  // updates the row and writes an audit row (kept 13 months, then deleted by compaction); the
+  // decision that uses the approval deletes the row, or the alarm prunes it (1 DO request).
+  // Worst case instead of an answer: it settles by timeout, which writes the row and an audit row
+  // (+ its later delete) the same way. Notices: Web Push to up to 5 browsers (10 ms), and the
+  // announcement of an allow by timeout (10 ms more).
+  gate: { workerRequests: 1, doRequests: 3, rowWrites: 8, cpuMs: 22, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
   // Authentication (with the rate limit), registry read, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
   // the charge's ledger and receipt rows and the audit row.
   audience: { workerRequests: 1, doRequests: 4, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }

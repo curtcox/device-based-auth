@@ -121,7 +121,7 @@ describe('security notices', () => {
     const first = await ask();
     await ask();
     const asks = (await notices()).filter(n => n.title === 'Approval needed');
-    expect(asks).toEqual([{ title: 'Approval needed', body: 'Deploy bot asks to hashbin:content:delete on abc at hashbin.org. Approve or deny within 10 minutes.', url: 'http://localhost:8787/app.html#approvals', tag: `stepup-${first.body.step_up.id}` }]);
+    expect(asks).toEqual([{ title: 'Approval needed', body: 'Deploy bot asks to hashbin:content:delete on abc at hashbin.org. Approve or deny within 10 minutes.', url: 'http://localhost:8787/app.html#approvals', tag: `gate-${first.body.step_up.id}` }]);
   });
 
   it('drops a browser whose push service says it is gone', async () => {

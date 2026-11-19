@@ -35,6 +35,12 @@ describe('cost policy matches the code', () => {
     expect(got.rowWrites + later.rowWrites, `${op} rows written`).toBeLessThanOrEqual(OPERATIONS[op].rowWrites);
   };
   const later = (doRequests, rowWrites) => ({ doRequests, rowWrites });
+  // A request that does two priced things (a decision that opens a gate request) fits their sum.
+  const withinSum = (ops, got, after = { doRequests: 0, rowWrites: 0 }) => {
+    const sum = key => ops.reduce((n, op) => n + OPERATIONS[op][key], 0);
+    expect(got.doRequests + after.doRequests, `${ops.join('+')} DO requests: ${got.ops.join(' ')}`).toBeLessThanOrEqual(sum('doRequests'));
+    expect(got.rowWrites + after.rowWrites, `${ops.join('+')} rows written`).toBeLessThanOrEqual(sum('rowWrites'));
+  };
 
   it('metered read (worst case: two handler calls), also through MCP', async () => {
     const { approve } = await enroll(env, 'alice', await newDevice());
@@ -89,7 +95,24 @@ describe('cost policy matches the code', () => {
     const url = 'https://hashbin.org/api/content';
     const ask = async action => call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${key}`, body: { credential, proof: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url, credential }), request: { method: 'POST', url }, audience: 'hashbin.org', action } });
     within('decision', await measured(() => ask('hashbin:content:write')), later(0, 2));
-    within('decision', await measured(async () => { const r = await ask('hashbin:content:delete'); t += 11 * 60000; return r; }), later(0, 2));
+    // Asking for a step-up opens a gate request, paid by the gates' owner (alice) as one gate.
+    withinSum(['decision', 'gate'], await measured(async () => { const r = await ask('hashbin:content:delete'); t += 11 * 60000; return r; }), later(0, 2));
+  });
+
+  it('gate answer and settlement by timeout', async () => {
+    const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'v', scopes: ['authorize'] } })).body.secret;
+    const device = await newDevice();
+    const credential = (await enroll(env, 'alice', device, { grants: [{ actions: ['hashbin:content:delete'], require: { gates: [{ any: ['owner'], timeout_s: 60, on_timeout: 'allow' }] } }] })).approve.body.credential;
+    const url = 'https://hashbin.org/api/content';
+    const ask = async () => call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${key}`, body: { credential, proof: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url, credential }), request: { method: 'POST', url }, audience: 'hashbin.org', action: 'hashbin:content:delete' } });
+    // The answer: its own request; the decision that spends the approval deletes the row (later).
+    within('gate', await measured(async () => {
+      const pending = (await ask()).body.gate_request;
+      m.reset();
+      return call(env, 'POST', `/api/v1/gate-requests/${pending.id}/answer`, { auth: 'alice', body: { gate: 'owner', decision: 'allow' } });
+    }), later(1, 2 + 1));
+    // Settling by timeout inside a decision: the decision's own rows plus the gate's settlement.
+    withinSum(['decision', 'gate'], await measured(async () => { await ask(); t += 61000; m.reset(); return ask(); }), later(0, 2));
   });
 
   it('login', async () => {

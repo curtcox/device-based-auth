@@ -63,18 +63,18 @@ export async function authorize(request, env, auth) {
   }
   const location = { network: body.context?.network, device: proof?.loc };
   const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true, attestation: payload.device?.attestation });
-  // Until the gate engine (STATUS B7, G2) decides require.gates, a grant gated by anything but
-  // step-up is never a candidate: it denies rather than passing ungated.
-  const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok && (!r.online.gates || r.online.step_up), uses: r.online.uses, step_up: r.online.step_up })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
+  // Gates (step-up is the owner gate) are decided by the account's gate engine.
+  const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok, uses: r.online.uses, step_up: r.online.step_up, gates: r.online.gates, gates_reuse_s: r.online.gates_reuse_s, fail_open: r.online.fail_open })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
   const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { cid: payload.cid, jti: payload.jti, status_list: payload.status.status_list, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account, country: coarseCountry(location), token_namespace: payload.cnf ? null : registered.namespace });
   const grant = decision.allow ? payload.grants[decision.grant_index] : null;
   return {
     allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, reasons: decision.allow ? [] : (decision.reasons.length ? decision.reasons : evaluation.reasons.flat()),
     per_grant_reasons: evaluation.reasons, caveats: grant?.limits?.spend_usd_per_month !== undefined ? { spend_usd_per_month: grant.limits.spend_usd_per_month } : {},
     step_up: decision.step_up ? { ...decision.step_up, approve_url: `${env.APP_ORIGIN}/app.html#approvals` } : undefined,
+    gate_request: decision.gate_request, gates: decision.gates, by_timeout: decision.by_timeout || undefined,
     device_id: payload.sub, account: payload.acct, cid: payload.cid,
-    // Callers may cache an allow briefly unless counters or step-up were involved.
-    expires_in: decision.allow && !grant?.limits?.uses && !grant?.require?.step_up ? 30 : 0,
+    // Callers may cache an allow briefly unless counters or gates were involved.
+    expires_in: decision.allow && !grant?.limits?.uses && !grant?.require?.step_up && !grant?.require?.gates ? 30 : 0,
     cost_microdollars: charged.charged, balance_microdollars: charged.balance_microdollars
   };
 }

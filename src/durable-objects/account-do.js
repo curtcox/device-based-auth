@@ -3,15 +3,15 @@ import { rpc } from '../utils/rpc.js';
 import { charge, deposit, readBalance, money } from './ledger.js';
 import { periodSeconds, actionNamespace } from '../../packages/verify/src/grants.js';
 import { randomId } from '../utils/ids.js';
+import { price } from '../utils/pricing.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
 import { hasDbaAction } from '../auth/reverify.js';
+import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
 const DECISION_RETENTION_MS = 90 * 86400000;
-const STEP_UP_TTL_MS = 10 * 60000;
-const STEP_UP_APPROVED_TTL_MS = 5 * 60000;
 const OUTBOX_RETRY_MS = 60000;
 // Records are prepaid for 13 months (master plan §8.3, docs/business/pricing.md). After that,
 // compact() drops them so no account's storage grows forever on what it once paid.
@@ -44,6 +44,8 @@ export class AccountDO {
   constructor(ctx, env) {
     this.ctx = ctx; this.storage = ctx.storage; this.env = env;
     this.proofs = new Map(); this.rates = new Map();
+    // New gate requests per (device, gate) in the last hour (in memory, like the request limit).
+    this.gateRates = new Map();
     // Work that outlives the request (security notices). Tests await it with settle().
     this.inflight = new Set();
   }
@@ -288,6 +290,7 @@ export class AccountDO {
         token = await tx.get(`etok:${enrollment_token.id}`);
         assert(token && token.hash === enrollment_token.hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
       }
+      await checkGatesForIssue(tx, record.grants, record.device_id);
       const issuedToday = (await readBalance(tx, now, { flush: false })).day.counts?.issue || 0; // before this charge counts
       const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid }, receipt: { cid: record.cid, ...(fingerprint ? { fingerprint } : {}) }, annotate: subscribed ? state => { announce = nextNotice(state, now, urgent); } : undefined }, now);
       // The same charge id again (an Idempotency-Key retry, two approvals of one enrollment racing):
@@ -621,15 +624,16 @@ export class AccountDO {
   // ---- Online authorization ---------------------------------------------------
 
   /**
-   * Final online checks for one decision: revocation, proof replay, step-up and usage counters.
-   * candidates: grant indexes that passed every static check, in order, with their online needs.
+   * Final online checks for one decision: revocation, proof replay, gates (step-up is the owner
+   * gate) and usage counters. candidates: grant indexes that passed every static check, in order,
+   * with their online needs ({ index, uses, step_up, gates, gates_reuse_s, fail_open }).
    */
   async op_authorize({ cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country, token_namespace = null }, now) {
     const nowSeconds = Math.floor(now / 1000);
     for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
-    let asked = null;
+    let asked = null; let byTimeout = [];
     const decision = await this.tx(async tx => {
-      asked = null;
+      asked = null; byTimeout = [];
       const cred = await tx.get(`cred:${cid}`);
       let decision;
       if (!cred) decision = { allow: false, code: 'unknown_credential', reasons: ['unknown_credential'] };
@@ -640,10 +644,11 @@ export class AccountDO {
       else if (proof_jti && this.proofs.has(proof_jti)) decision = { allow: false, code: 'replayed_proof', reasons: ['replayed_proof'] };
       else {
         if (proof_jti) this.proofs.set(proof_jti, proof_exp);
-        const reasons = []; let chosen = null; let stepUpNeeded = null;
+        const reasons = []; let chosen = null; let needed = null; let denied = null;
+        const subject = { cid, action, resource, audience };
         for (const candidate of candidates) {
           // Check both before spending either, so a grant that is out of uses does not burn the
-          // owner's step-up approval (nor a step-up refusal count as a use).
+          // owner's approval (nor a refusal count as a use).
           let usage = null;
           if (candidate.uses) {
             const counter = usageCounter(cred, candidate.index, token_namespace);
@@ -655,38 +660,123 @@ export class AccountDO {
             if (used >= candidate.uses.count) { reasons.push('usage_limit_reached'); continue; }
             usage = { key, used };
           }
-          if (candidate.step_up) {
-            const approval = await findApproval(tx, { cid, action, resource, audience }, now);
-            if (!approval) { stepUpNeeded ||= candidate; reasons.push('step_up_required'); continue; }
-            // Spent: deleting it is the same single write as marking it used, and leaves the
-            // pruning pass nothing to delete later.
-            await tx.delete(`stepup:${approval.id}`);
+          let approval = null;
+          if (candidate.gates) {
+            const signature = gateSignature(candidate);
+            const req = await findRequest(tx, { ...subject, signature }, now);
+            if (req) await this.refreshed(tx, req, now, byTimeout);
+            const [waiting, refused] = candidate.step_up ? ['step_up_required', 'step_up_denied'] : ['gate_pending', 'gate_denied'];
+            if (req?.outcome === 'deny') { reasons.push(req.entries.some(e => e.by === 'by_timeout_refused') ? 'by_timeout_refused' : refused); denied ||= { candidate, req }; continue; }
+            if (req?.outcome !== 'allow') { reasons.push(waiting); needed ||= { candidate, req, signature }; continue; }
+            approval = req;
+          }
+          if (approval) {
+            // A spent approval is deleted (the same single write as marking it used); one that
+            // covers repeated uses (gates_reuse_s) stays until it runs out.
+            if (!approval.reuse_s) await tx.delete(requestKey(approval.id));
           }
           if (usage) await tx.put(usage.key, usage.used + 1);
-          chosen = candidate; break;
+          chosen = { candidate, approval }; break;
         }
-        if (chosen) decision = { allow: true, code: 'ok', grant_index: chosen.index, reasons: [] };
-        else if (stepUpNeeded) {
-          // Asking again while a request is still waiting reuses it: one request (and one notice)
-          // per thing to approve, however often the site retries. A denial stands until the
-          // request would have expired.
-          let pending = await findPending(tx, { cid, action, resource, audience }, now);
-          if (pending?.denied_at) decision = { allow: false, code: 'step_up_denied', reasons: reasons.map(r => r === 'step_up_required' ? 'step_up_denied' : r) };
-          else if (!pending) {
-            pending = { id: randomId('stp', 12), cid, device_id: cred.device_id, device_name: cred.device?.name, action, resource: resource ?? null, audience, requested_at: now, expires_at: now + STEP_UP_TTL_MS };
-            await tx.put(`stepup:${pending.id}`, pending);
-            asked = pending;
+        if (chosen) decision = { allow: true, code: 'ok', grant_index: chosen.candidate.index, reasons: [], ...(chosen.approval ? { gates: howPassed(chosen.approval), by_timeout: chosen.approval.by_timeout } : {}) };
+        else if (needed) {
+          // Asking again while a request waits reuses it: one request (and one notice) per thing
+          // to approve, however often the site retries.
+          let req = needed.req;
+          if (!req) {
+            req = await this.openGateRequest(tx, cred, subject, needed.candidate, now);
+            if (req.rate_limited) decision = { allow: false, code: 'gate_rate_limited', reasons: ['gate_rate_limited'] };
+            else {
+              // A request with no gate left to answer (all deleted) denies at once.
+              await this.refreshed(tx, req, now, byTimeout);
+              if (req.outcome === 'deny') decision = { allow: false, code: needed.candidate.step_up ? 'step_up_denied' : 'gate_denied', reasons: reasons.map(r => r === 'gate_pending' ? 'gate_denied' : r === 'step_up_required' ? 'step_up_denied' : r), gate_request: { id: req.id } };
+              else asked = req;
+            }
           }
-          if (!decision) decision = { allow: false, code: 'step_up_required', reasons, step_up: { id: pending.id, expires_in: Math.max(1, Math.ceil((pending.expires_at - now) / 1000)) } };
-        } else decision = { allow: false, code: candidates.length ? 'forbidden' : 'forbidden', reasons: reasons.length ? reasons : ['no_grant_matched'] };
+          if (!decision) {
+            const deadline = Math.max(...req.entries.map(e => e.deadline));
+            decision = { allow: false, code: needed.candidate.step_up ? 'step_up_required' : 'gate_pending', reasons, gate_request: { id: req.id, retry_after: RETRY_AFTER_S, deadline: Math.ceil(deadline / 1000) } };
+            if (needed.candidate.step_up) decision.step_up = { id: req.id, expires_in: Math.max(1, Math.ceil((deadline - now) / 1000)) };
+          }
+        } else if (denied) {
+          decision = { allow: false, code: reasons.includes('by_timeout_refused') ? 'by_timeout_refused' : denied.candidate.step_up ? 'step_up_denied' : 'gate_denied', reasons, gate_request: { id: denied.req.id } };
+        } else decision = { allow: false, code: 'forbidden', reasons: reasons.length ? reasons : ['no_grant_matched'] };
       }
-      if (cred) await tx.put(`decision:${cid}:${pad(now)}:${randomId('d', 6)}`, { at: now, audience, action, resource: resource ?? null, country: country ?? null, allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, caller, jti });
+      if (cred) await tx.put(`decision:${cid}:${pad(now)}:${randomId('d', 6)}`, { at: now, audience, action, resource: resource ?? null, country: country ?? null, allow: decision.allow, code: decision.code, grant_index: decision.grant_index ?? null, caller, jti, ...(decision.by_timeout ? { by_timeout: true } : {}) });
       const alarm = await tx.getAlarm();
-      if (!alarm) await tx.setAlarm(now + 86400000);
+      const wake = asked ? Math.max(...asked.entries.map(e => e.deadline)) + 60000 : now + 86400000;
+      if (!alarm || alarm > wake) await tx.setAlarm(wake);
       return decision;
     });
-    if (asked) this.notify({ title: 'Approval needed', body: `${noticeText(asked.device_name) || 'A device'} asks to ${noticeText(asked.action, 120)}${asked.resource ? ` on ${noticeText(asked.resource, 120)}` : ''} at ${noticeText(asked.audience)}. Approve or deny within ${STEP_UP_TTL_MS / 60000} minutes.`, path: '#approvals', tag: `stepup-${asked.id}` }, now);
+    if (asked) this.announceGateRequest(asked, now);
+    this.announceTimeouts(byTimeout, now);
     return decision;
+  }
+
+  /** Bring a request up to date in a transaction: store what changed, audit it if it settled. */
+  async refreshed(tx, req, now, byTimeout) {
+    const { changed, settled } = await refreshRequest(tx, req, now);
+    if (changed) await tx.put(requestKey(req.id), req);
+    if (settled) await this.auditSettled(tx, req, now, byTimeout);
+    return req;
+  }
+
+  /** Every allow by timeout is announced to the owner's browsers (plan §8). */
+  announceTimeouts(requests, now) {
+    for (const req of requests) this.notify({ title: 'Allowed because nobody answered', body: `${noticeText(req.action, 120)}${req.resource ? ` on ${noticeText(req.resource, 120)}` : ''} at ${noticeText(req.audience)} by ${noticeText(req.device_name) || 'a device'} was allowed because nobody answered in time.`, path: '#approvals', tag: `gate-timeout-${req.id}` }, now);
+  }
+
+  /**
+   * Open a gate request: rate limit, charge the account (whose gates they are) for each gate
+   * contacted, and record it. A request the balance cannot pay for is recorded but not sent, so
+   * its entries wait for their timeouts (plan §2, STATUS D13).
+   */
+  async openGateRequest(tx, cred, subject, candidate, now) {
+    const gates = await loadGates(tx, candidate.gates.flatMap(e => e.any));
+    const ids = [...gates.keys()];
+    // Push fatigue: a device that keeps asking is refused, not left to time out, so flooding
+    // cannot be used to force an allow-on-timeout (plan §8).
+    const hour = now - 3600000;
+    for (const id of ids) {
+      const recent = (this.gateRates.get(`${cred.device_id}:${id}`) || []).filter(at => at > hour);
+      if (recent.length >= GATE_REQUESTS_PER_HOUR) return { rate_limited: true };
+    }
+    for (const id of ids) this.gateRates.set(`${cred.device_id}:${id}`, [...(this.gateRates.get(`${cred.device_id}:${id}`) || []).filter(at => at > hour), now]);
+    const subscribed = ((await tx.get('push:subs')) || []).length > 0;
+    const devices = new Map();
+    for (const gate of gates.values()) if (gate.kind === 'dba-device') devices.set(gate.device_id, await tx.get(`device:${gate.device_id}`));
+    const delivery = gate => gate.kind === 'owner' ? (subscribed ? 'sent' : 'failed') : (devices.get(gate.device_id) && !devices.get(gate.device_id).revoked_at ? 'sent' : 'failed');
+    const req = newRequest({ cred, ...subject, candidate, gates, now, delivery });
+    const contacted = contactedGates(req);
+    if (contacted.length) {
+      try { await charge(tx, { kind: 'gate', amount: price('gate') * contacted.length, aggregate: true }, now); }
+      catch (error) {
+        if (error.code !== 'insufficient_balance') throw error;
+        for (const entry of req.entries) for (const g of entry.gates) if (g.state === 'sent' || g.state === 'failed') g.state = 'unpaid';
+        req.unpaid = true;
+      }
+    }
+    await tx.put(requestKey(req.id), req);
+    return req;
+  }
+
+  /** Audit a request that just settled; allows by timeout are also announced (after the response). */
+  async auditSettled(tx, req, now, byTimeout) {
+    if (req.outcome === 'allow' && req.by_timeout) {
+      await this.audit(tx, now, 'gate.allowed_by_timeout', { id: req.id, cid: req.cid, action: req.action, audience: req.audience });
+      byTimeout.push(req);
+    } else if (req.entries.every(e => e.by !== 'answer')) {
+      // Answers are audited when given; a request that settled without one (timeout, deleted gate) here.
+      await this.audit(tx, now, req.outcome === 'allow' ? 'gate.allowed' : 'gate.denied', { id: req.id, cid: req.cid, action: req.action, audience: req.audience, by: req.entries.map(e => e.by) });
+    }
+  }
+
+  /** Tell the gates about a new request: owner gates by Web Push; dba-device gates poll. */
+  announceGateRequest(req, now) {
+    if (req.unpaid || !req.entries.some(e => e.gates.some(g => g.id === 'owner' && g.state === 'sent'))) return;
+    const wait = Math.max(...req.entries.filter(e => e.gates.some(g => g.id === 'owner')).map(e => e.timeout_s));
+    const minutes = Math.round(wait / 60);
+    this.notify({ title: 'Approval needed', body: `${noticeText(req.device_name) || 'A device'} asks to ${noticeText(req.action, 120)}${req.resource ? ` on ${noticeText(req.resource, 120)}` : ''} at ${noticeText(req.audience)}. Approve or deny within ${minutes >= 1 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${wait} seconds`}.`, path: '#approvals', tag: `gate-${req.id}` }, now);
   }
 
   async op_decisions({ cid, limit = PAGE }) {
@@ -694,23 +784,115 @@ export class AccountDO {
     return { items: [...rows.values()] };
   }
 
+  /** Step-up requests: gate requests the owner gate can still answer (or approved), in the old shape. */
   async op_list_step_ups(_args, now) {
-    const rows = await this.storage.list({ prefix: 'stepup:' });
-    return { items: [...rows.values()].filter(s => !s.denied_at && (s.approved_at ? s.approved_until > now : s.expires_at > now)) };
+    const items = [];
+    for (const req of await this.liveRequests(now)) {
+      const owner = req.entries.find(e => e.gates.some(g => g.id === 'owner'));
+      if (!owner || req.outcome === 'deny' || (!req.outcome && owner.outcome)) continue;
+      items.push({ id: req.id, cid: req.cid, device_id: req.device_id, device_name: req.device_name, action: req.action, resource: req.resource, audience: req.audience, requested_at: req.created_at, expires_at: owner.deadline, ...(req.outcome === 'allow' ? { approved_at: req.settled_at, approved_until: req.approved_until } : {}) });
+    }
+    return { items };
   }
 
-  async op_decide_step_up({ id, approve, approver_device }, now) {
-    return this.tx(async tx => {
-      const item = await tx.get(`stepup:${id}`);
-      assert(item && !item.approved_at && !item.denied_at && item.expires_at > now, 'not_found', 'Approval request not found or expired', 404);
-      // Step-up exists because the device alone is not trusted for this action: a device signed in
-      // to the dashboard (dba:session) must not approve what it asked for itself. It may deny.
-      assert(!approve || !approver_device || approver_device !== item.device_id, 'self_approval', 'A device cannot approve its own request; approve it from another device or a signed-in browser', 403);
-      if (approve) { item.approved_at = now; item.approved_until = now + STEP_UP_APPROVED_TTL_MS; } else item.denied_at = now;
-      await tx.put(`stepup:${id}`, item);
-      await this.audit(tx, now, approve ? 'step_up.approved' : 'step_up.denied', { id, cid: item.cid, action: item.action });
-      return item;
+  /** Every gate request whose time is not over, brought up to date (deadlines, deleted gates). */
+  async liveRequests(now) {
+    const byTimeout = [];
+    const live = await this.tx(async tx => {
+      byTimeout.length = 0;
+      const rows = [];
+      for (const req of (await tx.list({ prefix: 'gatereq:' })).values()) {
+        if (requestUntil(req) <= now) continue;
+        rows.push(await this.refreshed(tx, req, now, byTimeout));
+      }
+      return rows;
     });
+    this.announceTimeouts(byTimeout, now);
+    return live;
+  }
+
+  /** Approve or deny a step-up request: an answer from the owner gate (404 once it is not waiting). */
+  async op_decide_step_up({ id, approve, approver_device }, now) {
+    try {
+      const req = await this.op_answer_gate_request({ id, gate: 'owner', decision: approve ? 'allow' : 'deny', answerer: { kind: 'owner', device_id: approver_device ?? null } }, now);
+      return { id, approved_at: approve ? now : undefined, denied_at: approve ? undefined : now, status: req.status };
+    } catch (error) {
+      if (['request_settled', 'expired', 'not_a_gate'].includes(error.code)) throw new ApiError(404, 'not_found', 'Approval request not found or expired');
+      throw error;
+    }
+  }
+
+  // ---- Gates (STATUS B7) -------------------------------------------------------
+
+  async op_list_gates() {
+    const rows = await this.storage.list({ prefix: 'gate:' });
+    return { items: [OWNER_GATE, ...[...rows.values()].map(visibleGate)] };
+  }
+
+  async op_create_gate({ input }, now) {
+    const gate = await this.tx(async tx => {
+      const created = await createGate(tx, input, now);
+      await this.audit(tx, now, 'gate.created', { id: created.id, kind: created.kind, device_id: created.device_id });
+      return created;
+    });
+    this.notify({ title: 'Gate added', body: `“${noticeText(gate.label)}” (${gate.kind}) can now approve or refuse requests for your account.`, path: '#gates', tag: `gate-added-${gate.id}` }, now);
+    return visibleGate(gate);
+  }
+
+  /** Delete a gate. Requests waiting on it can no longer pass through it (nothing to time out). */
+  async op_delete_gate({ id }, now) {
+    const gate = await this.tx(async tx => {
+      const found = await tx.get(gateKey(id));
+      assert(found, 'not_found', 'Gate not found', 404);
+      await tx.delete(gateKey(id));
+      await this.audit(tx, now, 'gate.deleted', { id, kind: found.kind });
+      return found;
+    });
+    this.notify({ title: 'Gate removed', body: `“${noticeText(gate.label)}” no longer approves requests. Grants that named only this gate now deny.`, path: '#gates', tag: `gate-removed-${id}` }, now);
+    return { ...visibleGate(gate), deleted: true };
+  }
+
+  /**
+   * Gate requests still waiting or approved. `device_id` limits the list to requests one of that
+   * device's dba-device gates can answer (what the device itself may see).
+   */
+  async op_list_gate_requests({ device_id }, now) {
+    const gates = device_id ? new Set([...(await this.storage.list({ prefix: 'gate:' })).values()].filter(g => g.kind === 'dba-device' && g.device_id === device_id).map(g => g.id)) : null;
+    const live = await this.liveRequests(now);
+    return { items: live.filter(req => !gates || req.entries.some(e => e.gates.some(g => gates.has(g.id)))).map(req => visibleRequest(req, now)) };
+  }
+
+  async op_get_gate_request({ id, device_id }, now) {
+    const byTimeout = [];
+    const found = await this.tx(async tx => {
+      byTimeout.length = 0;
+      const req = await tx.get(requestKey(id));
+      assert(req && requestUntil(req) > now, 'not_found', 'Gate request not found or expired', 404);
+      if (device_id) {
+        const ids = req.entries.flatMap(e => e.gates.map(g => g.id)).filter(g => g !== 'owner');
+        const mine = [...(await loadGates(tx, ids)).values()].some(g => g.device_id === device_id);
+        assert(mine || req.device_id === device_id, 'not_found', 'Gate request not found or expired', 404);
+      }
+      return visibleRequest(await this.refreshed(tx, req, now, byTimeout), now);
+    });
+    this.announceTimeouts(byTimeout, now);
+    return found;
+  }
+
+  async op_answer_gate_request({ id, entry, gate, decision, answerer }, now) {
+    const byTimeout = [];
+    const req = await this.tx(async tx => {
+      byTimeout.length = 0;
+      const found = await tx.get(requestKey(id));
+      assert(found && requestUntil(found) > now, 'not_found', 'Gate request not found or expired', 404);
+      await answerRequest(tx, found, { entry, gate, decision, answerer }, now);
+      await this.audit(tx, now, decision === 'allow' ? 'gate.approved' : 'gate.refused', { id, gate, cid: found.cid, action: found.action, audience: found.audience, by: answerer.device_id ?? 'session' });
+      // This answer may finish a request whose other entries passed by timeout.
+      if (found.outcome === 'allow' && found.by_timeout) await this.auditSettled(tx, found, now, byTimeout);
+      return found;
+    });
+    this.announceTimeouts(byTimeout, now);
+    return visibleRequest(req, now);
   }
 
   // ---- OpenID Connect authorization codes ------------------------------------
@@ -807,12 +989,12 @@ export class AccountDO {
     for (const [key, value] of await this.storage.list({ prefix: 'decision:', limit: 500 })) {
       if (value.at < now - DECISION_RETENTION_MS) await this.storage.delete(key);
     }
-    // Step-up requests and authorization codes are useless once they expire; the next wake-up is
-    // set for the first one still waiting, so none outlives its expiry for long on an account that
-    // has nothing else to do.
+    // Gate requests and authorization codes are useless once their time is over; the next wake-up
+    // is set for the first one still live, so none outlives it for long on an account that has
+    // nothing else to do.
     let shortLived = null;
-    for (const prefix of ['stepup:', 'code:']) for (const [key, value] of await this.storage.list({ prefix })) {
-      const until = Math.max(value.expires_at, value.approved_until || 0);
+    for (const prefix of ['gatereq:', 'code:']) for (const [key, value] of await this.storage.list({ prefix })) {
+      const until = prefix === 'gatereq:' ? requestUntil(value) : value.expires_at;
       if (until <= now) await this.storage.delete(key);
       else shortLived = Math.min(shortLived ?? Infinity, until);
     }
@@ -890,21 +1072,6 @@ export function credentialState(cred, now = Date.now()) {
   if (cred.revoked_at) return 'revoked';
   if (cred.exp * 1000 <= now) return 'expired';
   return 'active';
-}
-
-async function findApproval(tx, { cid, action, resource, audience }, now) {
-  for (const item of (await tx.list({ prefix: 'stepup:' })).values()) {
-    if (item.cid === cid && item.action === action && (item.resource ?? null) === (resource ?? null) && item.audience === audience && item.approved_at && item.approved_until > now) return item;
-  }
-  return null;
-}
-
-/** An unexpired step-up request for the same thing that was not approved: waiting, or denied. */
-async function findPending(tx, { cid, action, resource, audience }, now) {
-  for (const item of (await tx.list({ prefix: 'stepup:' })).values()) {
-    if (item.cid === cid && item.action === action && (item.resource ?? null) === (resource ?? null) && item.audience === audience && !item.approved_at && item.expires_at > now) return item;
-  }
-  return null;
 }
 
 export { money, ApiError };

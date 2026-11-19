@@ -52,17 +52,16 @@ export async function validateIssue(env, { aud, grants, lifetime_seconds }) {
   const audiences = await rpc(env.REGISTRY, 'global', 'get-many', { names: [...new Set(aud)] });
   const problems = validateGrants(grants);
   assert(!problems.length, 'invalid_grants', problems.join('; '));
-  // Gates and confirmations are in the grant vocabulary (spec/evaluation.md §3.6) before the gate
-  // engine that enforces them exists (STATUS B7, phase G2): refuse them rather than issue grants
-  // /authorize could not enforce.
+  // Confirmations are in the grant vocabulary (spec/evaluation.md §3.6) before the issuance and
+  // confirm endpoints that make them usable exist (STATUS B7, phase G7): refuse them rather than
+  // issue a credential that could never be used.
   for (const [i, grant] of grants.entries()) {
-    const unsupported = ['gates', 'gates_reuse_s', 'confirmation'].filter(k => grant.require?.[k] !== undefined);
-    assert(!unsupported.length, 'gates_not_available', `grants[${i}]: require.${unsupported.join(', require.')} ${unsupported.length > 1 ? 'are' : 'is'} not available yet; use require.step_up for owner approval`);
+    assert(grant.require?.confirmation === undefined, 'confirmation_not_available', `grants[${i}]: require.confirmation is not available yet`);
   }
   // devicebasedauth.org checks dba:* grants itself, per request, with no counters or approvals.
   for (const [i, grant] of grants.entries()) {
     const dba = grant.actions.some(a => a === '*' || a.startsWith('dba:'));
-    assert(!dba || (grant.limits?.uses === undefined && !grant.require?.step_up), 'invalid_grants', `grants[${i}]: dba:* actions cannot have limits.uses or require.step_up; put them in a grant of their own without these`);
+    assert(!dba || (grant.limits?.uses === undefined && !grant.require?.step_up && !grant.require?.gates), 'invalid_grants', `grants[${i}]: dba:* actions cannot have limits.uses, require.step_up or require.gates; put them in a grant of their own without these`);
   }
   const namespaces = new Map(Object.values(audiences).map(a => [a.namespace, a]));
   for (const [i, grant] of grants.entries()) for (const action of grant.actions) {

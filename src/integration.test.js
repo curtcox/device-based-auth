@@ -243,12 +243,12 @@ describe('online authorization', () => {
     expect((await call(env, 'GET', '/api/v1/step-ups', { auth: 'alice' })).body.items).toHaveLength(0);
   });
 
-  it('refuses to issue gates or confirmations before the gate engine exists (STATUS B7)', async () => {
+  it('refuses confirmations until they can be used, and gates that do not exist (STATUS B7)', async () => {
     await fund(env, 'alice');
-    for (const require of [{ gates: [{ any: ['owner'] }] }, { step_up: true, gates_reuse_s: 60 }, { confirmation: true }]) {
+    for (const [require, code] of [[{ confirmation: true }, 'confirmation_not_available'], [{ gates: [{ any: ['gate_NOSUCHGATE1'] }] }, 'unknown_gate']]) {
       const { approve } = await enroll(env, 'alice', await newDevice(), { grants: [{ actions: ['hashbin:content:write'], require }] });
+      expect(approve.body.code).toBe(code);
       expect(approve.status).toBe(400);
-      expect(approve.body.code).toBe('gates_not_available');
     }
   });
 
@@ -294,8 +294,8 @@ describe('online authorization', () => {
     await call(env, 'POST', `/api/v1/step-ups/${first.step_up.id}/approve`, { auth: 'alice', body: {} });
     expect((await call(env, 'POST', `/api/v1/step-ups/${first.step_up.id}/deny`, { auth: 'alice', body: {} })).status).toBe(404);
     expect((await ask('hashbin:content:delete')).body.allow).toBe(true);
-    const account = [...env.ACCOUNTS.objects.values()].find(o => o.storage.rows.has(`stepup:${other.step_up.id}`));
-    expect(account.storage.rows.has(`stepup:${first.step_up.id}`)).toBe(false);
+    const account = [...env.ACCOUNTS.objects.values()].find(o => o.storage.rows.has(`gatereq:${other.step_up.id}`));
+    expect(account.storage.rows.has(`gatereq:${first.step_up.id}`)).toBe(false);
     await call(env, 'POST', `/api/v1/step-ups/${other.step_up.id}/deny`, { auth: 'alice', body: {} });
     expect((await ask('hashbin:content:write')).body).toMatchObject({ allow: false, code: 'step_up_denied', reasons: ['step_up_denied'] });
     expect((await call(env, 'GET', '/api/v1/step-ups', { auth: 'alice' })).body.items).toHaveLength(0);

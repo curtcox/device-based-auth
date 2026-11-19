@@ -10,6 +10,7 @@ import { createCredential, listCredentials, getCredential, credentialDecisions, 
 import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
+import { gates, gateRequests } from './api/gates.js';
 import { pushSubscriptions, pushPublicKey } from './api/push.js';
 import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
 import { inspect } from './api/inspect.js';
@@ -80,6 +81,12 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/step-ups`, access: SESSION, handler: 'step-ups' },
   { method: 'POST', path: `${V1}/step-ups/:id/approve`, access: SESSION, handler: 'step-up-decide' },
   { method: 'POST', path: `${V1}/step-ups/:id/deny`, access: SESSION, handler: 'step-up-decide' },
+  { method: 'GET', path: `${V1}/gates`, access: 'gates:read', handler: 'gates' },
+  { method: 'POST', path: `${V1}/gates`, access: 'gates:write', handler: 'gates' },
+  { method: 'DELETE', path: `${V1}/gates/:id`, access: 'gates:write', handler: 'gates' },
+  { method: 'GET', path: `${V1}/gate-requests`, access: AUTHENTICATED, handler: 'gate-requests' },
+  { method: 'GET', path: `${V1}/gate-requests/:id`, access: AUTHENTICATED, handler: 'gate-requests' },
+  { method: 'POST', path: `${V1}/gate-requests/:id/answer`, access: AUTHENTICATED, handler: 'gate-requests' },
   { method: 'GET', path: `${V1}/audiences`, access: PUBLIC, handler: 'audiences' },
   { method: 'GET', path: `${V1}/audiences/:name`, access: PUBLIC, handler: 'audiences' },
   { method: 'GET', path: `${V1}/audiences/:name/usage`, access: 'audiences:read', handler: 'audience-usage' },
@@ -181,6 +188,8 @@ async function handle(route, request, env, auth) {
     case 'authorize': return authorize(request, env, auth);
     case 'step-ups': return rpc(env.ACCOUNTS, auth.account, 'list-step-ups');
     case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve'), approver_device: auth.device?.payload.sub });
+    case 'gates': return gates(route, request, env, auth);
+    case 'gate-requests': return gateRequests(route, request, env, auth);
     case 'audiences': return audiences(route, request, env, auth);
     case 'audience-usage': return audienceUsage(route, request, env, auth);
     case 'audience-webhook-test': return audienceWebhookTest(route, request, env, auth);

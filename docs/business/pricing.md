@@ -40,6 +40,7 @@ handler adds a Durable Object call or a storage write.
 | Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 52 | 85 | **85** |
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 10 ms, 1 KB × 13 months | 12 | 20 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 6 rows (balance, daily aggregate row, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 8 | 14 | **14** |
+| Gate request, per gate contacted (**proposed, D13**) | Account that owns the gates (the credential's issuer) | 1 Worker req and 3 DO req (the answer: authentication with the rate limit and the account; the alarm that prunes it), 8 rows (balance and daily aggregate row; request row; its answer or timeout settlement; an audit row and its deletion after 13 months; the row's deletion when used or pruned), 22 ms (Web Push to up to 5 browsers; the notice of an allow by timeout), 0.5 KB × 13 months | 11 | 18 | **18** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 4 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
 | Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
@@ -54,6 +55,21 @@ an audit of online decisions found two more rows in the worst case (a usage wind
 single decision is written and later deleted; so is a step-up request), so decision went to its
 new floor of 14 µ$, also approved by the owner (D11). Step-up requests are now reused while
 they wait and deleted when their approval is used, which keeps it at two rows rather than three.
+
+### Gate requests (proposed, STATUS D13)
+
+A grant with `require.gates` (or `require.step_up`, which is the built-in owner gate) makes each
+use wait for an approval (STATUS B7). The gate request is charged to the account whose gates they
+are, once per distinct gate DBA contacts, when the request is opened (retries reuse it); the
+audience still pays its online decision, and answering is free. If that account cannot pay, DBA
+sends nothing and records the gates as `unpaid`: the request still exists, the owner can answer
+it from the dashboard, and otherwise each entry waits for its timeout, so an allow-on-timeout
+entry then allows and a deny-on-timeout entry denies. Whether unpaid requests should deny instead
+is part of D13. Before gates, a step-up request's rows were counted in the decision price; they
+are now paid by the gate price, and the decision price is unchanged.
+
+A `dba-device` gate learns of requests by polling `GET /api/v1/gate-requests`, a free read like
+the dashboard's own lists (rate-limited per account).
 
 ### Why records are deleted after 13 months
 

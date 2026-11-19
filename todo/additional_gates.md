@@ -375,7 +375,7 @@ STATUS row updated.
 | Phase | Deliverable | Exit criteria |
 |-------|-------------|---------------|
 | G1 ✅ | Spec text and vectors for `require.gates`, `require.confirmation`, confirmations, catalog policy; evaluator in JS, Python, Go | Every new vector passes in all three; step_up ≡ owner gate |
-| G2 | Gate registry (`gate:` rows, CRUD routes, scopes `gates:read`/`gates:write`), `gatereq:` engine replacing `stepup:`, `owner` and `dba-device` kinds, `/authorize` integration, timeouts both ways, audit and notices, D13 prices in cost policy | Concurrency tests: one answer settles; timeout allow/deny; deleted gate denies; balance refusal behaves per §2; cost-count test covers the new ops |
+| G2 ✅ | Gate registry (`gate:` rows, CRUD routes, scopes `gates:read`/`gates:write`), `gatereq:` engine replacing `stepup:`, `owner` and `dba-device` kinds, `/authorize` integration, timeouts both ways, audit and notices, D13 prices in cost policy | Concurrency tests: one answer settles; timeout allow/deny; deleted gate denies; balance refusal behaves per §2; cost-count test covers the new ops |
 | G3 | Audience gate policy: catalog field, issuance check, `/authorize` check, verify library `catalog` option | An ungated grant for a required action is refused online and gets `online_required` offline |
 | G4 | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
 | G5 | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
@@ -395,9 +395,21 @@ STATUS row updated.
   cross-check cases). `verifyConfirmation` / `verify_confirmation` / `VerifyConfirmation` in all
   three; the JS `createVerifier` reads `DBA-Confirmation` and takes a static `catalog` option
   (fetching the catalog, and the Python and Go verifier wiring, are G3/G7).
-- **Fail closed until G2:** issuance refuses `require.gates`, `gates_reuse_s` and `confirmation`
-  (400 `gates_not_available`), `/authorize` never counts a grant gated by anything but `step_up`,
-  and gated `dba:*` grants never grant DBA scopes. G2 removes the issuance refusal.
+- **G2 done (2026-11-19).** `src/durable-objects/gates.js` (registry rows `gate:`, engine rows
+  `gatereq:`; lazily settled), `src/api/gates.js`, AccountDO ops, `/authorize` integration.
+  Choices made: requests match their grant's exact gate list (`signature`), so a different list
+  needs its own approval; an unanswered request is kept 5 minutes past its last deadline so the
+  site's next retry settles it (that is when an allow by timeout is seen, audited and announced);
+  a request whose gates are all deleted (or only the requesting device) denies at once; answers
+  after the first per entry are refused (409), after the deadline 410; a `dba-device` gate is
+  delivered by polling (`GET /api/v1/gate-requests`, filtered to its gates), so "failed" means
+  the device is revoked; owner gates are "sent" when the account has a push subscription.
+  Requests the owner cannot pay for are `unpaid` and wait for their timeout (D13 pending).
+  `dba:*` grants cannot have gates (DBA checks them per request with no engine). Issuance refuses
+  `require.confirmation` (400 `confirmation_not_available`) until G7.
+- Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
+  step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
+  come with G9 (or earlier with G4's approval page).
 
 ## 12. Open questions for later
 

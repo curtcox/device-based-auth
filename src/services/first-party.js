@@ -12,7 +12,10 @@ export const DBA_SCOPES = Object.freeze({
   'credentials:revoke': 'Revoke credentials and devices.',
   'audiences:read': 'Read registered audiences.',
   'audiences:write': 'Register and change audiences you own.',
-  'authorize': 'Ask for online authorization decisions for audiences you own (paid from the balance).'
+  'authorize': 'Ask for online authorization decisions for audiences you own (paid from the balance).',
+  'gates:read': 'List the account\'s gates (devices and services that approve requests).',
+  'gates:write': 'Add and remove gates (needs a recent sign-in).',
+  'approvals:answer': 'Answer gate requests as a DBA device gate (devices only: a device answers for the gates that name it).'
 });
 
 const catalog = (ns, entries) => Object.entries(entries).map(([action, description]) => ({ action: `${ns}:${action}`, description }));
