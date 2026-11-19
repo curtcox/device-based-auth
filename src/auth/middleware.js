@@ -11,6 +11,10 @@ import { sameStatusEntry } from '../durable-objects/account-do.js';
 
 export const API_KEY_PREFIX = 'dbak_';
 
+// Per-caller request limits per minute. The check runs inside the account's authentication call,
+// so it costs no Durable Object request of its own.
+const SESSION_RATE = 300; const RATE = 120;
+
 /**
  * Authenticate: LocalDev (local only), Clerk session JWTs, API keys (dbak_…), and
  * devicebasedauth.org's own device credentials ("Authorization: DBA" + DPoP) — DBA is its own
@@ -22,8 +26,8 @@ export async function authenticate(request, env, { anyAudience = false, recovery
     const account = header.slice(9).trim();
     assert(env.ENVIRONMENT === 'local', 'invalid_auth', 'Local authentication is disabled', 401);
     assert(/^[a-zA-Z0-9_-]{1,128}$/.test(account), 'invalid_auth', 'Invalid local user', 401);
-    await rpc(env.ACCOUNTS, account, 'init', { account });
-    return { account, session: true, kind: 'local' };
+    await rpc(env.ACCOUNTS, account, 'init', { account, rate: { id: 'session', limit: SESSION_RATE } });
+    return { account, session: true, kind: 'local', rated: true };
   }
   if (header.startsWith('DBA ')) return authenticateDevice(request, env, header.slice(4).trim(), { anyAudience, recovery });
   if (header.startsWith('Bearer ')) {
@@ -36,15 +40,15 @@ export async function authenticate(request, env, { anyAudience = false, recovery
     const verify = env.CLERK_VERIFY_TOKEN || verifyClerkToken;
     try { claims = await verify(token, { secretKey: env.CLERK_SECRET_KEY, authorizedParties: [env.APP_ORIGIN] }); } catch { claims = null; }
     assert(claims?.sub && claims.sid, 'invalid_auth', 'Invalid session', 401);
-    await rpc(env.ACCOUNTS, claims.sub, 'init', { account: claims.sub });
-    return { account: claims.sub, session: true, kind: 'clerk', factor_age_minutes: factorAgeMinutes(claims) };
+    await rpc(env.ACCOUNTS, claims.sub, 'init', { account: claims.sub, rate: { id: 'session', limit: SESSION_RATE } });
+    return { account: claims.sub, session: true, kind: 'clerk', factor_age_minutes: factorAgeMinutes(claims), rated: true };
   }
   if (header.startsWith('ApiKey ')) {
     const token = header.slice(7).trim();
     const payload = await verifyToken(token, API_KEY_PREFIX, env.TOKEN_SIGNING_KEY, 2048);
     assert(payload && typeof payload.account === 'string' && typeof payload.id === 'string', 'invalid_auth', 'Invalid API key', 401);
-    const key = await rpc(env.ACCOUNTS, payload.account, 'authenticate-key', { id: payload.id, hash: await digest(token) });
-    return { account: payload.account, key_id: payload.id, scopes: key.scopes, session: false, kind: 'key' };
+    const key = await rpc(env.ACCOUNTS, payload.account, 'authenticate-key', { id: payload.id, hash: await digest(token), rate: { id: payload.id, limit: RATE } });
+    return { account: payload.account, key_id: payload.id, scopes: key.scopes, session: false, kind: 'key', rated: true };
   }
   assert(false, 'auth_required', 'Authentication required', 401);
 }
@@ -83,13 +87,13 @@ async function authenticateDevice(request, env, credential, { anyAudience, recov
     assert(proof, 'proof_required', 'A DPoP proof is required with a DBA credential', 401);
     const verifiedProof = await verifyProof(proof, { method: request.method, url: request.url, credential, jkt: payload.cnf.jkt });
     const now = Math.floor(Date.now() / 1000);
-    const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid, proof_key: `${verifiedProof.jkt}:${verifiedProof.jti}`, proof_exp: now + PROOF_MAX_AGE + 2 * CLOCK_SKEW });
+    const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid, rate: { id: payload.cid, limit: RATE }, proof_key: `${verifiedProof.jkt}:${verifiedProof.jti}`, proof_exp: now + PROOF_MAX_AGE + 2 * CLOCK_SKEW });
     assert(!status.replayed, 'replayed_proof', 'DPoP proof was already used; make a new proof for each request', 401);
     // The account's own record is authoritative and instant; a rotated credential has a new entry.
     assert(status.exists && !status.revoked && sameStatusEntry(status.status, payload.status.status_list), 'revoked', 'Credential has been revoked', 401);
     const dba = payload.aud.includes(appAudience(env));
     assert(dba || anyAudience, 'wrong_audience', `Credential is not valid for ${appAudience(env)}`, 401);
-    return { account: payload.acct, session: false, kind: 'device', device: { payload, credential, proof: verifiedProof, dba, ...(recovered ? { recovery: true } : {}), location: { network: networkLocation(request), device: verifiedProof.loc } } };
+    return { account: payload.acct, session: false, kind: 'device', rated: true, device: { payload, credential, proof: verifiedProof, dba, ...(recovered ? { recovery: true } : {}), location: { network: networkLocation(request), device: verifiedProof.loc } } };
   } catch (error) {
     if (error instanceof VerificationError) assert(false, error.code, error.message, 401);
     throw error;

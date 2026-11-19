@@ -157,7 +157,7 @@ export async function authenticateMcpToken(token, env) {
   } catch { verified = null; }
   const p = verified?.payload;
   assert(p && p.iss === issuerName(env) && p.aud === mcpResource(env) && Number.isSafeInteger(p.exp) && p.exp > Math.floor(Date.now() / 1000) && typeof p.sub === 'string' && typeof p.key_id === 'string', 'invalid_token', 'Access token is invalid or expired', 401);
-  const key = await rpc(env.ACCOUNTS, p.sub, 'authenticate-oauth-key', { id: p.key_id });
+  const key = await rpc(env.ACCOUNTS, p.sub, 'authenticate-oauth-key', { id: p.key_id, rate: { id: p.key_id, limit: 120 } });
   const scopes = String(p.scope || '').split(' ').filter(s => key.scopes.includes(s));
-  return { account: p.sub, key_id: p.key_id, scopes, session: false, kind: 'key', oauth: true };
+  return { account: p.sub, key_id: p.key_id, scopes, session: false, kind: 'key', oauth: true, rated: true };
 }

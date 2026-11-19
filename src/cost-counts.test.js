@@ -1,0 +1,128 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { testEnv, call, newDevice, enroll, meter } from '../test-utils/env.js';
+import { inspectCredential, createProof, signJws, sha256b64u, b64u } from '../packages/verify/src/index.js';
+import { OPERATIONS } from './utils/cost-policy.js';
+
+// The worst cases in src/utils/cost-policy.js are what prices are floored on (AGENTS.md: every
+// price must pass the price-floor test). These tests measure what the code really does, so a
+// handler that starts making another Durable Object request or writing another row fails here
+// instead of quietly selling below cost.
+
+const DAY = 86400000;
+let env; let m; const realNow = Date.now; let t;
+beforeEach(async () => {
+  t = realNow(); Date.now = () => t;
+  env = await testEnv(); m = meter(env);
+  for (const who of ['alice', 'operator']) await call(env, 'POST', '/api/v1/dev/deposit', { auth: who, body: { amount_microdollars: 1_000_000 } });
+});
+afterEach(() => { Date.now = realNow; });
+
+/** Run `op` once to warm up, move to the next day (so the measured run flushes yesterday's aggregate row), measure it. */
+async function measured(op) {
+  await op();
+  t += DAY; m.reset();
+  const result = await op();
+  return { ...m.read(), result };
+}
+
+describe('cost policy matches the code', () => {
+  /**
+   * Within the counted worst case: `later` is what the operation prepays but does after this
+   * request (pruning and compaction deletes, alarm wake-ups, revocation and its webhooks).
+   */
+  const within = (op, got, later = { doRequests: 0, rowWrites: 0 }) => {
+    expect(got.doRequests + later.doRequests, `${op} DO requests: ${got.ops.join(' ')}`).toBeLessThanOrEqual(OPERATIONS[op].doRequests);
+    expect(got.rowWrites + later.rowWrites, `${op} rows written`).toBeLessThanOrEqual(OPERATIONS[op].rowWrites);
+  };
+  const later = (doRequests, rowWrites) => ({ doRequests, rowWrites });
+
+  it('metered read (worst case: two handler calls), also through MCP', async () => {
+    const { approve } = await enroll(env, 'alice', await newDevice());
+    const cid = inspectCredential(approve.body.credential).payload.cid;
+    const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'k', scopes: ['credentials:read'] } })).body.secret;
+    within('read', await measured(() => call(env, 'GET', `/api/v1/credentials/${cid}/decisions`, { auth: `ApiKey ${key}` })));
+    // Through MCP: the tool call reuses the /mcp request's authentication and rate limit.
+    const mcp = await measured(() => call(env, 'POST', '/mcp', { auth: `ApiKey ${key}`, body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_credential', arguments: { cid } } } }));
+    expect(mcp.result.body.result.isError).toBeFalsy();
+    within('read', mcp);
+    const op = (await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'k', scopes: ['audiences:read', 'audiences:write'] } })).body.secret;
+    within('read', await measured(() => call(env, 'GET', '/api/v1/audiences/hashbin.org/usage', { auth: `ApiKey ${op}` })));
+    within('read', await measured(() => call(env, 'POST', '/api/v1/audiences?dry_run=1', { auth: `ApiKey ${op}`, body: {} })));
+  });
+
+  it('token and certificate', async () => {
+    const device = await newDevice();
+    const credential = (await enroll(env, 'alice', device)).approve.body.credential;
+    const ask = async (path, body) => call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body });
+    within('token', await measured(() => ask('/api/v1/token', { audience: 'hashbin.org' })));
+    within('token', await measured(() => ask('/api/v1/certificate', {})));
+  });
+
+  it('renew and rotate', async () => {
+    const device = await newDevice();
+    let credential = (await enroll(env, 'alice', device)).approve.body.credential;
+    const { cid } = inspectCredential(credential).payload;
+    const path = `/api/v1/credentials/${cid}/renew`;
+    within('renew', await measured(async () => { const r = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: {} }); credential = r.body.credential; return r; }), later(0, 3));
+    let holder = device;
+    within('issue', await measured(async () => {
+      const next = await newDevice();
+      const keyProof = await signJws({ typ: 'dba-rotate+jwt', jwk: next.publicJwk }, { cid, iat: Math.floor(t / 1000) }, next.privateKey);
+      const r = await call(env, 'POST', path, { headers: await holder.headers('POST', path, credential), body: { new_key_proof: keyProof } });
+      credential = r.body.credential; holder = next; return r;
+      // Rotation revokes the old key's status entry now: that revocation (shard request, ~5 rows) was
+      // prepaid by the issue it replaces, so it is credited here; the new entry prepays its own.
+    }), later(11 - 1, 16 - 5));
+  });
+
+  it('issue', async () => {
+    within('issue', await measured(() => enroll(env, 'alice', newDeviceSync())), later(11, 16));
+    within('issue', await measured(async () => { const d = await newDevice(); return call(env, 'POST', '/api/v1/credentials', { auth: 'alice', body: { public_jwk: d.publicJwk, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }] } }); }), later(11, 16));
+    const token = (await call(env, 'POST', '/api/v1/enrollment-tokens', { auth: 'alice', body: { name: 'f', aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], max_uses: 10, expires_in_days: 5 } })).body.token;
+    within('issue', await measured(async () => { const d = await newDevice(); return call(env, 'POST', '/api/v1/enrollments/redeem', { body: { enrollment_token: token, request: await d.enrollRequest({ device: { name: 'a', kind: 'agent' } }) } }); }), later(11, 16));
+  });
+
+  it('decision', async () => {
+    const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'v', scopes: ['authorize'] } })).body.secret;
+    const device = await newDevice();
+    const credential = (await enroll(env, 'alice', device, { grants: [{ actions: ['hashbin:content:write'], limits: { uses: { count: 5, per: 'day' } } }, { actions: ['hashbin:content:delete'], require: { step_up: true } }] })).approve.body.credential;
+    const url = 'https://hashbin.org/api/content';
+    const ask = async action => call(env, 'POST', '/api/v1/authorize', { auth: `ApiKey ${key}`, body: { credential, proof: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url, credential }), request: { method: 'POST', url }, audience: 'hashbin.org', action } });
+    within('decision', await measured(() => ask('hashbin:content:write')), later(0, 2));
+    within('decision', await measured(async () => { const r = await ask('hashbin:content:delete'); t += 11 * 60000; return r; }), later(0, 2));
+  });
+
+  it('login', async () => {
+    const verifier = b64u(crypto.getRandomValues(new Uint8Array(32)));
+    const challenge = await sha256b64u(verifier);
+    const redirect_uri = 'https://cronly.org/auth/dba/callback';
+    within('login', await measured(async () => {
+      const approved = await call(env, 'POST', '/oauth/authorize', { auth: 'alice', body: { client_id: 'cronly.org', redirect_uri, response_type: 'code', scope: 'openid', code_challenge: challenge, code_challenge_method: 'S256', approve: true } });
+      const form = new URLSearchParams({ grant_type: 'authorization_code', code: new URL(approved.body.redirect).searchParams.get('code'), redirect_uri, client_id: 'cronly.org', code_verifier: verifier });
+      return call(env, 'POST', '/oauth/token', { body: form.toString(), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+    }), later(1, 1));
+  });
+
+  it('audience change', async () => {
+    let n = 0;
+    within('audience', await measured(() => call(env, 'PATCH', '/api/v1/audiences/hashbin.org', { auth: 'operator', body: { description: `v${n++}` } })), later(0, 3));
+  });
+});
+
+function newDeviceSync() { return newDevicePromise; }
+let newDevicePromise;
+beforeEach(async () => { newDevicePromise = await newDevice(); });
+
+describe('MCP tool calls as a device', () => {
+  it('work with a device credential: the forwarded call reuses the /mcp proof instead of replaying it', async () => {
+    const device = await newDevice();
+    const credential = (await enroll(env, 'alice', device, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:credentials:read'] }] })).approve.body.credential;
+    const { cid } = inspectCredential(credential).payload;
+    const res = await call(env, 'POST', '/mcp', { headers: await device.headers('POST', '/mcp', credential), body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_credential', arguments: { cid } } } });
+    expect(res.body.result.isError).toBeFalsy();
+    expect(JSON.parse(res.body.result.content[0].text).cid).toBe(cid);
+    // Grants still apply: this device may not read the balance.
+    const denied = await call(env, 'POST', '/mcp', { headers: await device.headers('POST', '/mcp', credential), body: { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'balance', arguments: {} } } });
+    expect(denied.body.result.isError).toBe(true);
+  });
+});

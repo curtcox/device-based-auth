@@ -73,3 +73,31 @@ export async function enroll(env, owner, device, { aud = ['hashbin.org'], grants
 }
 
 export { worker };
+
+/**
+ * Count Durable Object requests and storage row writes (puts and deletes) made from now on, to
+ * check an operation against its worst case in src/utils/cost-policy.js. Returns a reader.
+ */
+export function meter(env) {
+  const counts = { doRequests: 0, rowWrites: 0, byOp: [] };
+  for (const name of ['ACCOUNTS', 'STATUS', 'REGISTRY', 'ENROLLMENTS', 'SAFETY']) {
+    const ns = env[name]; const get = ns.get.bind(ns);
+    ns.get = id => {
+      const object = get(id);
+      if (!object.metered) {
+        object.metered = true;
+        const fetch = object.fetch.bind(object);
+        object.fetch = async request => { const args = await request.clone().json(); counts.doRequests++; counts.byOp.push(`${name}:${args.op}`); return fetch(request); };
+        const { storage } = object; const put = storage.put.bind(storage); const del = storage.delete.bind(storage);
+        storage.put = async (key, value) => { counts.rowWrites++; return put(key, value); };
+        storage.delete = async key => { counts.rowWrites += Array.isArray(key) ? key.length : 1; return del(key); };
+      }
+      return object;
+    };
+  }
+  const start = { doRequests: 0, rowWrites: 0 };
+  return {
+    reset() { start.doRequests = counts.doRequests; start.rowWrites = counts.rowWrites; counts.byOp.length = 0; },
+    read() { return { doRequests: counts.doRequests - start.doRequests, rowWrites: counts.rowWrites - start.rowWrites, ops: [...counts.byOp] }; }
+  };
+}

@@ -86,7 +86,8 @@ export class AccountDO {
     });
   }
 
-  async op_init({ account }, now) {
+  async op_init({ account, rate }, now) {
+    if (rate) await this.op_rate_limit(rate, now);
     return this.tx(async tx => {
       const profile = await tx.get('profile');
       if (profile) return profile;
@@ -172,10 +173,12 @@ export class AccountDO {
   }
 
   /** A connected app's access token: the record must exist, be an app, and not be revoked. */
-  async op_authenticate_oauth_key({ id }, now) {
+  async op_authenticate_oauth_key({ id, rate }, now) {
+    if (rate) await this.op_rate_limit(rate, now);
+    // Reads only: a "last used" write here would be an unpaid row every hour. The hourly refresh
+    // already records refreshed_at.
     const key = await this.storage.get(`key:${id}`);
     assert(key && key.kind === 'oauth' && !key.revoked_at, 'invalid_token', 'This app connection was revoked', 401);
-    if (!key.used_at || now - key.used_at > 3600000) { key.used_at = now; await this.storage.put(`key:${id}`, key); }
     return { scopes: key.scopes };
   }
 
@@ -209,7 +212,8 @@ export class AccountDO {
     });
   }
 
-  async op_authenticate_key({ id, hash }) {
+  async op_authenticate_key({ id, hash, rate }, now) {
+    if (rate) await this.op_rate_limit(rate, now);
     const key = await this.storage.get(`key:${id}`);
     assert(key && key.kind !== 'oauth' && !key.revoked_at && key.hash === hash, 'invalid_auth', 'Invalid API key', 401);
     return { scopes: key.scopes };
@@ -362,7 +366,8 @@ export class AccountDO {
    * sign the body, so a proof seen once (a logging proxy, a leaked header) must not be accepted
    * again with another body. The account's single DO instance makes this a global check.
    */
-  async op_credential_status({ cid, with_jws = false, proof_key, proof_exp }, now) {
+  async op_credential_status({ cid, with_jws = false, proof_key, proof_exp, rate }, now) {
+    if (rate) await this.op_rate_limit(rate, now);
     const cred = await this.storage.get(`cred:${cid}`);
     if (!cred) return { exists: false, revoked: true };
     if (proof_key) {

@@ -202,12 +202,21 @@ async function handle(route, request, env, auth) {
     case 'oidc-authorize': return oidcAuthorize(request, env, auth);
     case 'oidc-token': return oidcToken(request, env);
     case 'oidc-userinfo': return oidcUserinfo(request, env);
-    case 'mcp': return mcp(request, env, auth, (path, method, body) => worker.fetch(new Request(new URL(path, request.url), { method, headers: forwardHeaders(request), body: body === undefined ? undefined : JSON.stringify(body) }), env));
+    case 'mcp': return mcp(request, env, auth, (path, method, body) => {
+      const inner = new Request(new URL(path, request.url), { method, headers: forwardHeaders(request), body: body === undefined ? undefined : JSON.stringify(body) });
+      // The tool call acts as the caller already authenticated (and rate-limited) for /mcp.
+      authenticated.set(inner, auth);
+      return worker.fetch(inner, env);
+    });
     case 'clerk-webhook': return clerkWebhook(request, env);
     case 'stripe-webhook': return stripeWebhook(request, env);
   }
   assert(false, 'not_found', 'Not found', 404);
 }
+
+// Requests made inside this Worker for an MCP tool call, mapped to the caller's authentication.
+// Only code holding the Request object can add one, so no client can claim an entry.
+const authenticated = new WeakMap();
 
 function forwardHeaders(request) {
   const headers = { 'Content-Type': 'application/json', 'Idempotency-Key': request.headers.get('Idempotency-Key') || crypto.randomUUID() };
@@ -239,10 +248,11 @@ const worker = {
       if (!route && env.ASSETS && request.method === 'GET' && !path.startsWith('/api/')) return env.ASSETS.fetch(request);
       assert(route, 'not_found', 'Not found', 404);
       if (route.free) assert(!(await brakeActive(env)), 'cost_brake', 'This free endpoint is paused by the cost-safety brake; paid endpoints keep working', 503);
-      const auth = route.access === PUBLIC ? null : await authenticate(request, env, { anyAudience: route.access === DEVICE || route.access === AUTHENTICATED, recovery: route.handler === 'renew' });
+      const auth = route.access === PUBLIC ? null : authenticated.get(request) ?? await authenticate(request, env, { anyAudience: route.access === DEVICE || route.access === AUTHENTICATED, recovery: route.handler === 'renew' });
       assert(canAccess(auth, route.access), 'insufficient_scope', 'Credential does not allow this operation', 403);
       let cost = 0; let balance;
-      if (auth) await rpc(env.ACCOUNTS, auth.account, 'rate-limit', { id: auth.key_id || auth.device?.payload.cid || 'session', limit: auth.session ? 300 : 120 });
+      // Authentication normally checks the caller's request limit in the same call (auth.rated).
+      if (auth && !auth.rated) await rpc(env.ACCOUNTS, auth.account, 'rate-limit', { id: auth.key_id || auth.device?.payload.cid || 'session', limit: auth.session ? 300 : 120 });
       if (route.billable && url.searchParams.get('dry_run') === '1') {
         // Quote only: nothing is validated, reserved or charged. Reading the balance is a read, and
         // costs what a read costs this caller (free from the dashboard).

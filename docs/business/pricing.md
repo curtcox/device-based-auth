@@ -40,10 +40,10 @@ handler adds a Durable Object call or a storage write.
 | Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 52 | 85 | **85** |
 | Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 10 ms, 1 KB × 13 months | 12 | 20 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 6 rows (balance, daily aggregate row, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 8 | 14 | **14** |
-| Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 3 DO req, 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
+| Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 4 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
 | Token exchange (≤10-minute bearer token) or X.509 client certificate (≤24 h) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
-| Register or change an audience | Audience owner | 1 Worker req, 3 DO req, 8 rows (incl. later deletions), 4 KB × 13 months | 20 | 33 | **100** |
+| Register or change an audience | Audience owner | 1 Worker req, 4 DO req, 8 rows (incl. later deletions), 4 KB × 13 months | 20 | 33 | **100** |
 | Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
 
 Decision, login, read, token and issue prices sit exactly at their floors (the thinnest margin the
@@ -75,6 +75,14 @@ The first metered read, token, decision or sign-in of a day on an account writes
 aggregate ledger row for its kind, so each of those operations counts one row for it (it was
 omitted until 2026-11-18, which left decision and login 2 µ$ under their floors).
 Any upward correction found in an audit must raise those prices.
+
+The counts are checked against the code: `src/cost-counts.test.js` measures the Durable Object
+requests and rows each operation really makes (plus what it prepays for later: pruning and
+compaction deletes, revocation, webhooks) and fails when they exceed `OPERATIONS`. Writing it
+found metered reads making 4 DO requests where 3 were counted (5 before authentication took over
+the rate-limit check, which every authenticated request used to spend a DO request on), an
+audience change making 4, and connected MCP apps writing a "last used" row every hour, which is
+gone (the hourly refresh records `refreshed_at`).
 
 ### Security notices ride on the issue price
 
