@@ -56,6 +56,14 @@
 <label>Age (s)<input name="dev_age" type="number" step="1" min="0" value="0"></label>
 </div>
 </fieldset>
+<fieldset><legend>Confirmation (credentials issued with <code>confirm</code>)</legend>
+<div class="row">
+<label class="check"><input type="checkbox" name="confirmed"> The device sends a confirmation</label>
+<label>Confirmed (minutes before the clock)<input type="number" name="confirmed_ago" min="0" step="1" value="10"></label>
+<label>Valid for (hours)<input type="number" name="confirmed_for" min="0" step="any" value="24"></label>
+<label class="check"><input type="checkbox" name="confirmed_by_timeout"> Passed by timeout</label>
+</div>
+</fieldset>
 <label class="check"><input type="checkbox" name="online"> Evaluate online (as devicebasedauth.org would, with counters and approvals available)</label>
 </div>
 </div>

@@ -57,7 +57,11 @@ export function explainReason(code) {
     location_stale: 'The device location is more than 5 minutes old.',
     outside_location: `${source[0].toUpperCase()}${source.slice(1)} is outside every allowed country, region and area.`,
     network_not_allowed: 'The IP address is outside every allowed network.',
-    online_required: 'Usage limits, step-up or require.online: only devicebasedauth.org can decide this (online authorization).',
+    online_required: 'Usage limits, step-up, gates or require.online: only devicebasedauth.org can decide this (online authorization).',
+    confirmation_required: 'The credential needs a current confirmation (DBA-Confirmation) and the device sent none.',
+    confirmation_expired: 'The device\'s confirmation has run out: its gates must confirm it again.',
+    confirmation_by_timeout_refused: 'The confirmation passed only because nobody answered, and this action\'s policy refuses that.',
+    gate_required: 'The site requires gates for this action and the grant names none (of an accepted kind).',
     unknown_constraint: `Unknown constraint "${code.slice(19)}": fails closed.`,
     invalid_grant: 'The grant is invalid, so it allows nothing.',
     invalid_grants: 'The grants are not a list.'

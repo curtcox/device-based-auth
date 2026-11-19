@@ -47,6 +47,17 @@ test('the playground allows inside a time window and denies outside it', async (
   await expect(page.locator('#grant-results')).toContainText('action_not_granted');
 });
 
+test('the playground simulates a confirmation: current, expired, missing (STATUS B7 G9)', async ({ page }) => {
+  await page.goto('/tools/playground.html');
+  await page.getByRole('button', { name: 'Works only while confirmed by a phone' }).click();
+  await expect(page.locator('#verdict')).toHaveText('Allow');
+  await page.getByLabel('Confirmed (minutes before the clock)').fill(String(25 * 60));
+  await expect(page.locator('#grant-results')).toContainText('confirmation_expired');
+  await page.getByLabel('The device sends a confirmation').uncheck();
+  await expect(page.locator('#grant-results')).toContainText('confirmation_required');
+  await expect(page.locator('#grant-results')).toContainText('sent none');
+});
+
 test('the playground explains online-only grants and network rules', async ({ page }) => {
   await page.goto('/tools/playground.html');
   await page.getByRole('button', { name: /^Agent/ }).click();

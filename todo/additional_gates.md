@@ -525,6 +525,13 @@ STATUS row updated.
   `dba-gate+jwt` with `type: "gate.test"` (no request or callback, `exp` = `iat` + 60) and reports
   `{ delivered, status, decision }`; only webhook gates (the others would reach a person). Dashboard
   "Test" button, `dba gates test`, and both sample services answer it in CI.
+- **G9, playground (2026-11-19).** A "Confirmation" fieldset (sent or not, minutes since, hours
+  valid, by timeout) passed to the evaluator; a preset "Works only while confirmed by a phone";
+  reasons `confirmation_*` and `gate_required` explained.
+- **G9 left:** a QR code for the TOTP `otpauth:` URI (the page shows the secret and a link; it
+  needs a QR encoder, either written here or a vendored MIT one such as qrcode-generator, which is
+  the owner's call since it ships third-party code to every visitor); `--wait` on CLI calls that
+  hit a gate (sites pass `gate_pending` on in their own way; the SDK has `fetchWithGates()`).
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

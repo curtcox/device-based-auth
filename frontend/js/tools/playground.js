@@ -28,6 +28,11 @@ export const PRESETS = [
       { actions: ['hashbin:content:delete'], require: { step_up: true } }
     ],
     action: 'hashbin:content:write', time: '2026-11-18T03:00', tz: 'UTC', network: {}, device: {}
+  },
+  {
+    id: 'confirmed', label: 'Works only while confirmed by a phone',
+    grants: [{ actions: ['hashbin:content:write'], require: { confirmation: true } }],
+    action: 'hashbin:content:write', time: '2026-11-18T10:00', tz: 'UTC', network: {}, device: {}, confirmed: true
   }
 ];
 
@@ -41,6 +46,7 @@ function applyPreset(preset) {
   setValue('net_lat', preset.network.lat); setValue('net_lon', preset.network.lon);
   setValue('dev_lat', preset.device.lat); setValue('dev_lon', preset.device.lon); setValue('dev_acc', preset.device.acc_m); setValue('dev_age', 0);
   form.elements.online.checked = false;
+  form.elements.confirmed.checked = !!preset.confirmed;
   evaluate();
 }
 
@@ -65,6 +71,13 @@ function location(now) {
   return { network: Object.values(network).some(v => v !== undefined) ? network : undefined, device };
 }
 
+/** The simulated confirmation's { iat, exp, by_timeout }, as a verifier passes a verified one. */
+function confirmation(now) {
+  if (!form.elements.confirmed.checked) return undefined;
+  const iat = now - Math.round((numberOrUndefined(form.elements.confirmed_ago.value) ?? 0) * 60);
+  return { iat, exp: iat + Math.round((numberOrUndefined(form.elements.confirmed_for.value) ?? 0) * 3600), by_timeout: form.elements.confirmed_by_timeout.checked };
+}
+
 function evaluate() {
   const tz = form.elements.tz.value;
   const now = zonedToEpoch(form.elements.time.value, tz);
@@ -75,7 +88,7 @@ function evaluate() {
   const action = form.elements.action.value.trim();
   if (!action) { replace(result, notice('info', 'Enter an action to evaluate.')); return; }
   if (now === null) { replace(result, notice('info', 'Choose a date and time.')); return; }
-  const outcome = evaluateGrants(grants, { now, action, resource: form.elements.resource.value.trim() || undefined, location: location(now), online: form.elements.online.checked });
+  const outcome = evaluateGrants(grants, { now, action, resource: form.elements.resource.value.trim() || undefined, location: location(now), online: form.elements.online.checked, confirmation: confirmation(now) });
   const problems = validateGrants(grants);
   replace(result, h('div', { class: 'panel', id: 'verdict-panel' },
     h('p', {}, h('span', { class: `verdict ${outcome.allow ? 'allow' : 'deny'}`, id: 'verdict' }, outcome.allow ? 'Allow' : 'Deny'), ' ',
