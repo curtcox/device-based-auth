@@ -23,11 +23,14 @@ const SESSION_RATE = 300; const RATE = 120;
 export async function authenticate(request, env, { anyAudience = false, recovery = false } = {}) {
   const header = request.headers.get('Authorization') || '';
   if (header.startsWith('LocalDev ')) {
-    const account = header.slice(9).trim();
+    // "LocalDev <account>" or "LocalDev <account> <session>": local sessions may name themselves,
+    // so the dashboard gate can tell one browser from another in development.
+    const [account, sessionName = 'default', extra] = header.slice(9).trim().split(/\s+/);
     assert(env.ENVIRONMENT === 'local', 'invalid_auth', 'Local authentication is disabled', 401);
-    assert(/^[a-zA-Z0-9_-]{1,128}$/.test(account), 'invalid_auth', 'Invalid local user', 401);
-    await rpc(env.ACCOUNTS, account, 'init', { account, rate: { id: 'session', limit: SESSION_RATE } });
-    return { account, session: true, kind: 'local', rated: true };
+    assert(/^[a-zA-Z0-9_-]{1,128}$/.test(account) && /^[a-zA-Z0-9_-]{1,64}$/.test(sessionName) && extra === undefined, 'invalid_auth', 'Invalid local user', 401);
+    const session_key = `local:${sessionName}`;
+    const init = await rpc(env.ACCOUNTS, account, 'init', { account, rate: { id: 'session', limit: SESSION_RATE }, session: session_key });
+    return { account, session: true, kind: 'local', rated: true, session_key, dashboard: init.dashboard };
   }
   if (header.startsWith('DBA ')) return authenticateDevice(request, env, header.slice(4).trim(), { anyAudience, recovery });
   if (header.startsWith('Bearer ')) {
@@ -40,8 +43,9 @@ export async function authenticate(request, env, { anyAudience = false, recovery
     const verify = env.CLERK_VERIFY_TOKEN || verifyClerkToken;
     try { claims = await verify(token, { secretKey: env.CLERK_SECRET_KEY, authorizedParties: [env.APP_ORIGIN] }); } catch { claims = null; }
     assert(claims?.sub && claims.sid, 'invalid_auth', 'Invalid session', 401);
-    await rpc(env.ACCOUNTS, claims.sub, 'init', { account: claims.sub, rate: { id: 'session', limit: SESSION_RATE } });
-    return { account: claims.sub, session: true, kind: 'clerk', factor_age_minutes: factorAgeMinutes(claims), rated: true };
+    const session_key = `sid:${claims.sid}`;
+    const init = await rpc(env.ACCOUNTS, claims.sub, 'init', { account: claims.sub, rate: { id: 'session', limit: SESSION_RATE }, session: session_key });
+    return { account: claims.sub, session: true, kind: 'clerk', factor_age_minutes: factorAgeMinutes(claims), rated: true, session_key, dashboard: init.dashboard };
   }
   if (header.startsWith('ApiKey ')) {
     const token = header.slice(7).trim();
@@ -87,13 +91,13 @@ async function authenticateDevice(request, env, credential, { anyAudience, recov
     assert(proof, 'proof_required', 'A DPoP proof is required with a DBA credential', 401);
     const verifiedProof = await verifyProof(proof, { method: request.method, url: request.url, credential, jkt: payload.cnf.jkt });
     const now = Math.floor(Date.now() / 1000);
-    const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid, rate: { id: payload.cid, limit: RATE }, proof_key: `${verifiedProof.jkt}:${verifiedProof.jti}`, proof_exp: now + PROOF_MAX_AGE + 2 * CLOCK_SKEW });
+    const dba = payload.aud.includes(appAudience(env));
+    const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid, rate: { id: payload.cid, limit: RATE }, proof_key: `${verifiedProof.jkt}:${verifiedProof.jti}`, proof_exp: now + PROOF_MAX_AGE + 2 * CLOCK_SKEW, ...(dba ? { session: `cid:${payload.cid}` } : {}) });
     assert(!status.replayed, 'replayed_proof', 'DPoP proof was already used; make a new proof for each request', 401);
     // The account's own record is authoritative and instant; a rotated credential has a new entry.
     assert(status.exists && !status.revoked && sameStatusEntry(status.status, payload.status.status_list), 'revoked', 'Credential has been revoked', 401);
-    const dba = payload.aud.includes(appAudience(env));
     assert(dba || anyAudience, 'wrong_audience', `Credential is not valid for ${appAudience(env)}`, 401);
-    return { account: payload.acct, session: false, kind: 'device', rated: true, device: { payload, credential, proof: verifiedProof, dba, ...(recovered ? { recovery: true } : {}), ...(status.parent_cid ? { delegated_by: status.parent_cid } : {}), location: { network: networkLocation(request), device: verifiedProof.loc } } };
+    return { account: payload.acct, session: false, kind: 'device', rated: true, ...(dba ? { session_key: `cid:${payload.cid}`, dashboard: status.dashboard } : {}), device: { payload, credential, proof: verifiedProof, dba, ...(recovered ? { recovery: true } : {}), ...(status.parent_cid ? { delegated_by: status.parent_cid } : {}), location: { network: networkLocation(request), device: verifiedProof.loc } } };
   } catch (error) {
     if (error instanceof VerificationError) assert(false, error.code, error.message, 401);
     throw error;

@@ -125,3 +125,42 @@ test('a sign-in waits for its gate: inline with an authenticator code, and throu
   await page.waitForURL(url => url.hostname === 'cronly.org');
   expect(new URL(page.url()).searchParams.get('code')).toMatch(/^dbac_/);
 });
+
+test('the dashboard waits for its sign-in gate, and a recovery code opens it once', async ({ page, browser, request }) => {
+  const owner = uniqueName('dashgate');
+  const admin = { Authorization: `LocalDev ${owner} admin` };
+  await fund(request, owner);
+  const created = await (await request.post('/api/v1/gates', { headers: admin, data: { kind: 'totp', label: 'Phone app' } })).json();
+  const secret = unbase32(created.setup.secret);
+  expect((await request.post(`/api/v1/gates/${created.id}/activate`, { headers: admin, data: { code: await code(secret) } })).ok()).toBeTruthy();
+  const codes = (await (await request.post('/api/v1/settings/recovery-codes', { headers: admin, data: {} })).json()).codes;
+  expect((await request.put('/api/v1/settings/sign-in-gates', { headers: admin, data: { dashboard: [{ any: [created.id], timeout_s: 300 }] } })).ok()).toBeTruthy();
+
+  // A new browser session is held until the gate confirms it.
+  await page.goto('/app.html');
+  await page.getByLabel('Local account name').fill(owner);
+  await page.getByRole('button', { name: 'Use local account' }).click();
+  await expect(page.getByRole('heading', { name: 'Confirm this sign-in' })).toBeVisible();
+  await expect(page.locator('#lock-number')).toHaveText(/^\d\d$/);
+  await page.getByLabel('Code from Phone app').fill(await code(secret, 1));
+  await page.getByRole('button', { name: 'Confirm with code' }).click();
+  await expect(page.getByRole('heading', { name: 'Credentials', exact: true })).toBeVisible();
+
+  // Another browser: a recovery code opens it, once.
+  const other = await browser.newPage();
+  await other.goto('/app.html');
+  await other.getByLabel('Local account name').fill(owner);
+  await other.getByRole('button', { name: 'Use local account' }).click();
+  await expect(other.getByRole('heading', { name: 'Confirm this sign-in' })).toBeVisible();
+  await other.getByLabel('Recovery code').fill(codes[0]);
+  await other.getByRole('button', { name: 'Use recovery code' }).click();
+  await expect(other.getByRole('heading', { name: 'Credentials', exact: true })).toBeVisible();
+  await expect(other.locator('#flash')).toContainText('9 left');
+  const third = await browser.newPage();
+  await third.goto('/app.html');
+  await third.getByLabel('Local account name').fill(owner);
+  await third.getByRole('button', { name: 'Use local account' }).click();
+  await third.getByLabel('Recovery code').fill(codes[0]);
+  await third.getByRole('button', { name: 'Use recovery code' }).click();
+  await expect(third.locator('#flash')).toContainText('not valid');
+});

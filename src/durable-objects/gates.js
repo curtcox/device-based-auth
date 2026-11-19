@@ -297,8 +297,8 @@ export async function refreshRequest(tx, req, now) {
  * resource and audience, or a sign-in's site and requester, plus the exact gate list.
  */
 export function requestKeyFor({ purpose = 'authorize', cid, action, resource, audience, requester, signature }) {
-  return purpose === 'sign_in'
-    ? ['sign_in', audience, requester, signature].join('\n')
+  return purpose === 'sign_in' || purpose === 'dashboard'
+    ? [purpose, audience, requester, signature].join('\n')
     : ['authorize', cid, action, resource ?? '', audience, signature].join('\n');
 }
 
@@ -353,7 +353,7 @@ export function visibleRequest(req, now) {
     id: req.id, purpose: req.purpose, cid: req.cid, device_id: req.device_id, device_name: req.device_name,
     audience: req.audience, action: req.action, resource: req.resource, created_at: req.created_at,
     // A sign-in's number is shown only where the sign-in waits; approvers type it (number matching).
-    ...(req.purpose === 'sign_in' ? {} : { number: req.number }),
+    ...(req.purpose === 'sign_in' || req.purpose === 'dashboard' ? {} : { number: req.number }),
     status: req.outcome === 'allow' ? 'allowed' : req.outcome === 'deny' ? 'denied' : 'pending',
     by_timeout: req.by_timeout ?? false,
     entries: req.entries.map(e => ({
@@ -391,7 +391,7 @@ export async function answerRequest(tx, req, { entry: entryIndex, gate: gateId, 
     // answers, signed in or not (plan §4.3). Each wrong try counts against the gate.
     await checkFactor(tx, gate, req, index, decision, proof, now, factors);
   }
-  if (req.purpose === 'sign_in') {
+  if (req.purpose === 'sign_in' || req.purpose === 'dashboard') {
     // Allow-on-timeout entries are never answered by the person signing in (plan §2): there,
     // silence is theirs to choose, so only another approver's answer counts.
     assert(!(answerer.kind === 'owner' && e.on_timeout === 'allow'), 'not_inline', 'This approval waits for someone else (it allows on timeout); answer it from the approval link or the approving device', 403);

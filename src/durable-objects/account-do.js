@@ -3,6 +3,7 @@ import { rpc } from '../utils/rpc.js';
 import { charge, deposit, readBalance, money } from './ledger.js';
 import { periodSeconds, actionNamespace } from '../../packages/verify/src/grants.js';
 import { randomId } from '../utils/ids.js';
+import { b64u } from '../../packages/verify/src/jose.js';
 import { price } from '../utils/pricing.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
@@ -13,6 +14,8 @@ const PAGE = 50;
 const EVENTS_KEPT = 50;
 const DECISION_RETENTION_MS = 90 * 86400000;
 const OUTBOX_RETRY_MS = 60000;
+// A confirmed dashboard session stays confirmed this long (Clerk sessions last at most a week).
+const CONFIRMED_SESSION_MS = 7 * 86400000;
 // Records are prepaid for 13 months (master plan §8.3, docs/business/pricing.md). After that,
 // compact() drops them so no account's storage grows forever on what it once paid.
 export const RECORD_RETENTION_MS = 395 * 86400000;
@@ -90,14 +93,15 @@ export class AccountDO {
     });
   }
 
-  async op_init({ account, rate }, now) {
+  async op_init({ account, rate, session }, now) {
     if (rate) await this.op_rate_limit(rate, now);
     return this.tx(async tx => {
       const profile = await tx.get('profile');
-      if (profile) return profile;
+      const dashboard = session ? await dashboardState(tx, session, now) : undefined;
+      if (profile) return { ...profile, dashboard };
       const created = { account, created_at: now };
       await tx.put('profile', created);
-      return created;
+      return { ...created, dashboard };
     });
   }
 
@@ -381,9 +385,11 @@ export class AccountDO {
    * sign the body, so a proof seen once (a logging proxy, a leaked header) must not be accepted
    * again with another body. The account's single DO instance makes this a global check.
    */
-  async op_credential_status({ cid, with_jws = false, proof_key, proof_exp, rate }, now) {
+  async op_credential_status({ cid, with_jws = false, proof_key, proof_exp, rate, session }, now) {
     if (rate) await this.op_rate_limit(rate, now);
     const cred = await this.storage.get(`cred:${cid}`);
+    // A dashboard device (dba:session) is a sign-in too: report whether the dashboard gate holds it.
+    const dashboard = session ? await dashboardState(this.storage, session, now) : undefined;
     if (!cred) return { exists: false, revoked: true };
     if (proof_key) {
       const nowSeconds = Math.floor(now / 1000);
@@ -391,7 +397,7 @@ export class AccountDO {
       if (this.proofs.has(proof_key)) return { exists: true, replayed: true };
       this.proofs.set(proof_key, proof_exp);
     }
-    return { exists: true, ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
+    return { exists: true, ...(dashboard ? { dashboard } : {}), ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
   }
 
   async revokeOne(tx, cred, now, reason) {
@@ -907,6 +913,9 @@ export class AccountDO {
       const lists = [merged.default, merged.dashboard, ...Object.values(merged.audiences)].filter(Boolean);
       const gates = await loadGates(tx, lists.flatMap(entries => entries.flatMap(e => e.any)));
       for (const id of new Set(lists.flatMap(entries => entries.flatMap(e => e.any)))) assert(gates.get(id) && (gates.get(id).state ?? 'active') === 'active', 'unknown_gate', `Gate ${id} does not exist or is not set up yet`, 400);
+      // A dashboard gate that denies on timeout could lock the owner out (a lost phone): it needs
+      // recovery codes first (plan §5.2).
+      if (merged.dashboard?.some(e => e.on_timeout !== 'allow')) assert(((await tx.get('recovery'))?.hashes?.length ?? 0) > 0, 'recovery_codes_required', 'Make recovery codes first (POST /api/v1/settings/recovery-codes): a dashboard gate that denies on timeout could otherwise lock you out', 409);
       await tx.put('signin_gates', merged);
       await this.audit(tx, now, 'sign_in_gates.changed', { before: current, after: merged });
       return merged;
@@ -969,6 +978,92 @@ export class AccountDO {
     }
     this.announceTimeouts(byTimeout, now);
     return result;
+  }
+
+  // ---- The dashboard's own sign-in gate (todo/additional_gates.md §5.2) -----------------
+
+  async op_dashboard_status({ session }, now) {
+    return { dashboard: await dashboardState(this.storage, session, now), recovery_codes_left: ((await this.storage.get('recovery'))?.hashes?.length ?? 0) };
+  }
+
+  /**
+   * Confirm a dashboard session through its gates: open or read the request; once it passes, the
+   * session is confirmed until it ends (at most CONFIRMED_SESSION_MS). `answer` is this page's own
+   * answer for a deny-on-timeout entry ({ entry, gate, proof: { totp | webauthn } }): a locked
+   * session may answer only its own request, and only with a factor.
+   */
+  async op_dashboard_confirm({ account, session, device_id = null, device_name = null, answer = null }, now) {
+    let asked = null; const byTimeout = [];
+    const result = await this.tx(async tx => {
+      asked = null; byTimeout.length = 0;
+      const settings = (await tx.get('signin_gates')) || {};
+      if (!settings.dashboard) return { status: 'confirmed' };
+      const candidate = { gates: settings.dashboard, fail_open: true };
+      const subject = { purpose: 'dashboard', action: 'dashboard', audience: 'devicebasedauth.org', requester: session, signature: gateSignature(candidate) };
+      let req = await findRequest(tx, subject, now);
+      if (req) await this.refreshed(tx, req, now, byTimeout);
+      else {
+        req = await this.openGateRequest(tx, { device_id, device: { name: device_name } }, subject, candidate, now, session);
+        if (req.rate_limited) return { status: 'denied', code: 'gate_rate_limited' };
+        await this.refreshed(tx, req, now, byTimeout);
+        if (!req.outcome) asked = req;
+      }
+      if (answer && !req.outcome) {
+        const gate = await tx.get(gateKey(answer.gate));
+        assert(gate && FACTOR_KINDS.includes(gate.kind), 'not_a_gate', 'A locked session answers only with an authenticator code or a security key', 403);
+        await answerRequest(tx, req, { entry: answer.entry, gate: answer.gate, decision: 'allow', answerer: { kind: 'owner', device_id }, proof: answer.proof }, now, { env: this.env, account, failures: this.factorFailures });
+        await this.audit(tx, now, 'gate.approved', { id: req.id, gate: answer.gate, purpose: 'dashboard' });
+      }
+      if (req.outcome === 'deny') return { status: 'denied', code: 'gate_denied' };
+      if (req.outcome === 'allow') {
+        await tx.delete(requestKey(req.id));
+        await tx.put(`dashsess:${session}`, { confirmed_at: now, until: now + CONFIRMED_SESSION_MS, by: howPassed(req) });
+        await this.audit(tx, now, 'dashboard.confirmed', { session_kind: session.split(':')[0], by: howPassed(req) });
+        await this.scheduleWake(tx, now + CONFIRMED_SESSION_MS);
+        return { status: 'confirmed' };
+      }
+      return { status: 'pending', gate_request: { ...visibleRequest(req, now), number: req.number, retry_after: RETRY_AFTER_S, ...(hasFactorGates(req) ? { approve_url: await approvalLink(this.env, account, req), factors: await factorView(tx, req, this.env) } : {}) } };
+    });
+    if (asked) {
+      await this.announceGateRequest(asked, now, account);
+      if (webhookTargets(asked).length) this.background(this.deliverWebhooks(asked.id, account));
+    }
+    this.announceTimeouts(byTimeout, now);
+    return result;
+  }
+
+  async scheduleWake(tx, at) {
+    const alarm = await tx.getAlarm();
+    if (!alarm || alarm > at) await tx.setAlarm(at);
+  }
+
+  /** Make 10 new one-time recovery codes (shown once; stored hashed). Old ones stop working. */
+  async op_recovery_codes(_args, now) {
+    const codes = Array.from({ length: 10 }, () => randomId('x', 12).slice(2).replace(/(.{4})(?=.)/g, '$1-'));
+    await this.tx(async tx => {
+      await tx.put('recovery', { hashes: await Promise.all(codes.map(recoveryHash)), created_at: now });
+      await this.audit(tx, now, 'recovery_codes.created', {});
+    });
+    this.notify({ title: 'New recovery codes', body: 'New recovery codes were made for your account; the old ones no longer work. If that was not you, sign in and check your account.', path: '#gates', tag: 'recovery-codes' }, now);
+    return { codes, created_at: now };
+  }
+
+  /** Pass the dashboard gate with a recovery code (once per code), announced to every browser. */
+  async op_dashboard_recover({ session, code }, now) {
+    const left = await this.tx(async tx => {
+      const recovery = await tx.get('recovery');
+      const hash = await recoveryHash(code);
+      const i = recovery?.hashes?.indexOf(hash) ?? -1;
+      assert(i >= 0, 'invalid_recovery_code', 'That recovery code is not valid (or was used already)', 403);
+      recovery.hashes.splice(i, 1);
+      await tx.put('recovery', recovery);
+      await tx.put(`dashsess:${session}`, { confirmed_at: now, until: now + CONFIRMED_SESSION_MS, by: [{ kind: 'recovery_code', by: 'answer' }] });
+      await this.audit(tx, now, 'recovery_code.used', { session_kind: session.split(':')[0], left: recovery.hashes.length });
+      await this.scheduleWake(tx, now + CONFIRMED_SESSION_MS);
+      return recovery.hashes.length;
+    });
+    this.notify({ title: 'A recovery code was used', body: `Someone opened your dashboard with a recovery code (${left} left). If that was not you, revoke everything and change your sign-in.`, path: '#gates', tag: `recovery-used-${now}` }, now);
+    return { status: 'confirmed', recovery_codes_left: left };
   }
 
   async op_list_gates() {
@@ -1170,8 +1265,8 @@ export class AccountDO {
     // is set for the first one still live, so none outlives it for long on an account that has
     // nothing else to do.
     let shortLived = null;
-    for (const prefix of ['gatereq:', 'code:']) for (const [key, value] of await this.storage.list({ prefix })) {
-      const until = prefix === 'gatereq:' ? requestUntil(value) : value.expires_at;
+    for (const prefix of ['gatereq:', 'code:', 'dashsess:']) for (const [key, value] of await this.storage.list({ prefix })) {
+      const until = prefix === 'gatereq:' ? requestUntil(value) : prefix === 'dashsess:' ? value.until : value.expires_at;
       if (until <= now) await this.storage.delete(key);
       else shortLived = Math.min(shortLived ?? Infinity, until);
     }
@@ -1249,6 +1344,23 @@ export function credentialState(cred, now = Date.now()) {
   if (cred.revoked_at) return 'revoked';
   if (cred.exp * 1000 <= now) return 'expired';
   return 'active';
+}
+
+/**
+ * Does the dashboard gate hold this session (a Clerk session, a local session, or a dashboard
+ * device's credential)? 'open' without a dashboard gate, else 'confirmed' or 'locked'.
+ */
+async function dashboardState(storage, session, now) {
+  const settings = await storage.get('signin_gates');
+  if (!settings?.dashboard) return 'open';
+  const confirmed = await storage.get(`dashsess:${session}`);
+  return confirmed && confirmed.until > now ? 'confirmed' : 'locked';
+}
+
+/** Hash a recovery code as typed (case and dashes ignored). */
+async function recoveryHash(code) {
+  const normalized = String(code ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  return b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`dba-recovery\n${normalized}`))));
 }
 
 export { money, ApiError };

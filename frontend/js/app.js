@@ -76,7 +76,12 @@ async function busy(form, fn) {
 
 async function refreshStrip() {
   const strip = $('#account-strip');
-  try { accountInfo = await api('/api/v1/account'); } catch (error) { accountInfo = null; replace(strip, errorBox(error)); strip.hidden = false; return; }
+  try { accountInfo = await api('/api/v1/account'); } catch (error) {
+    accountInfo = null;
+    if (error.code === 'sign_in_gate_required') replace(strip, h('strong', {}, 'Waiting for your sign-in gate'), h('span', { class: 'spacer' }), h('button', { type: 'button', class: 'secondary small', onclick: () => signOut() }, 'Sign out'));
+    else replace(strip, errorBox(error));
+    strip.hidden = false; return;
+  }
   const device = currentDevice();
   const useDevice = h('button', { type: 'button', class: 'secondary small', id: 'use-device' }, 'Use this browser as a device for the dashboard');
   useDevice.addEventListener('click', () => enrollThisBrowser(useDevice));
@@ -130,9 +135,58 @@ async function render() {
     const content = await VIEWS[show](arg, () => token === renderToken);
     if (token === renderToken) replace(view, content);
   } catch (error) {
-    if (token === renderToken) replace(view, h('h1', {}, 'Something went wrong'), errorBox(error));
+    if (token === renderToken && error.code === 'sign_in_gate_required') replace(view, await lockView(() => token === renderToken));
+    else if (token === renderToken) replace(view, h('h1', {}, 'Something went wrong'), errorBox(error));
   } finally { if (token === renderToken) view.removeAttribute('aria-busy'); }
 }
+
+// ---------------------------------------------------------------------------------------------
+// The dashboard's sign-in gate (STATUS B7): this sign-in waits until a gate confirms it
+
+async function lockView(current) {
+  const out = h('div', { id: 'lock-status' });
+  const seconds = n => n % 60 === 0 ? `${n / 60} minute${n === 60 ? '' : 's'}` : `${n} seconds`;
+  const confirm = async answer => {
+    let result;
+    try { result = await api('/api/v1/session/confirm', { method: 'POST', body: answer || {} }); } catch (error) { if (answer) flash('error', error.message); else replace(out, errorBox(error)); return; }
+    if (!current()) return;
+    if (result.status === 'confirmed') { clearInterval(pollTimer); pollTimer = null; flash('success', 'Sign-in confirmed.'); await refreshStrip(); await render(); return; }
+    if (result.status === 'denied') { clearInterval(pollTimer); replace(out, notice('error', 'This sign-in was refused. Sign out, or use a recovery code.')); return; }
+    const req = result.gate_request; const factors = req.factors?.entries || [];
+    // Polls change nothing on the page while the request still waits (a half-typed code stays).
+    const shape = JSON.stringify([req.id, req.entries.map(e => e.outcome)]);
+    if (shape === shown && !answer) return;
+    shown = shape;
+    replace(out,
+      h('p', {}, 'Request number ', h('strong', { class: 'mono', id: 'lock-number' }, req.number), ' — the approver types this number.'),
+      h('ul', {}, req.entries.map(e => h('li', {}, e.on_timeout === 'allow' ? `allowed if nobody answers within ${seconds(e.timeout_s)}` : `denied if nobody answers within ${seconds(e.timeout_s)}`))),
+      req.entries.map((e, i) => e.outcome || e.on_timeout === 'allow' ? null : (factors[i]?.gates || []).filter(g => g.kind === 'totp').map(g => {
+        const input = h('input', { inputmode: 'numeric', maxlength: 6, autocomplete: 'one-time-code', 'aria-label': `Code from ${g.label}` });
+        const form = h('form', { class: 'row' }, h('label', {}, `Code from “${g.label}”`, input), h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Confirm with code')));
+        form.addEventListener('submit', event => { event.preventDefault(); confirm({ entry: i, gate: g.id, totp: { code: input.value.trim() } }); });
+        return form;
+      })));
+    if (!pollTimer) pollTimer = setInterval(() => { if (current()) confirm(); else clearInterval(pollTimer); }, Math.max(2, req.retry_after || 2) * 1000);
+  };
+  let shown = null;
+  const code = h('input', { name: 'recovery', autocomplete: 'off', 'aria-label': 'Recovery code', placeholder: 'XXXX-XXXX-XXXX' });
+  const recover = h('form', { class: 'row', id: 'recovery-form' }, h('label', {}, 'Recovery code', code), h('div', { class: 'actions' }, h('button', { type: 'submit', class: 'secondary' }, 'Use recovery code')));
+  recover.addEventListener('submit', async event => {
+    event.preventDefault();
+    try { const r = await api('/api/v1/session/recover', { method: 'POST', body: { code: code.value.trim() } }); flash('warn', `Opened with a recovery code; ${r.recovery_codes_left} left. Make new ones soon.`); await refreshStrip(); await render(); }
+    catch (error) { flash('error', error.message); }
+  });
+  await confirm();
+  return [
+    h('h1', {}, 'Confirm this sign-in'),
+    h('p', { class: 'muted' }, 'Your account asks a gate to confirm every dashboard sign-in. Until it does, you can only revoke credentials (the panic button always works).'),
+    out,
+    h('h2', {}, 'Lost your gate?'),
+    recover,
+    h('p', {}, h('a', { href: '#panic', class: 'danger-link' }, 'Revoke everything'))
+  ];
+}
+
 
 // ---------------------------------------------------------------------------------------------
 // Credentials
@@ -438,6 +492,26 @@ async function gatesView(_arg, current) {
       catch (error) { flash('error', error.message); }
     });
   });
+  const signIn = await api('/api/v1/settings/sign-in-gates');
+  const settingsBox = h('textarea', { name: 'settings', rows: 8, spellcheck: 'false', value: JSON.stringify({ default: signIn.default, audiences: signIn.audiences, dashboard: signIn.dashboard }, null, 2) });
+  const settingsForm = h('form', { class: 'stack', id: 'sign-in-gates-form' },
+    h('label', {}, 'Sign-in gates (JSON)', h('span', { class: 'hint' }, ' — default and per site for Sign in with devicebasedauth.org, and dashboard for this dashboard; entries as in require.gates'), settingsBox),
+    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Save sign-in gates')));
+  settingsForm.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(settingsForm, async () => {
+      let body; try { body = JSON.parse(settingsBox.value); } catch { flash('error', 'Sign-in gates must be JSON.'); return; }
+      try { await api('/api/v1/settings/sign-in-gates', { method: 'PUT', body }); flash('success', 'Saved sign-in gates.'); }
+      catch (error) { flash('error', error.message); }
+    });
+  });
+  const codesOut = h('div', { id: 'recovery-codes' });
+  const makeCodes = h('button', { type: 'button', class: 'secondary', onclick: async () => {
+    try {
+      const r = await api('/api/v1/settings/recovery-codes', { method: 'POST', body: {} });
+      replace(codesOut, notice('warn', h('p', {}, h('strong', {}, 'Save these now; they are shown only once. '), 'Each opens the dashboard once if your gate is lost.'), h('pre', { class: 'code' }, r.codes.join('\n')), copyButton('Copy codes', () => r.codes.join('\n'))));
+    } catch (error) { flash('error', error.message); }
+  } }, 'Make recovery codes');
   if (!current()) return [];
   return [
     h('h1', {}, 'Gates'),
@@ -445,7 +519,12 @@ async function gatesView(_arg, current) {
     table(['Gate', 'Id', 'State', ''], rows, { id: 'gate-list' }),
     setup,
     h('h2', {}, 'Add a gate'),
-    h('div', { class: 'grid' }, deviceForm, totpForm, keyForm, hookForm)
+    h('div', { class: 'grid' }, deviceForm, totpForm, keyForm, hookForm),
+    h('h2', {}, 'Sign-in gates'),
+    settingsForm,
+    h('h3', {}, 'Recovery codes'),
+    h('p', { class: 'muted small' }, 'A dashboard gate that denies on timeout needs recovery codes first, so a lost phone cannot lock you out.'),
+    makeCodes, codesOut
   ];
 }
 

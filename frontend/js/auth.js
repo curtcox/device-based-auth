@@ -44,6 +44,21 @@ export function setLocalUser(name) {
   localName = name; mode = 'local';
 }
 
+/**
+ * Each local sign-in is its own session, as a Clerk sign-in is (the dashboard sign-in gate
+ * confirms sessions one by one). Kept with the name; a new sign-in starts a new one.
+ */
+let localSessionId = null;
+function localSession() {
+  if (localSessionId) return localSessionId;
+  try { localSessionId = store()?.getItem(`${LOCAL_KEY}:session`) || null; } catch { localSessionId = null; }
+  if (!localSessionId) {
+    localSessionId = [...crypto.getRandomValues(new Uint8Array(9))].map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 16);
+    try { store()?.setItem(`${LOCAL_KEY}:session`, localSessionId); } catch { /* this page only */ }
+  }
+  return localSessionId;
+}
+
 /** Load the browser SDK once (it is only needed for device sign-in). */
 function sdk() { sdkPromise ||= import('/sdk/dba.js'); return sdkPromise; }
 
@@ -113,7 +128,7 @@ export function currentDevice() { return mode === 'device' ? device : null; }
 export async function authHeaders(method, url) {
   if (mode === 'device' && device) return device.headers(method, url);
   if (mode === 'clerk' && clerk?.session) { const token = await clerk.session.getToken(); return token ? { Authorization: `Bearer ${token}` } : {}; }
-  if (mode === 'local' && localName) return { Authorization: `LocalDev ${localName}` };
+  if (mode === 'local' && localName) return { Authorization: `LocalDev ${localName} ${localSession()}` };
   return {};
 }
 
@@ -148,8 +163,8 @@ export async function reauthenticate() {
 export async function signOut() {
   if (mode === 'device' && device) { try { await device.revoke(); } catch { await device.forget().catch(() => {}); } }
   else if (mode === 'clerk' && clerk) await clerk.signOut();
-  try { store()?.removeItem(LOCAL_KEY); } catch { /* nothing stored */ }
-  localName = null; mode = null; device = null;
+  try { store()?.removeItem(LOCAL_KEY); store()?.removeItem(`${LOCAL_KEY}:session`); } catch { /* nothing stored */ }
+  localName = null; mode = null; device = null; localSessionId = null;
   location.reload();
 }
 

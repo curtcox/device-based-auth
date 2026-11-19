@@ -26,6 +26,17 @@ function deviceAllows(auth, action) {
   return result.results.some(r => r.ok && !r.online?.uses && !r.online?.step_up && !r.online?.gates && !r.online?.gate_policy);
 }
 
+/** Is this a dashboard sign-in (a browser session, or a device holding dba:session)? */
+export function isDashboardSession(auth) {
+  return !!auth && (auth.session === true || deviceAllows(auth, 'dba:session'));
+}
+
+/**
+ * Routes a dashboard session may use while its sign-in gate has not confirmed it (plan §5.2):
+ * the gate flow itself, who am I, and revocation (the panic button must always work).
+ */
+export const UNLOCKED_WHILE_GATED = new Set(['dashboard-session', 'whoami', 'revoke-credential', 'revoke-device', 'revoke-all', 'revoke-self']);
+
 /** Check route access; undeclared access always denies. */
 export function canAccess(auth, access) {
   if (access === PUBLIC) return true;

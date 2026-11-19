@@ -451,3 +451,48 @@ describe('sign-in gates (G6)', () => {
     expect(error(await signIn())).toMatch(/other kinds/);
   });
 });
+
+describe('dashboard sign-in gate and recovery codes (G6)', () => {
+  // "LocalDev alice <session>" names a local browser session.
+  const as = (session, method, path, body) => call(env, method, path, { auth: `alice ${session}`, body });
+
+  it('needs recovery codes before a deny-on-timeout dashboard gate', async () => {
+    const { gate } = await phoneGate();
+    expect((await as('a', 'PUT', '/api/v1/settings/sign-in-gates', { dashboard: [{ any: [gate] }] })).body.code).toBe('recovery_codes_required');
+    expect((await as('a', 'PUT', '/api/v1/settings/sign-in-gates', { dashboard: [{ any: [gate], on_timeout: 'allow' }] })).status).toBe(200);
+  });
+
+  it('locks other sessions until the gate confirms them, but never revocation', async () => {
+    const { gate, as: phone } = await phoneGate();
+    const codes = (await as('a', 'POST', '/api/v1/settings/recovery-codes')).body.codes;
+    expect(codes).toHaveLength(10);
+    expect((await as('a', 'PUT', '/api/v1/settings/sign-in-gates', { dashboard: [{ any: [gate], timeout_s: 120 }] })).status).toBe(200);
+    // Session "a" made the change; it too is now held, like every session (a recent sign-in is no bypass).
+    expect((await as('b', 'GET', '/api/v1/account')).body.code).toBe('sign_in_gate_required');
+    expect((await as('b', 'GET', '/api/v1/session')).body).toMatchObject({ dashboard: 'locked', recovery_codes_left: 10 });
+    expect((await as('b', 'GET', '/api/v1/whoami')).status).toBe(200);
+    const pending = (await as('b', 'POST', '/api/v1/session/confirm', {})).body;
+    expect(pending).toMatchObject({ status: 'pending', gate_request: { purpose: 'dashboard', number: expect.stringMatching(/^\d\d$/) } });
+    // A locked session cannot answer gate requests (it might approve someone's step-up).
+    expect((await as('b', 'POST', `/api/v1/gate-requests/${pending.gate_request.id}/answer`, { gate: 'owner', decision: 'allow' })).body.code).toBe('sign_in_gate_required');
+    await phone('POST', `/api/v1/gate-requests/${pending.gate_request.id}/answer`, { gate, decision: 'allow', number: pending.gate_request.number });
+    expect((await as('b', 'POST', '/api/v1/session/confirm', {})).body.status).toBe('confirmed');
+    expect((await as('b', 'GET', '/api/v1/account')).status).toBe(200);
+    // Another session is still locked, and can still revoke (the panic button always works).
+    const cid = inspectCredential((await enroll(env, 'alice b', await newDevice())).approve.body.credential).payload.cid;
+    expect((await as('c', 'GET', '/api/v1/credentials')).body.code).toBe('sign_in_gate_required');
+    expect((await as('c', 'DELETE', `/api/v1/credentials/${cid}`)).status).toBe(200);
+    expect((await as('c', 'POST', '/api/v1/revoke-all', { confirm: 'revoke-all' })).status).toBe(200);
+  });
+
+  it('opens with a recovery code, once per code, and tells every browser', async () => {
+    const { gate } = await phoneGate();
+    const codes = (await as('a', 'POST', '/api/v1/settings/recovery-codes')).body.codes;
+    await as('a', 'PUT', '/api/v1/settings/sign-in-gates', { dashboard: [{ any: [gate] }] });
+    expect((await as('b', 'POST', '/api/v1/session/recover', { code: 'AAAA-BBBB-CCCC' })).body.code).toBe('invalid_recovery_code');
+    expect((await as('b', 'POST', '/api/v1/session/recover', { code: codes[3].toLowerCase() })).body).toMatchObject({ status: 'confirmed', recovery_codes_left: 9 });
+    expect((await as('b', 'GET', '/api/v1/account')).status).toBe(200);
+    expect((await as('c', 'POST', '/api/v1/session/recover', { code: codes[3] })).body.code).toBe('invalid_recovery_code');
+    expect(await audit('alice b')).toContain('recovery_code.used');
+  });
+});

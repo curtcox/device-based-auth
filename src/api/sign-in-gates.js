@@ -38,3 +38,35 @@ export async function signInGates(route, request, env, auth) {
   }
   return rpc(env.ACCOUNTS, auth.account, 'put-sign-in-gates', { settings });
 }
+
+/**
+ * The dashboard's own sign-in gate (todo/additional_gates.md §5.2). GET /api/v1/session says
+ * whether this session is confirmed; POST …/confirm opens (or reads) its gate request, and may
+ * carry this page's own answer ({ entry, gate, totp | webauthn }); POST …/recover uses a
+ * recovery code. A recent sign-in does not bypass the gate.
+ */
+export async function dashboardSession(route, request, env, auth) {
+  assert(auth.session_key, 'insufficient_scope', 'Only a dashboard sign-in has a session to confirm', 403);
+  const path = new URL(request.url).pathname;
+  if (request.method === 'GET') return rpc(env.ACCOUNTS, auth.account, 'dashboard-status', { session: auth.session_key });
+  const body = await readJson(request, 32768);
+  if (path.endsWith('/recover')) {
+    assert(typeof body.code === 'string' && body.code.length <= 40, 'invalid_recovery_code', 'code is required');
+    return rpc(env.ACCOUNTS, auth.account, 'dashboard-recover', { session: auth.session_key, code: body.code });
+  }
+  let answer = null;
+  if (body.gate !== undefined) {
+    assert(typeof body.gate === 'string' && (body.entry === undefined || (Number.isSafeInteger(body.entry) && body.entry >= 0 && body.entry < 3)), 'invalid_answer', 'gate (and optionally entry) name the gate this page answers for');
+    const proof = {};
+    if (body.totp) proof.totp = { code: String(body.totp.code ?? '').slice(0, 12) };
+    if (body.webauthn) proof.webauthn = Object.fromEntries(['credential_id', 'clientDataJSON', 'authenticatorData', 'signature'].map(k => [k, String(body.webauthn[k] ?? '').slice(0, 8192)]));
+    answer = { entry: body.entry, gate: body.gate, proof };
+  }
+  return rpc(env.ACCOUNTS, auth.account, 'dashboard-confirm', { account: auth.account, session: auth.session_key, device_id: auth.device?.payload.sub ?? null, device_name: auth.device?.payload.device?.name ?? null, answer });
+}
+
+/** POST /api/v1/settings/recovery-codes: 10 new one-time codes, shown once (recent sign-in). */
+export async function recoveryCodes(request, env, auth) {
+  requireRecentSignIn(auth, 'make recovery codes');
+  return rpc(env.ACCOUNTS, auth.account, 'recovery-codes', {});
+}

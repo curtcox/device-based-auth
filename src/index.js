@@ -1,4 +1,4 @@
-import { PUBLIC, SESSION, DEVICE, AUTHENTICATED, canAccess, paysForReads } from './auth/scopes.js';
+import { PUBLIC, SESSION, DEVICE, AUTHENTICATED, canAccess, paysForReads, isDashboardSession, UNLOCKED_WHILE_GATED } from './auth/scopes.js';
 import { authenticate } from './auth/middleware.js';
 import { clerkWebhook } from './auth/clerk-webhook.js';
 import { checkout, stripeWebhook } from './api/payments.js';
@@ -11,7 +11,7 @@ import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
 import { gates, gateRequests, gateLinks } from './api/gates.js';
-import { signInGates } from './api/sign-in-gates.js';
+import { signInGates, dashboardSession, recoveryCodes } from './api/sign-in-gates.js';
 import { pushSubscriptions, pushPublicKey } from './api/push.js';
 import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
 import { inspect } from './api/inspect.js';
@@ -89,6 +89,10 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/gate-links/:token`, access: PUBLIC, handler: 'gate-links', free: true },
   { method: 'POST', path: `${V1}/gate-links/:token/answer`, access: PUBLIC, handler: 'gate-links', free: true },
   { method: 'POST', path: `${V1}/gate-links/:token/callback`, access: PUBLIC, handler: 'gate-links', free: true },
+  { method: 'GET', path: `${V1}/session`, access: SESSION, handler: 'dashboard-session' },
+  { method: 'POST', path: `${V1}/session/confirm`, access: SESSION, handler: 'dashboard-session' },
+  { method: 'POST', path: `${V1}/session/recover`, access: SESSION, handler: 'dashboard-session' },
+  { method: 'POST', path: `${V1}/settings/recovery-codes`, access: SESSION, handler: 'recovery-codes' },
   { method: 'GET', path: `${V1}/settings/sign-in-gates`, access: 'gates:read', handler: 'sign-in-gates' },
   { method: 'PUT', path: `${V1}/settings/sign-in-gates`, access: 'gates:write', handler: 'sign-in-gates' },
   { method: 'GET', path: `${V1}/gate-requests`, access: AUTHENTICATED, handler: 'gate-requests' },
@@ -199,6 +203,8 @@ async function handle(route, request, env, auth) {
     case 'gate-requests': return gateRequests(route, request, env, auth);
     case 'gate-links': return gateLinks(route, request, env);
     case 'sign-in-gates': return signInGates(route, request, env, auth);
+    case 'dashboard-session': return dashboardSession(route, request, env, auth);
+    case 'recovery-codes': return recoveryCodes(request, env, auth);
     case 'audiences': return audiences(route, request, env, auth);
     case 'audience-usage': return audienceUsage(route, request, env, auth);
     case 'audience-webhook-test': return audienceWebhookTest(route, request, env, auth);
@@ -266,6 +272,9 @@ const worker = {
       if (route.free) assert(!(await brakeActive(env)), 'cost_brake', 'This free endpoint is paused by the cost-safety brake; paid endpoints keep working', 503);
       const auth = route.access === PUBLIC ? null : authenticated.get(request) ?? await authenticate(request, env, { anyAudience: route.access === DEVICE || route.access === AUTHENTICATED, recovery: route.handler === 'renew' });
       assert(canAccess(auth, route.access), 'insufficient_scope', 'Credential does not allow this operation', 403);
+      // The dashboard's sign-in gate (STATUS B7): an unconfirmed dashboard session can only confirm
+      // itself, ask who it is, and revoke.
+      assert(!(auth?.dashboard === 'locked' && isDashboardSession(auth) && !UNLOCKED_WHILE_GATED.has(route.handler)), 'sign_in_gate_required', 'Confirm this sign-in first: your dashboard sign-in gate has not approved it yet (POST /api/v1/session/confirm)', 403);
       let cost = 0; let balance;
       // Authentication normally checks the caller's request limit in the same call (auth.rated).
       if (auth && !auth.rated) await rpc(env.ACCOUNTS, auth.account, 'rate-limit', { id: auth.key_id || auth.device?.payload.cid || 'session', limit: auth.session ? 300 : 120 });

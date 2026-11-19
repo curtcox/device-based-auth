@@ -379,7 +379,7 @@ STATUS row updated.
 | G3 ✅ | Audience gate policy: catalog field, issuance check, `/authorize` check, verify library `catalog` option | An ungated grant for a required action is refused online and gets `online_required` offline |
 | G4 ✅ | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
 | G5 ✅ | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
-| G6 🚧 | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
+| G6 ✅ | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
 | G7 | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
 | G8 | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
 | G9 | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
@@ -445,6 +445,16 @@ STATUS row updated.
   device must send it with an allow (`wrong_number`); webhook services need not. Allow-on-timeout
   entries refuse answers from the signed-in session (`not_inline`). Not yet: "loosening sign-in
   gates also needs the current gates to pass" (only a recent sign-in is required today).
+- **G6, second half (2026-11-19): the dashboard.** Sessions are keyed `sid:<Clerk sid>`,
+  `local:<name>` (local sign-ins now name a random per-browser session: `LocalDev <account>
+  <session>`) or `cid:<credential>` for dashboard devices; `op_init` / `op_credential_status`
+  report `open | confirmed | locked` from the same request they already made (no extra DO request).
+  The Worker refuses a locked dashboard session everything but `/api/v1/session*`, `whoami` and
+  revocation. `POST /api/v1/session/confirm` opens the `dashboard` gate request (number matching as
+  for sign-in) and takes this page's own TOTP/security-key answer for deny-on-timeout entries (a
+  locked session cannot use `/gate-requests/{id}/answer`, which could approve other requests). A
+  confirmation lasts 7 days (`dashsess:` rows, pruned). Recovery codes: 10, shown once, SHA-256
+  hashed, each once; using one is audited and announced.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).
