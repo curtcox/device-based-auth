@@ -36,7 +36,7 @@ export async function readEnrollRequest(jws, { defaults, env } = {}) {
   assert(Number.isSafeInteger(lifetime) && lifetime >= LIFETIME.min && lifetime <= LIFETIME.max, 'invalid_lifetime', 'lifetime_seconds out of range');
   let returnOrigin = null;
   if (payload.return_origin !== undefined) {
-    try { const u = new URL(payload.return_origin); assert(u.origin === payload.return_origin && (u.protocol === 'https:' || u.hostname === 'localhost'), 'x', 'x'); returnOrigin = u.origin; }
+    try { const u = new URL(payload.return_origin); assert(u.origin === payload.return_origin && (u.protocol === 'https:' || (u.protocol === 'http:' && u.hostname === 'localhost')), 'x', 'x'); returnOrigin = u.origin; }
     catch { assert(false, 'invalid_return_origin', 'return_origin must be an https origin'); }
   }
   // Key attestation (optional): verified here so the result can travel in the signed ticket.

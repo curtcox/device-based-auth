@@ -11,6 +11,13 @@ let env;
 beforeEach(async () => { env = await testEnv(); });
 
 describe('enrollment and offline verification', () => {
+  it('accepts only https origins (or http://localhost) as return_origin', async () => {
+    const device = await newDevice();
+    const start = async origin => call(env, 'POST', '/api/v1/enrollments', { body: { request: await device.enrollRequest({ aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], return_origin: origin }) } });
+    for (const origin of ['ws://localhost:9000', 'wss://app.example', 'http://app.example', 'https://app.example/path']) expect((await start(origin)).body.code, origin).toBe('invalid_return_origin');
+    for (const origin of ['https://app.example', 'http://localhost:9000']) expect((await start(origin)).status, origin).toBe(200);
+  });
+
   it('enrolls a device, charges the issue price and verifies offline', async () => {
     await fund(env, 'alice');
     const device = await newDevice();
