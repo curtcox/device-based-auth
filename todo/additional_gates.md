@@ -514,6 +514,9 @@ STATUS row updated.
 - **G9, Duo and Okta forms (2026-11-19).** The dashboard's Gates page adds Duo Push (API hostname,
   integration key, secret key, username) and Okta Verify (org URL, API token, user and factor ids)
   gates; the secrets are sealed and never listed (Playwright checks).
+- **G9, docs (2026-11-19).** `/docs/#gates` ("Gates: approvals and confirmation": kinds,
+  `require.gates`, `gate_pending` handling, how each kind answers, periodic confirmation, sign-in
+  gates, links to the CI samples) and a Gates section in `llms.txt` (scopes list updated).
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

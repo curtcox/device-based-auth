@@ -53,6 +53,15 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - mTLS: `POST /api/v1/certificate {lifetime_seconds?}` (device credential + DPoP; 300–86400 s, default 3600; token price) returns a PEM X.509 client certificate for the device's own key, signed by the CA in `/.well-known/dba-ca.pem`; CN = device id, SAN URIs `urn:devicebasedauth:{device,credential,account}:…`; no grants, no revocation. CLI: `dba certificate` then `curl --cert client.crt --key client.key`.
 - Pre-approved issuance: `POST /api/v1/credentials {public_jwk, aud, grants, device, lifetime_seconds}` with an API key holding `credentials:issue` (or a device credential holding `dba:credentials:issue`, which can only delegate narrower grants to its own audiences or fewer, one level deep: a delegated credential cannot delegate again, `403 delegation_depth`). An API key can grant `dba:` actions only within its own scopes.
 
+## Gates (approvals) and periodic confirmation
+
+- Gates approve uses of a grant: `require.gates: [{ any: [gate ids or "owner"], timeout_s?, on_timeout?: "deny"|"allow" }]` (1–3 entries, all must pass), `require.gates_reuse_s`. Kinds: owner, dba-device, totp, webauthn, webhook, duo, okta-verify. Manage with `GET|POST /api/v1/gates`, `DELETE /api/v1/gates/{id}` (scopes `gates:read`, `gates:write`; changing needs a recent sign-in or an API key). CLI: `dba gates`, `dba gates add --kind dba-device|webhook`.
+- Online only: `/authorize` answers `gate_pending` with `gate_request: {id, retry_after, deadline}` until the gates settle, then allows or `gate_denied`. Sites pass it on as 403; devices retry (SDK `fetchWithGates()`).
+- A device holding `dba:approvals:answer` answers as a dba-device gate: `GET /api/v1/gate-requests` (each item's `answer_as: [{entry, gate}]`), `POST /api/v1/gate-requests/{id}/answer {entry, gate, decision: "allow"|"deny", number?}`. CLI: `dba approvals [--watch]`, `dba approvals allow|deny ID`.
+- Webhook gates: DBA POSTs a `dba-gate+jwt` to your service; answer `{"decision"}` at once or 202 then a signed `dba-gate-answer+jwt` to `callback` (spec/events.md §6).
+- Periodic confirmation: credentials issued with `confirm: {gates, every_s}` need a current `dba-confirmation+jwt` sent as `DBA-Confirmation`; get one with `POST /api/v1/credentials/{cid}/confirm` (retry while `pending`). CLI `dba confirm`; SDK `confirm()`. `POST /api/v1/credentials/{cid}/unconfirm` stops trust online at once.
+- Audiences may require gates per catalog action (`catalog[].gates: {require, kinds, fail_open}`) and for sign-in (`sign_in_gates`).
+
 ## Main endpoints
 
 - `GET /api/v1/whoami` — who is calling.
@@ -67,7 +76,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 
 ## API keys and scopes
 
-Create keys in the dashboard (`dbak_…`, shown once). Scopes: `account:read`, `transactions:read`, `credentials:read`, `credentials:issue`, `credentials:revoke`, `audiences:read`, `audiences:write`, `authorize`. Send `Authorization: ApiKey dbak_…`. Key reads are metered (5 µ$); dashboard reads are free.
+Create keys in the dashboard (`dbak_…`, shown once). Scopes: `account:read`, `transactions:read`, `credentials:read`, `credentials:issue`, `credentials:revoke`, `audiences:read`, `audiences:write`, `authorize`, `gates:read`, `gates:write` (`approvals:answer` is for devices only). Send `Authorization: ApiKey dbak_…`. Key reads are metered (5 µ$); dashboard reads are free.
 
 ## First-party audiences
 

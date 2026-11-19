@@ -27,6 +27,7 @@
 <li><a href="#verify">Verify requests on your server</a></li>
 <li><a href="#workers">Cloudflare Worker middleware</a></li>
 <li><a href="#authorize">Online authorization API</a></li>
+<li><a href="#gates">Gates: approvals and confirmation</a></li>
 <li><a href="#oidc">Sign in with devicebasedauth.org</a></li>
 <li><a href="#mcp">MCP for agents</a></li>
 <li><a href="#revocation">Revocation and status lists</a></li>
@@ -363,6 +364,19 @@ Content-Type: application/json
   &quot;expires_in&quot;: 30, &quot;cost_microdollars&quot;: 10
 }</code></pre>
 <p>A positive answer may be cached for <code>expires_in</code> seconds (0 when counters or step-up were involved). A step-up grant answers <code>{"allow": false, "code": "step_up_required", "step_up": {"id", "expires_in", "approve_url"}}</code>; the owner approves it under <a href="/app.html#approvals">Approvals</a> (browsers with security notices on are told at once; a dashboard device cannot approve its own request, <code>403 self_approval</code>) and the next request (within 5 minutes) is allowed once. Asking again while the request waits returns the same <code>id</code>; once the owner denies it, requests answer <code>step_up_denied</code> until it would have expired (10 minutes). Replayed proofs are refused with <code>replayed_proof</code>.</p>
+</section>
+
+<section id="gates">
+<h2>Gates: approvals and confirmation</h2>
+<p>A <strong>gate</strong> approves or refuses a use of a grant: the account owner (built in), one of the owner's devices, an authenticator app (TOTP), a security key or passkey, your own approval service (a webhook), Duo Push or Okta Verify. Add them on the dashboard's <a href="/app.html#gates">Gates</a> page (or <code>dba gates add</code> with an API key holding <code>gates:write</code>). A grant names them in <code>require.gates</code>: a list of up to 3 entries that must all pass, each passed by any one of its gates.</p>
+<pre class="code"><code>{ &quot;actions&quot;: [&quot;hashbin:content:delete&quot;],
+  &quot;require&quot;: { &quot;gates&quot;: [{ &quot;any&quot;: [&quot;gate_…phone&quot;, &quot;owner&quot;], &quot;timeout_s&quot;: 120, &quot;on_timeout&quot;: &quot;deny&quot; }],
+               &quot;gates_reuse_s&quot;: 300 } }</code></pre>
+<p>Gated grants are checked online only (offline verifiers answer <code>online_required</code>). While the gates decide, <code>POST /api/v1/authorize</code> answers <code>{ "allow": false, "code": "gate_pending", "gate_request": { "id", "retry_after", "deadline" } }</code>; pass that on as a 403 and the device asks again after <code>retry_after</code> seconds (the browser SDK's <code>fetchWithGates()</code> does this). A refusal is <code>gate_denied</code>. If nobody answers by the deadline the entry follows <code>on_timeout</code> (default <code>deny</code>; an allow by timeout is announced to the owner). An audience can require gates for an action, of certain kinds, and forbid allows by timeout, in its catalog (audience console, "Gate policies"). Each gate contacted is charged to the account that owns the gates (<a href="/pricing.html">Pricing</a>).</p>
+<p>Gates answer in their own way: the owner in the dashboard's Approvals page; a device holding <code>dba:approvals:answer</code> with <code>GET /api/v1/gate-requests</code> and <code>POST /api/v1/gate-requests/{id}/answer</code> (each request lists the device's own gates in <code>answer_as</code>; <code>dba approvals</code> in the CLI); authenticator apps and security keys on the approval page linked from the owner's notice; a webhook service by answering devicebasedauth.org's signed POST (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/events.md">spec/events.md §6</a>); Duo and Okta in their apps.</p>
+<p><strong>Periodic confirmation.</strong> A credential issued with <code>confirm: { gates, every_s }</code> (chosen by the owner on the approval page, or sent to <code>POST /api/v1/credentials</code>) works only while its device holds a recent <em>confirmation</em>: the device calls <code>POST /api/v1/credentials/{cid}/confirm</code>, its gates approve, and it receives a <code>dba-confirmation+jwt</code> to send as the <code>DBA-Confirmation</code> header. Offline verifiers check it like the credential (signature, the same <code>cid</code>, <code>sub</code> and key); the dashboard's "Stop trusting now" ends it at once for online checks. The CLI (<code>dba confirm</code>, then automatically) and the browser SDK (<code>confirm()</code>, then automatically) keep one current.</p>
+<p><strong>Sign-in gates</strong> hold a Sign in with devicebasedauth.org (per site or by default), or the dashboard itself, until gates approve; see <a href="#oidc">Sign in</a>.</p>
+<p class="small muted">Samples run in CI: an approval service in <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/gate-webhook.mjs">Node</a> and <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/gate_webhook.py">Python</a>, and <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/approve-from-cli.sh">a CLI device that approves another's confirmation</a>.</p>
 </section>
 
 <section id="oidc">
