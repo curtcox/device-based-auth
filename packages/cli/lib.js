@@ -432,9 +432,19 @@ export function curlRequest(args) {
   return { method: method.toUpperCase(), url };
 }
 
-/** curl arguments with the credential headers added in front of the caller's own. */
-export function curlArgs(args, headers) {
-  return [...Object.entries(headers).flatMap(([name, value]) => ['-H', `${name}: ${value}`]), ...args];
+/**
+ * curl arguments that read the credential headers from a file (`-H @file`, curl 7.55+) in front of
+ * the caller's own. Never on the command line: any local user can read another's arguments (ps,
+ * /proc), and DPoP does not sign the body, so a proof seen there could be raced to the same URL
+ * with another body before curl sends it.
+ */
+export function curlArgs(args, headerFile) {
+  return ['-H', `@${headerFile}`, ...args];
+}
+
+/** The contents of that header file: one "Name: value" line per header. */
+export function curlHeaderFile(headers) {
+  return Object.entries(headers).map(([name, value]) => `${name}: ${value}\n`).join('');
 }
 
 /**

@@ -71,7 +71,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, keyFile, loadDeviceKey, keyStoreOption, osSecretStore, powershellEncoded, dpapiScript, saveDeviceKey, forgetDeviceKey, SECRET_SERVICE, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
+  curlRequest, curlArgs, curlHeaderFile, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, DEFAULT_ORIGIN, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
 } from './lib.js';
 import { verifyJws, verifyProof, inspectCredential, jwkThumbprint, sha256b64u, generateKeyPair } from '../verify/src/index.js';
 import { testEnv, call, worker, ORIGIN } from '../../test-utils/env.js';
@@ -201,8 +201,9 @@ describe('curl handling', () => {
     expect(() => curlRequest(['-sS', 'x.org'])).toThrow(/URL/);
   });
 
-  it('adds the headers before the caller\'s arguments', () => {
-    expect(curlArgs(['-sS', 'https://x.org/'], { Authorization: 'DBA c', DPoP: 'p' })).toEqual(['-H', 'Authorization: DBA c', '-H', 'DPoP: p', '-sS', 'https://x.org/']);
+  it('reads the headers from a file, never from the command line, before the caller\'s arguments', () => {
+    expect(curlArgs(['-sS', 'https://x.org/'], '/tmp/dba-curl-x/headers')).toEqual(['-H', '@/tmp/dba-curl-x/headers', '-sS', 'https://x.org/']);
+    expect(curlHeaderFile({ Authorization: 'DBA c', DPoP: 'p' })).toBe('Authorization: DBA c\nDPoP: p\n');
   });
 });
 

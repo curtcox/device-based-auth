@@ -4,14 +4,15 @@
  * Node 22+, no dependencies beyond @devicebasedauth/verify. The logic lives in lib.js; this file
  * only touches files, stdin/stdout and child processes.
  */
-import { mkdir, readFile, writeFile, rename, chmod, rm, rmdir, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rename, chmod, rm, rmdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createPrivateKey } from 'node:crypto';
-import { homedir, hostname } from 'node:os';
+import { homedir, hostname, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, tpmKeyFile, loadDeviceKey, keyStoreOption, osSecretStore, saveDeviceKey, forgetDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
+  curlRequest, curlArgs, curlHeaderFile, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
 } from './lib.js';
 import { inspectCredential, createProof } from '@devicebasedauth/verify';
 import { TPM_BACKEND, TPM_PROTECTION, TPM_NAME, createTpmKey, tpmAttestation, tpmAvailable } from './tpm.js';
@@ -47,7 +48,7 @@ Use the credential:
   dba status | whoami [--online] [--json]   What this device may do, in plain English.
   dba headers METHOD URL                    Print Authorization and DPoP headers for one request.
   dba sign METHOD URL                       Print only the DPoP proof.
-  dba curl CURL-ARGS...                     Run curl with the headers added.
+  dba curl CURL-ARGS...                     Run curl (7.55+) with the headers added (from a private file, not argv).
   dba token --aud SITE                      Print a 10-minute bearer token for SITE:
                                               curl -H "Authorization: Bearer $(dba token --aud hashbin.org)" ...
   dba certificate [--lifetime SECONDS]      Write an X.509 client certificate for this device's key
@@ -378,11 +379,17 @@ async function sign(profile, { positionals }) {
 async function curl(profile, args) {
   const { method, url } = curlRequest(args);
   const device = await usableDevice(profile);
-  const child = spawn('curl', curlArgs(args, await deviceHeaders({ ...device, method, url })), { stdio: 'inherit' });
-  return new Promise((resolve, reject) => {
-    child.on('error', error => reject(error.code === 'ENOENT' ? new UsageError('curl is not installed') : error));
-    child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
-  });
+  // The headers go to curl in a file only this user can read (see curlArgs), removed afterwards.
+  const dir = await mkdtemp(join(tmpdir(), 'dba-curl-'));
+  try {
+    const file = join(dir, 'headers');
+    await writeFile(file, curlHeaderFile(await deviceHeaders({ ...device, method, url })), { mode: 0o600 });
+    const child = spawn('curl', curlArgs(args, file), { stdio: 'inherit' });
+    return await new Promise((resolve, reject) => {
+      child.on('error', error => reject(error.code === 'ENOENT' ? new UsageError('curl is not installed') : error));
+      child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    });
+  } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
 async function token(profile, { options }) {
