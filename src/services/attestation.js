@@ -101,6 +101,44 @@ export function parseCertificate(der) {
   return { serial, issuer, subject, notBefore, notAfter, spki: spki.raw, tbs: tbs.raw, signatureAlgorithm: decodeOid(children(sigAlg)[0]), signature: signatureBits.subarray(1), extensions };
 }
 
+/**
+ * A certificate's basicConstraints: null when absent, else { ca, pathLen } (pathLen null when
+ * unlimited). Throws on a malformed extension.
+ */
+export function basicConstraints(cert) {
+  const value = cert.extensions.get('2.5.29.19');
+  if (!value) return null;
+  let ca = false; let pathLen = null;
+  for (const item of children(expectTag(parseOne(value), 16, 'BasicConstraints'))) {
+    if (item.tag === 1 && item.cls === 0) ca = item.content.length === 1 && item.content[0] !== 0;
+    else if (item.tag === 2 && item.cls === 0) pathLen = decodeSmallInt(item);
+    else throw new Error('malformed basicConstraints');
+  }
+  return { ca, pathLen };
+}
+
+/**
+ * Require every certificate above the leaf to be a CA allowed to sign certificates (basicConstraints
+ * cA, keyCertSign when keyUsage is present) within its pathLenConstraint, as RFC 5280 §6.1.4 does.
+ * A signature check alone would let any certificate's key, such as a TPM attestation key that
+ * signs whatever it is given, issue a "leaf" for a software key. Throws invalid_attestation.
+ */
+export function requireCaChain(certs) {
+  for (let i = 1; i < certs.length; i++) {
+    let constraints; let usage;
+    try {
+      constraints = basicConstraints(certs[i]);
+      const keyUsage = certs[i].extensions.get('2.5.29.15');
+      usage = keyUsage ? expectTag(parseOne(keyUsage), 3, 'KeyUsage').content : null;
+    } catch (error) { throw invalid(`certificate ${i}: unreadable constraints (${error.message})`); }
+    if (!constraints?.ca) throw invalid(`certificate ${i} is not a CA certificate`);
+    // keyCertSign is bit 5: the 0x04 bit of the first byte after the unused-bits count.
+    if (usage && !((usage[1] ?? 0) & 0x04)) throw invalid(`certificate ${i} may not sign certificates`);
+    // CA certificates below this one (the leaf does not count).
+    if (constraints.pathLen !== null && constraints.pathLen < i - 1) throw invalid(`certificate ${i} allows a shorter chain than this one`);
+  }
+}
+
 /** Import a certificate's SubjectPublicKeyInfo for verifying signatures made with `algorithm`. */
 async function importSpki(spki, algorithm) {
   const [alg] = children(parseOne(spki));
@@ -206,6 +244,7 @@ export async function verifyAndroidAttestation({ x5c, jwk, challenge, now = Date
   catch (error) { throw invalid(`unreadable certificate (${error.message})`); }
 
   if (!roots.includes(await sha256b64(certs.at(-1).spki))) throw invalid('the chain does not end at a Google attestation root');
+  requireCaChain(certs);
   for (let i = 0; i < certs.length; i++) {
     const issuer = certs[Math.min(i + 1, certs.length - 1)];
     let ok;

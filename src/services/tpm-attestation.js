@@ -16,7 +16,7 @@
 import { ApiError } from '../utils/errors.js';
 import { children, parseOne, expectTag, decodeOid, concat, integerHex, decodeTime } from './der.js';
 import { unb64u } from '../../packages/verify/src/jose.js';
-import { parseCertificate, signedBy } from './attestation.js';
+import { parseCertificate, signedBy, basicConstraints, requireCaChain } from './attestation.js';
 
 /**
  * Microsoft TPM Root Certificate Authority 2014 (RSA-4096, valid 2014-12-10 to 2039-12-10),
@@ -150,11 +150,9 @@ export function tpmManufacturer(san) {
 function checkAikCertificate(aik) {
   const eku = aik.extensions.get('2.5.29.37');
   if (!eku || !children(expectTag(parseOne(eku), 16, 'ExtKeyUsage')).some(e => decodeOid(e) === AIK_EKU)) throw invalid('the certificate is not an attestation identity key certificate (EKU 2.23.133.8.3)');
-  const constraints = aik.extensions.get('2.5.29.19');
-  if (constraints) {
-    const [ca] = children(expectTag(parseOne(constraints), 16, 'BasicConstraints'));
-    if (ca && ca.tag === 1 && ca.content[0] !== 0) throw invalid('the attestation key certificate must not be a CA');
-  }
+  // WebAuthn §8.3.1: basicConstraints present, with cA false.
+  const constraints = basicConstraints(aik);
+  if (!constraints || constraints.ca) throw invalid('the attestation key certificate must carry basicConstraints with cA false');
   const san = aik.extensions.get('2.5.29.17');
   const manufacturer = san ? tpmManufacturer(san) : null;
   if (!manufacturer) throw invalid('the attestation key certificate names no TPM manufacturer');
@@ -181,7 +179,10 @@ export async function verifyTpmAttestation({ alg, x5c, sig, certInfo, pubArea, j
   let certs;
   try { certs = x5c.map(c => parseCertificate(fromBase64(c))); } catch (error) { throw invalid(`unreadable certificate (${error.message})`); }
 
-  // 1. The chain: each certificate signed by the next, the last by a pinned root.
+  // 1. The chain: each certificate signed by the next, the last by a pinned root, and everything
+  // above the attestation key a CA (one real attestation key could otherwise sign a certificate
+  // for a software key, since a restricted TPM key signs any data not starting TPM_GENERATED).
+  requireCaChain(certs);
   try {
     for (let i = 0; i < certs.length - 1; i++) if (!await signedBy(certs[i], certs[i + 1].spki)) throw invalid(`certificate ${i} is not signed by the next one`);
     let rooted = false;

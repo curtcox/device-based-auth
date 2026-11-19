@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { verifyTpmAttestation, microsoftTpmRootSpki, MICROSOFT_TPM_ROOT_SPKI_SHA256, parsePubArea, parseTpmCrl } from './services/tpm-attestation.js';
-import { parseCertificate } from './services/attestation.js';
-import { tpmAuthority, tpmAttestation, tpmCrl } from '../test-utils/tpm-attestation.js';
+import { parseCertificate, requireCaChain } from './services/attestation.js';
+import { tpmAuthority, tpmAttestation, tpmCrl, eccPubArea, certInfoFor } from '../test-utils/tpm-attestation.js';
+import { certificate, ext, spkiOf } from '../test-utils/android-attestation.js';
+import { seq, set, oid, utf8, tlv, bool, smallInt, bits } from './services/der.js';
 import { b64u } from '../packages/verify/src/jose.js';
 
 const fixtures = JSON.parse(readFileSync(new URL('./services/testdata/tpm-windows-hello.json', import.meta.url)));
@@ -84,9 +86,54 @@ describe('TPM attestation, synthetic chains', () => {
     const otherPub = fromBase64(other.pub_area); otherPub[5] ^= 0x01; // another attribute set, so another name
     expect(await code(verify({ certifiedPubArea: otherPub }))).toContain('does not name the key');
     expect(await code(verify({ eku: '1.3.6.1.5.5.7.3.2' }))).toContain('EKU 2.23.133.8.3');
-    expect(await code(verify({ ca: true }))).toContain('must not be a CA');
+    expect(await code(verify({ ca: true }))).toContain('basicConstraints with cA false');
     expect(await code(verify({ manufacturer: null }))).toContain('no TPM manufacturer');
     expect(await code(verify({ manufacturer: 'NTC' }))).toContain('malformed TPM manufacturer');
+  });
+
+  it('refuses a certificate issued by an attestation key (a TPM signs any TBS) for a software key', async () => {
+    // A real AIK certificate whose key the attacker can use (a restricted TPM key signs data that
+    // does not start with TPM_GENERATED, and a TBSCertificate starts with 0x30).
+    const rsa = { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash: 'SHA-256' };
+    const tcg = (id, v) => set(seq(oid(id), utf8(v)));
+    const san = ext('2.5.29.17', seq(tlv(0xa4, seq(tcg('2.23.133.2.1', 'id:4E544300')))), true);
+    const from = Date.UTC(2025, 0, 1); const to = Date.UTC(2045, 0, 1);
+    const aik = await crypto.subtle.generateKey(rsa, true, ['sign', 'verify']);
+    const aikCert = await certificate({ serial: Uint8Array.of(0x31), issuer: 'Test AIK CA', subject: 'AIK', spki: await spkiOf(aik.publicKey), signer: authority.interSigner, notBefore: from, notAfter: to, extensions: [ext('2.5.29.19', seq(), true), ext('2.5.29.37', seq(oid('2.23.133.8.3'))), san] });
+    const soft = await crypto.subtle.generateKey(rsa, true, ['sign', 'verify']);
+    const softSpki = await spkiOf(soft.publicKey);
+    const forged = await certificate({ serial: Uint8Array.of(0x41), issuer: 'AIK', subject: 'forged', spki: softSpki, signer: { kind: 'rsa', privateKey: aik.privateKey }, notBefore: from, notAfter: to, extensions: [ext('2.5.29.19', seq(), true), ext('2.5.29.37', seq(oid('2.23.133.8.3'))), san] });
+    const pubArea = eccPubArea(fromBase64(jwk.x.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - jwk.x.length % 4) % 4)), fromBase64(jwk.y.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - jwk.y.length % 4) % 4)));
+    const certInfo = await certInfoFor(pubArea, extraData);
+    const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', soft.privateKey, certInfo));
+    const b64 = bytes => btoa(String.fromCharCode(...bytes));
+    const input = x5c => verifyTpmAttestation({ alg: -257, x5c: x5c.map(b64), sig: b64(sig), certInfo: b64(certInfo), pubArea: b64(pubArea), jwk, extraData, roots: [authority.rootSpki] });
+    expect(await code(input([forged, aikCert, authority.interCert]))).toContain('certificate 1 is not a CA certificate');
+    // The same check covers keyUsage and pathLenConstraint on real CAs.
+    const caWith = async extensions => certificate({ serial: Uint8Array.of(0x32), issuer: 'Test AIK CA', subject: 'AIK', spki: await spkiOf(aik.publicKey), signer: authority.interSigner, notBefore: from, notAfter: to, extensions });
+    expect(await code(input([forged, await caWith([ext('2.5.29.19', seq(bool(true)), true), ext('2.5.29.15', bits(Uint8Array.of(0x80)), true)]), authority.interCert]))).toContain('may not sign certificates');
+  });
+
+  it('enforces basicConstraints and pathLenConstraint on every certificate above the leaf', () => {
+    const cert = (...items) => ({ extensions: new Map(items.length ? [['2.5.29.19', seq(...items)]] : []) });
+    const leaf = { extensions: new Map() };
+    const check = certs => { try { requireCaChain(certs); return 'ok'; } catch (error) { return error.message; } };
+    expect(check([leaf, cert(bool(true)), cert(bool(true))])).toBe('ok');
+    expect(check([leaf, cert(bool(true), smallInt(0)), cert(bool(true))])).toBe('ok');
+    expect(check([leaf, cert(bool(true)), cert(bool(true), smallInt(0))])).toContain('certificate 2 allows a shorter chain');
+    expect(check([leaf, cert()])).toContain('certificate 1 is not a CA certificate');
+    expect(check([leaf, cert(bool(false))])).toContain('not a CA');
+    expect(check([leaf, { extensions: new Map([['2.5.29.19', oid('1.2.3')]]) }])).toContain('unreadable constraints');
+  });
+
+  it('refuses an attestation key certificate without basicConstraints (WebAuthn §8.3.1)', async () => {
+    const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash: 'SHA-256' }, true, ['sign', 'verify']);
+    const tcg = (id, v) => set(seq(oid(id), utf8(v)));
+    const san = ext('2.5.29.17', seq(tlv(0xa4, seq(tcg('2.23.133.2.1', 'id:4E544300')))), true);
+    const leaf = await certificate({ serial: Uint8Array.of(0x33), issuer: 'Test AIK CA', subject: 'AIK', spki: await spkiOf(pair.publicKey), signer: authority.interSigner, notBefore: Date.UTC(2025, 0, 1), notAfter: Date.UTC(2045, 0, 1), extensions: [ext('2.5.29.37', seq(oid('2.23.133.8.3'))), san] });
+    const a = await tpmAttestation(authority, jwk, extraData);
+    const b64 = bytes => btoa(String.fromCharCode(...bytes));
+    expect(await code(verifyTpmAttestation({ alg: a.alg, x5c: [b64(leaf), ...a.x5c.slice(1)], sig: a.sig, certInfo: a.cert_info, pubArea: a.pub_area, jwk, extraData, roots: [authority.rootSpki] }))).toContain('basicConstraints with cA false');
   });
 
   it('refuses a chain that does not reach the trusted root', async () => {

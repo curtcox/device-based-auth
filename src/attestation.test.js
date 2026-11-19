@@ -12,7 +12,7 @@ const REASONS = {
   'wrong challenge': 'challenge does not match', 'software key': 'not in a TEE or StrongBox', 'imported key': 'origin must be GENERATED',
   'not a signing key': 'not a signing key', 'RSA algorithm claimed': 'not an EC key', 'mismatched levels': 'not in a TEE or StrongBox',
   'expired leaf': 'certificate 0 is outside its validity period', 'revoked leaf': 'certificate 0 is revoked by Google',
-  'forged leaf signed by an attested key': 'only the leaf certificate may carry a key description', 'too short': 'x5c must list', garbage: 'unreadable certificate'
+  'forged leaf signed by an attested key': 'certificate 1 is not a CA certificate', 'too short': 'x5c must list', garbage: 'unreadable certificate'
 };
 const code = promise => promise.then(() => 'ok', e => `${e.code}: ${e.message}`);
 

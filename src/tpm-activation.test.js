@@ -146,6 +146,9 @@ describe('EK credential activation, software TPM', () => {
     expect((await verifyEkCertificate(ek, [b64(await build(true))], anchors)).manufacturer).toBe('IFX');
     expect(await code(verifyEkCertificate(ek, [b64(await build(false))], anchors))).toContain('not a CA certificate');
     expect(await code(verifyEkCertificate(ek, ['a', 'b', 'c', 'd'], anchors))).toContain('at most 3');
+    // A basicConstraints that is not a SEQUENCE is "not a CA" (400), not a parse error (500).
+    const malformed = await certificate({ serial: Uint8Array.of(0x43), issuer: authority.name, subject: 'Test EK Intermediate', spki: await spkiOf(inter.publicKey), signer: authority.signer, notBefore: Date.UTC(2025, 0, 1), notAfter: Date.UTC(2045, 0, 1), extensions: [ext('2.5.29.19', bool(true), true)] });
+    expect(await code(verifyEkCertificate(ek, [b64(malformed)], anchors))).toMatch(/^invalid_attestation: .*not a CA certificate/);
   });
 });
 

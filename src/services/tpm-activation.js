@@ -25,7 +25,7 @@
 import { ApiError } from '../utils/errors.js';
 import { children, parseOne, expectTag, decodeOid, concat, seq, oid, tlv, bits } from './der.js';
 import { b64u, jwkThumbprint } from '../../packages/verify/src/jose.js';
-import { parseCertificate, signedBy } from './attestation.js';
+import { parseCertificate, signedBy, basicConstraints } from './attestation.js';
 import { reader, parseTpmPublic, parseCertInfo, tpmManufacturer, tpmObjectName, REQUIRED_ATTRIBUTES, parseTpmCrl } from './tpm-attestation.js';
 import { TPM_EK_ANCHORS } from './tpm-ek-anchors.js';
 
@@ -164,11 +164,9 @@ export function tpmEkAnchors() {
   return parsedAnchors;
 }
 
+/** A malformed basicConstraints counts as "not a CA" (a 400), never a parse error (a 500). */
 function isCa(cert) {
-  const constraints = cert.extensions.get('2.5.29.19');
-  if (!constraints) return false;
-  const [ca] = children(expectTag(parseOne(constraints), 16, 'BasicConstraints'));
-  return !!ca && ca.tag === 1 && ca.content[0] !== 0;
+  try { return basicConstraints(cert)?.ca === true; } catch { return false; }
 }
 
 /**
