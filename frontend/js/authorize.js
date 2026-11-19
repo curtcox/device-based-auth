@@ -7,8 +7,9 @@
 import { api } from './api.js';
 import { initAuth, renderSignIn, signedInLabel, authMode, reauthenticate } from './auth.js';
 import { h, $, replace, badge, notice, dl } from './html.js';
+import { b64u, unb64u } from '/lib/verify/index.js';
 
-const PARAMS = ['client_id', 'redirect_uri', 'response_type', 'scope', 'state', 'nonce', 'code_challenge', 'code_challenge_method', 'resource'];
+const PARAMS = ['client_id', 'redirect_uri', 'response_type', 'scope', 'state', 'nonce', 'code_challenge', 'code_challenge_method', 'resource', 'acr_values'];
 const MCP_PREFIX = 'dbamcp_';
 const SCOPE_TEXT = {
   openid: 'Your devicebasedauth.org account id',
@@ -19,13 +20,64 @@ const root = $('#authorize-root');
 const query = new URLSearchParams(location.search);
 const request = Object.fromEntries(PARAMS.filter(p => query.has(p)).map(p => [p, query.get(p)]));
 
+const seconds = n => n % 60 === 0 ? `${n / 60} minute${n === 60 ? '' : 's'}` : `${n} seconds`;
+let waiting = null;
+
+/**
+ * The sign-in waits for its gates (STATUS B7): show the request's number (the approver types it),
+ * offer this page's own answers (an authenticator code or a security key) for entries that deny
+ * on timeout, and ask again until the server returns where to go.
+ */
+function showWaiting(gateRequest, out, decide) {
+  const factors = gateRequest.factors?.entries || [];
+  const inline = gateRequest.entries.map((entry, index) => {
+    if (entry.outcome || entry.on_timeout === 'allow') return null;
+    return (factors[index]?.gates || []).filter(g => g.kind === 'totp' || g.kind === 'webauthn').map(g => inlineFactor(gateRequest, index, g));
+  });
+  replace(out, h('div', { class: 'panel', id: 'sign-in-gate' },
+    h('h3', {}, 'Waiting for approval'),
+    h('p', {}, 'Your sign-in needs approval. Request number ', h('strong', { class: 'mono', id: 'gate-number' }, gateRequest.number), ' — check that the approver sees the same number.'),
+    h('ul', {}, gateRequest.entries.map(entry => h('li', {},
+      entry.outcome ? badge(entry.outcome === 'allow' ? 'approved' : 'denied', entry.outcome === 'allow' ? 'approved' : 'denied') : badge('pending', 'waiting'), ' ',
+      entry.on_timeout === 'allow' ? `allowed if nobody answers within ${seconds(entry.timeout_s)}` : `denied if nobody answers within ${seconds(entry.timeout_s)}`))),
+    inline.flat().filter(Boolean).length ? [h('h4', {}, 'Or answer here'), inline] : null,
+    gateRequest.approve_url ? h('p', { class: 'small muted' }, 'Approvers with an authenticator app or security key can also use the link sent to your browsers.') : null));
+  clearTimeout(waiting);
+  waiting = setTimeout(() => decide(true, true), Math.max(1, gateRequest.retry_after || 2) * 1000);
+}
+
+function inlineFactor(gateRequest, entry, gate) {
+  const status = h('div', {});
+  const send = async proof => {
+    try { await api(`/api/v1/gate-requests/${encodeURIComponent(gateRequest.id)}/answer`, { method: 'POST', body: { entry, gate: gate.id, decision: 'allow', number: gateRequest.number, ...proof } }); replace(status, notice('success', 'Approved; signing you in…')); }
+    catch (error) { replace(status, notice('error', error.message)); }
+  };
+  if (gate.kind === 'totp') {
+    const input = h('input', { name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6, 'aria-label': `Code from ${gate.label || 'the authenticator app'}` });
+    const form = h('form', { class: 'row' }, h('label', {}, `Code from “${gate.label || 'authenticator app'}”`, input), h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Approve with code')));
+    form.addEventListener('submit', event => { event.preventDefault(); send({ totp: { code: input.value.trim() } }); });
+    return h('div', {}, form, status);
+  }
+  const key = async () => {
+    try {
+      const text = `dba-gate-answer\n${gateRequest.id}\n${entry}\nallow\n${gateRequest.factors.salt}`;
+      const challenge = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+      const a = await navigator.credentials.get({ publicKey: { challenge, rpId: gateRequest.factors.rp_id, allowCredentials: [{ type: 'public-key', id: unb64u(gate.credential_id) }], userVerification: gate.user_verification === 'required' ? 'required' : 'preferred' } });
+      await send({ webauthn: { credential_id: b64u(new Uint8Array(a.rawId)), clientDataJSON: b64u(new Uint8Array(a.response.clientDataJSON)), authenticatorData: b64u(new Uint8Array(a.response.authenticatorData)), signature: b64u(new Uint8Array(a.response.signature)) } });
+    } catch (error) { replace(status, notice('error', error.name === 'NotAllowedError' ? 'The security key did not answer.' : error.message)); }
+  };
+  return h('div', {}, h('button', { type: 'button', onclick: key }, `Approve with “${gate.label || 'security key'}”`), status);
+}
+
 /** Allow or deny, then follow the redirect the server returns. */
 function decider(out) {
-  return async approve => {
-    for (const b of root.querySelectorAll('button')) b.disabled = true;
+  const decide = async (approve, again = false) => {
+    if (!again) for (const b of root.querySelectorAll('button')) b.disabled = true;
     try {
       const result = await api('/oauth/authorize', { method: 'POST', body: { ...request, approve } });
-      replace(out, notice('info', approve ? 'Returning to the app…' : 'Returning without access…'));
+      if (result.pending) { showWaiting(result.gate_request, out, decide); return; }
+      clearTimeout(waiting);
+      replace(out, notice('info', approve ? (result.denied ? 'Not approved; returning to the app…' : 'Returning to the app…') : 'Returning without access…'));
       // Never follow anything but a web address, whatever the server says (a javascript: URL
       // would run on this origin).
       const next = new URL(result.redirect);
@@ -38,6 +90,7 @@ function decider(out) {
       for (const b of root.querySelectorAll('button')) b.disabled = false;
     }
   };
+  return decide;
 }
 
 /** An MCP client asks to act for the account with some of its API scopes. */

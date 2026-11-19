@@ -379,7 +379,7 @@ STATUS row updated.
 | G3 ✅ | Audience gate policy: catalog field, issuance check, `/authorize` check, verify library `catalog` option | An ungated grant for a required action is refused online and gets `online_required` offline |
 | G4 ✅ | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
 | G5 ✅ | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
-| G6 | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
+| G6 🚧 | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
 | G7 | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
 | G8 | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
 | G9 | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
@@ -435,6 +435,16 @@ STATUS row updated.
   (the approval link's token). The format is spec/events.md §6. Price `gate_webhook` (22 µ$,
   proposed). The Node sample service runs in CI; a Python one and the dashboard's "test" button
   for webhook gates are left for G9.
+- **G6, first half (2026-11-19): OIDC.** `op_sign_in` in the account resolves the gates (the
+  account's entries for the site, else its default; the site's `sign_in_gates` policy), opens or
+  reads the request, and stores the code with its claims — one account request, so the login price
+  is unchanged. `/oauth/authorize` answers `{ pending, gate_request }` while it waits (the consent
+  page asks again every `retry_after` s). Requests are reused per (site, requester, gate list).
+  The owner gate is refused in sign-in gates (the owner is who signs in). Number matching: a
+  sign-in's number is only in the consent page's response; approvers on the approval page or a
+  device must send it with an allow (`wrong_number`); webhook services need not. Allow-on-timeout
+  entries refuse answers from the signed-in session (`not_inline`). Not yet: "loosening sign-in
+  gates also needs the current gates to pass" (only a recent sign-in is required today).
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

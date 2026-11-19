@@ -22,6 +22,7 @@ export async function gates(route, request, env, auth) {
 /** A TOTP code or a security-key assertion offered as proof with an answer. */
 function cleanProof(body) {
   const proof = {};
+  if (body.number !== undefined) { assert(/^\d{2}$/.test(String(body.number)), 'invalid_answer', 'number must be the two-digit number shown where the sign-in waits'); proof.number = String(body.number); }
   if (body.totp !== undefined) { assert(typeof body.totp?.code === 'string' && body.totp.code.length <= 12, 'invalid_answer', 'totp.code must be the 6-digit code'); proof.totp = { code: body.totp.code }; }
   if (body.webauthn !== undefined) {
     const w = body.webauthn;

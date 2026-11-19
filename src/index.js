@@ -11,6 +11,7 @@ import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
 import { gates, gateRequests, gateLinks } from './api/gates.js';
+import { signInGates } from './api/sign-in-gates.js';
 import { pushSubscriptions, pushPublicKey } from './api/push.js';
 import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
 import { inspect } from './api/inspect.js';
@@ -88,6 +89,8 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/gate-links/:token`, access: PUBLIC, handler: 'gate-links', free: true },
   { method: 'POST', path: `${V1}/gate-links/:token/answer`, access: PUBLIC, handler: 'gate-links', free: true },
   { method: 'POST', path: `${V1}/gate-links/:token/callback`, access: PUBLIC, handler: 'gate-links', free: true },
+  { method: 'GET', path: `${V1}/settings/sign-in-gates`, access: 'gates:read', handler: 'sign-in-gates' },
+  { method: 'PUT', path: `${V1}/settings/sign-in-gates`, access: 'gates:write', handler: 'sign-in-gates' },
   { method: 'GET', path: `${V1}/gate-requests`, access: AUTHENTICATED, handler: 'gate-requests' },
   { method: 'GET', path: `${V1}/gate-requests/:id`, access: AUTHENTICATED, handler: 'gate-requests' },
   { method: 'POST', path: `${V1}/gate-requests/:id/answer`, access: AUTHENTICATED, handler: 'gate-requests' },
@@ -131,7 +134,7 @@ export function matchRoute(method, path) {
 }
 
 const WORKER_PATHS = ['/api/', '/status/', '/.well-known/', '/oauth/', '/webhooks/'];
-const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, DPoP, Content-Type, Idempotency-Key', 'Access-Control-Expose-Headers': 'X-DBA-Cost-Microdollars, X-DBA-Balance-Microdollars, DPoP-Nonce', 'Access-Control-Max-Age': '86400' };
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, DPoP, Content-Type, Idempotency-Key', 'Access-Control-Expose-Headers': 'X-DBA-Cost-Microdollars, X-DBA-Balance-Microdollars, DPoP-Nonce', 'Access-Control-Max-Age': '86400' };
 
 /**
  * The price a dry run quotes. A renewal with new_key_proof rotates (the issue price); a recovery
@@ -195,6 +198,7 @@ async function handle(route, request, env, auth) {
     case 'gates': return gates(route, request, env, auth);
     case 'gate-requests': return gateRequests(route, request, env, auth);
     case 'gate-links': return gateLinks(route, request, env);
+    case 'sign-in-gates': return signInGates(route, request, env, auth);
     case 'audiences': return audiences(route, request, env, auth);
     case 'audience-usage': return audienceUsage(route, request, env, auth);
     case 'audience-webhook-test': return audienceWebhookTest(route, request, env, auth);

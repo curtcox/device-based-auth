@@ -45,6 +45,25 @@ export const RETRY_AFTER_S = 2;
 // can still answer from the dashboard; `deleted` and `self` gates never can.
 const ANSWERABLE = new Set(['sent', 'failed', 'unpaid']);
 
+/** Authentication context classes for sign-ins (todo/additional_gates.md §5.1). */
+export const ACR = Object.freeze({ gated: 'urn:devicebasedauth.org:acr:gated', gatedTimeout: 'urn:devicebasedauth.org:acr:gated-timeout', session: 'urn:devicebasedauth.org:acr:session' });
+// RFC 8176 authentication method references for each kind of gate that answered.
+const AMR_FOR_KIND = { totp: 'otp', webauthn: 'hwk', 'dba-device': 'swk', webhook: 'mfa' };
+
+/**
+ * What a passed sign-in adds to the ID token: amr values for the gates that answered ("mfa" when
+ * any did), the acr (gated, or gated-timeout when an entry passed by silence) and dba_gates.
+ */
+export function signInClaims(gates, byTimeout) {
+  const answered = gates.filter(g => g.by === 'answer');
+  return { amr: [...new Set([...answered.map(g => AMR_FOR_KIND[g.kind]).filter(Boolean), ...(answered.length ? ['mfa'] : [])])], acr: byTimeout ? ACR.gatedTimeout : ACR.gated, dba_gates: gates };
+}
+
+/** Does an acr meet the site's acr_values (none asked: anything does)? gated meets gated-timeout too. */
+export function meetsAcr(acr, wanted) {
+  return !wanted.length || wanted.includes(acr) || wanted.includes(ACR.session) || (acr === ACR.gated && wanted.includes(ACR.gatedTimeout));
+}
+
 export const gateKey = id => `gate:${id}`;
 export const requestKey = id => `gatereq:${id}`;
 
@@ -273,10 +292,21 @@ export async function refreshRequest(tx, req, now) {
   return { changed: true, settled: true };
 }
 
+/**
+ * What makes two requests the same thing to approve: an online decision's credential, action,
+ * resource and audience, or a sign-in's site and requester, plus the exact gate list.
+ */
+export function requestKeyFor({ purpose = 'authorize', cid, action, resource, audience, requester, signature }) {
+  return purpose === 'sign_in'
+    ? ['sign_in', audience, requester, signature].join('\n')
+    : ['authorize', cid, action, resource ?? '', audience, signature].join('\n');
+}
+
 /** The live request for this subject and gate list, if any. */
-export async function findRequest(tx, { cid, action, resource, audience, signature }, now) {
+export async function findRequest(tx, subject, now) {
+  const key = requestKeyFor(subject);
   for (const req of (await tx.list({ prefix: 'gatereq:' })).values()) {
-    if (req.purpose === 'authorize' && req.cid === cid && req.action === action && (req.resource ?? null) === (resource ?? null) && req.audience === audience && req.signature === signature && requestUntil(req) > now) return req;
+    if (req.key === key && requestUntil(req) > now) return req;
   }
   return null;
 }
@@ -286,7 +316,7 @@ export async function findRequest(tx, { cid, action, resource, audience, signatu
  * reach the gate ('sent' or 'failed'); `paid` false marks every gate 'unpaid' (DBA sends nothing,
  * plan §2: an entry then waits for its timeout).
  */
-export function newRequest({ cred, cid, action, resource, audience, candidate, gates, now, delivery }) {
+export function newRequest({ cred, purpose = 'authorize', cid, action, resource, audience, requester, candidate, gates, now, delivery }) {
   const entries = candidate.gates.map(entry => ({
     any: entry.any, timeout_s: entry.timeout_s, on_timeout: entry.on_timeout, deadline: now + entry.timeout_s * 1000,
     gates: entry.any.map(id => {
@@ -298,8 +328,9 @@ export function newRequest({ cred, cid, action, resource, audience, candidate, g
     answer: null, outcome: null
   }));
   return {
-    id: randomId('gtr', 16), purpose: 'authorize', step_up: !!candidate.step_up, cid, device_id: cred.device_id, device_name: cred.device?.name ?? null,
+    id: randomId('gtr', 16), purpose, step_up: !!candidate.step_up, cid: cid ?? null, device_id: cred.device_id ?? null, device_name: cred.device?.name ?? null,
     action, resource: resource ?? null, audience, signature: gateSignature(candidate), fail_open: candidate.fail_open !== false,
+    key: requestKeyFor({ purpose, cid, action, resource, audience, requester, signature: gateSignature(candidate) }),
     reuse_s: candidate.gates_reuse_s || 0, entries, number: String(10 + Math.floor(Math.random() * 90)), created_at: now, outcome: null,
     // Security-key answers sign a challenge made from the request, entry, decision and this salt.
     salt: b64u(crypto.getRandomValues(new Uint8Array(16)))
@@ -320,7 +351,9 @@ export function howPassed(req) {
 export function visibleRequest(req, now) {
   return {
     id: req.id, purpose: req.purpose, cid: req.cid, device_id: req.device_id, device_name: req.device_name,
-    audience: req.audience, action: req.action, resource: req.resource, number: req.number, created_at: req.created_at,
+    audience: req.audience, action: req.action, resource: req.resource, created_at: req.created_at,
+    // A sign-in's number is shown only where the sign-in waits; approvers type it (number matching).
+    ...(req.purpose === 'sign_in' ? {} : { number: req.number }),
     status: req.outcome === 'allow' ? 'allowed' : req.outcome === 'deny' ? 'denied' : 'pending',
     by_timeout: req.by_timeout ?? false,
     entries: req.entries.map(e => ({
@@ -357,6 +390,13 @@ export async function answerRequest(tx, req, { entry: entryIndex, gate: gateId, 
     // The factor is the authentication: whoever holds the authenticator app or the security key
     // answers, signed in or not (plan §4.3). Each wrong try counts against the gate.
     await checkFactor(tx, gate, req, index, decision, proof, now, factors);
+  }
+  if (req.purpose === 'sign_in') {
+    // Allow-on-timeout entries are never answered by the person signing in (plan §2): there,
+    // silence is theirs to choose, so only another approver's answer counts.
+    assert(!(answerer.kind === 'owner' && e.on_timeout === 'allow'), 'not_inline', 'This approval waits for someone else (it allows on timeout); answer it from the approval link or the approving device', 403);
+    // Number matching against push fatigue: an approver elsewhere types the number the sign-in page shows.
+    assert(decision === 'deny' || answerer.kind === 'owner' || answerer.kind === 'webhook' || String(proof?.number ?? '') === req.number, 'wrong_number', 'Enter the two-digit number shown on the sign-in page', 403);
   }
   // A device that asked may refuse its own request but never approve it.
   assert(decision === 'deny' || !answerer.device_id || answerer.device_id !== req.device_id, 'self_approval', 'A device cannot approve its own request; approve it from another device or a signed-in browser', 403);

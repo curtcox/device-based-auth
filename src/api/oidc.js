@@ -8,6 +8,7 @@ import { activeSigner, issuerName, jwks } from '../services/issuer.js';
 import { USER_SCOPES } from '../auth/scopes.js';
 import { requireRecentSignIn } from '../auth/reverify.js';
 import { mcpClient, mcpResource, mcpScopes, issueMcpTokens, refreshMcpTokens } from './mcp-oauth.js';
+import { ACR } from '../durable-objects/gates.js';
 
 const CODE_SECONDS = 60;
 const TOKEN_SECONDS = 600;
@@ -25,7 +26,8 @@ export function oidcConfiguration(env) {
     response_types_supported: ['code'], response_modes_supported: ['query'], grant_types_supported: ['authorization_code', 'refresh_token'],
     subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['ES256'], code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none'], scopes_supported: [...SCOPES, ...USER_SCOPES], authorization_response_iss_parameter_supported: true,
-    claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce', 'amr', 'acct', 'dev', 'cid', 'device_name']
+    claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce', 'amr', 'acr', 'dba_gates', 'acct', 'dev', 'cid', 'device_name'],
+    acr_values_supported: [ACR.gated, ACR.gatedTimeout, ACR.session], claims_parameter_supported: false
   }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
 }
 
@@ -61,10 +63,24 @@ export async function oidcAuthorize(request, env, auth) {
   if (app) return mcpAuthorize(env, auth, app, body, redirect);
   const scopes = String(body.scope || 'openid').split(' ').filter(Boolean);
   assert(scopes.includes('openid') && scopes.every(s => SCOPES.includes(s)), 'invalid_scope', `scope must include openid and only ${SCOPES.join(', ')}`);
+  // Sign-in gates (STATUS B7): the account's own, and whatever the site demands, decided in the
+  // same account request that stores the code. While they wait the consent page shows the request
+  // and asks again; a refusal returns access_denied.
   const id = randomId('code', 12);
   const now = Date.now();
   const device = auth.device ? { dev: auth.device.payload.sub, cid: auth.device.payload.cid, device_name: auth.device.payload.device?.name } : {};
-  await rpc(env.ACCOUNTS, auth.account, 'put-code', { id, code: { client_id: audience.name, redirect_uri: body.redirect_uri, code_challenge: body.code_challenge, nonce: body.nonce ? String(body.nonce).slice(0, 256) : undefined, scope: scopes.join(' '), auth_time: Math.floor(now / 1000), amr: auth.device ? ['dba_device'] : ['session'], ...device, expires_at: now + CODE_SECONDS * 1000 } });
+  const signIn = await rpc(env.ACCOUNTS, auth.account, 'sign-in', {
+    account: auth.account, client_id: audience.name, policy: audience.sign_in_gates ?? null, acr_values: String(body.acr_values ?? '').slice(0, 512),
+    requester: auth.device ? auth.device.payload.sub : 'session', device_id: auth.device?.payload.sub ?? null, device_name: auth.device?.payload.device?.name ?? null,
+    code: { id, client_id: audience.name, redirect_uri: body.redirect_uri, code_challenge: body.code_challenge, nonce: body.nonce ? String(body.nonce).slice(0, 256) : undefined, scope: scopes.join(' '), auth_time: Math.floor(now / 1000), amr: [auth.device ? 'dba_device' : 'session'], ...device, expires_at: now + CODE_SECONDS * 1000 }
+  });
+  if (signIn.status === 'pending') return { pending: true, gate_request: signIn.gate_request };
+  if (signIn.status !== 'stored') {
+    redirect.searchParams.set('error', 'access_denied');
+    redirect.searchParams.set('error_description', signIn.message);
+    redirect.searchParams.set('iss', issuerName(env));
+    return { redirect: redirect.toString(), denied: signIn.code };
+  }
   const code = await signToken('dbac_', { account: auth.account, id, exp: Math.floor(now / 1000) + CODE_SECONDS }, env.TOKEN_SIGNING_KEY);
   redirect.searchParams.set('code', code);
   redirect.searchParams.set('iss', issuerName(env));
@@ -118,7 +134,7 @@ export async function oidcToken(request, env) {
   catch (error) { if (error instanceof ApiError && error.status === 402) return oauthError('temporarily_unavailable', 'The site\'s devicebasedauth.org balance is empty', 503); throw error; }
   const signer = await activeSigner(env); const now = Math.floor(Date.now() / 1000);
   const identity = { acct: codeData.account, ...(code.dev ? { dev: code.dev, cid: code.cid, device_name: code.device_name } : {}) };
-  const idToken = await signJws({ typ: 'JWT', kid: signer.kid }, { iss: issuerName(env), sub: codeData.account, aud: code.client_id, iat: now, exp: now + TOKEN_SECONDS, auth_time: code.auth_time, amr: code.amr, ...(code.nonce ? { nonce: code.nonce } : {}), ...identity }, signer.key);
+  const idToken = await signJws({ typ: 'JWT', kid: signer.kid }, { iss: issuerName(env), sub: codeData.account, aud: code.client_id, iat: now, exp: now + TOKEN_SECONDS, auth_time: code.auth_time, amr: code.amr, ...(code.acr ? { acr: code.acr } : {}), ...(code.dba_gates ? { dba_gates: code.dba_gates } : {}), ...(code.nonce ? { nonce: code.nonce } : {}), ...identity }, signer.key);
   const accessToken = await signJws({ typ: 'at+jwt', kid: signer.kid }, { iss: issuerName(env), sub: codeData.account, aud: code.client_id, client_id: code.client_id, scope: code.scope, iat: now, exp: now + TOKEN_SECONDS, jti: randomId('at'), ...identity }, signer.key);
   return new Response(JSON.stringify({ access_token: accessToken, token_type: 'Bearer', expires_in: TOKEN_SECONDS, id_token: idToken, scope: code.scope }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' } });
 }

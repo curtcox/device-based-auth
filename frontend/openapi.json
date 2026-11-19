@@ -4267,6 +4267,144 @@
         }
       }
     },
+    "/api/v1/settings/sign-in-gates": {
+      "get": {
+        "operationId": "get_api_v1_settings_sign_in_gates",
+        "summary": "Sign-in gates: { default, audiences: { <site>: entries }, dashboard } where entries are gate entries as in require.gates (not the owner gate). A Sign in with devicebasedauth.org then waits on the consent page until they pass (POST /oauth/authorize answers { pending, gate_request } meanwhile, with the request number to match) and the ID token carries amr, acr (urn:devicebasedauth.org:acr:gated or …:gated-timeout) and dba_gates. PUT needs a recent sign-in.",
+        "x-access": "gates:read",
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "description": "Requires scope `gates:read` (API key), a signed-in session, or a device credential with `dba:gates:read`."
+      },
+      "put": {
+        "operationId": "put_api_v1_settings_sign_in_gates",
+        "summary": "Sign-in gates: { default, audiences: { <site>: entries }, dashboard } where entries are gate entries as in require.gates (not the owner gate). A Sign in with devicebasedauth.org then waits on the consent page until they pass (POST /oauth/authorize answers { pending, gate_request } meanwhile, with the request number to match) and the ID token carries amr, acr (urn:devicebasedauth.org:acr:gated or …:gated-timeout) and dba_gates. PUT needs a recent sign-in.",
+        "x-access": "gates:write",
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "description": "Requires scope `gates:write` (API key), a signed-in session, or a device credential with `dba:gates:write`."
+      }
+    },
     "/api/v1/gate-requests": {
       "get": {
         "operationId": "get_api_v1_gate_requests",
@@ -4495,7 +4633,7 @@
     "/api/v1/audiences": {
       "get": {
         "operationId": "get_api_v1_audiences",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it. sign_in_gates: { require, kinds, fail_open } is the same policy for signing in to the site.",
         "x-access": "public",
         "security": [],
         "parameters": [],
@@ -4552,7 +4690,7 @@
       },
       "post": {
         "operationId": "post_api_v1_audiences",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it. sign_in_gates: { require, kinds, fail_open } is the same policy for signing in to the site.",
         "x-access": "audiences:write",
         "security": [
           {
@@ -4651,7 +4789,7 @@
     "/api/v1/audiences/{name}": {
       "get": {
         "operationId": "get_api_v1_audiences_name",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it. sign_in_gates: { require, kinds, fail_open } is the same policy for signing in to the site.",
         "x-access": "public",
         "security": [],
         "parameters": [
@@ -4717,7 +4855,7 @@
       },
       "patch": {
         "operationId": "patch_api_v1_audiences_name",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it. sign_in_gates: { require, kinds, fail_open } is the same policy for signing in to the site.",
         "x-access": "audiences:write",
         "security": [
           {

@@ -110,6 +110,7 @@ export async function audiences(route, request, env, auth) {
     assert(AUDIENCE_NAME.test(name), 'invalid_audience', 'name must be a lower-case domain name you control');
     const namespace = String(body.namespace ?? '');
     const record = { name, namespace, description: String(body.description ?? '').slice(0, 300), catalog: cleanCatalog(namespace, body.catalog), redirect_uris: cleanRedirects(body.redirect_uris), accept_access_tokens: body.accept_access_tokens !== false, verified: true };
+    if (body.sign_in_gates) record.sign_in_gates = cleanGatePolicy(body.sign_in_gates, 'sign_in_gates');
     if (body.revocation_webhook) record.revocation_webhook = cleanWebhookUrl(body.revocation_webhook, name, env);
     await verifyDomain(env, name, auth.account);
     const paid = await rpc(env.ACCOUNTS, auth.account, 'charge', { id: `audience-${name}`, kind: 'audience', amount: price('audience') });
@@ -122,6 +123,8 @@ export async function audiences(route, request, env, auth) {
   if (body.catalog !== undefined) changes.catalog = cleanCatalog(current.namespace, body.catalog);
   if (body.redirect_uris !== undefined) changes.redirect_uris = cleanRedirects(body.redirect_uris);
   if (body.accept_access_tokens !== undefined) changes.accept_access_tokens = body.accept_access_tokens !== false;
+  // The site's own demand for sign-in gates (todo/additional_gates.md §6); null removes it.
+  if (body.sign_in_gates !== undefined) changes.sign_in_gates = body.sign_in_gates === null ? null : cleanGatePolicy(body.sign_in_gates, 'sign_in_gates') ?? null;
   if (body.revocation_webhook !== undefined) changes.revocation_webhook = cleanWebhookUrl(body.revocation_webhook, current.name, env);
   const paid = await rpc(env.ACCOUNTS, auth.account, 'charge', { id: `audience-${current.name}-${Date.now()}`, kind: 'audience', amount: price('audience') });
   return { ...(await rpc(env.REGISTRY, 'global', 'update', { name: current.name, owner: auth.account, changes })), cost_microdollars: paid.duplicate ? 0 : paid.charged, balance_microdollars: paid.balance_microdollars };

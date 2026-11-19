@@ -380,3 +380,74 @@ describe('webhook gates (G5)', () => {
     expect(before - await balance('alice')).toBe(price('gate_webhook'));
   });
 });
+
+describe('sign-in gates (G6)', () => {
+  const redirect_uri = 'https://cronly.org/auth/dba/callback';
+  /** Sign in to cronly.org as alice: POST /oauth/authorize, and the token exchange when it passes. */
+  async function signIn(extra = {}, as = 'alice') {
+    const verifier = 'v'.repeat(43);
+    const challenge = await (await import('../packages/verify/src/index.js')).sha256b64u(verifier);
+    const body = { client_id: 'cronly.org', redirect_uri, response_type: 'code', scope: 'openid', code_challenge: challenge, code_challenge_method: 'S256', approve: true, ...extra };
+    const consent = await call(env, 'POST', '/oauth/authorize', { auth: as, body });
+    if (consent.body.pending || !new URL(consent.body.redirect).searchParams.get('code')) return consent.body;
+    const form = new URLSearchParams({ grant_type: 'authorization_code', code: new URL(consent.body.redirect).searchParams.get('code'), redirect_uri, client_id: 'cronly.org', code_verifier: verifier });
+    const token = await call(env, 'POST', '/oauth/token', { body: form.toString(), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+    return { ...consent.body, id_token: decodeJws(token.body.id_token).payload };
+  }
+  const error = result => new URL(result.redirect).searchParams.get('error_description');
+
+  it('signs in at once without gates (acr session), and refuses acr_values it cannot meet', async () => {
+    expect((await signIn()).id_token).toMatchObject({ acr: 'urn:devicebasedauth.org:acr:session', amr: ['session'] });
+    expect(error(await signIn({ acr_values: 'urn:devicebasedauth.org:acr:gated' }))).toMatch(/acr_not_met/);
+  });
+
+  it('refuses the owner gate for sign-in, and validates entries', async () => {
+    expect((await call(env, 'PUT', '/api/v1/settings/sign-in-gates', { auth: 'alice', body: { default: [{ any: ['owner'] }] } })).body.code).toBe('invalid_gates');
+    expect((await call(env, 'PUT', '/api/v1/settings/sign-in-gates', { auth: 'alice', body: { default: [{ any: ['gate_NOSUCHGATE'] }] } })).body.code).toBe('unknown_gate');
+  });
+
+  it('waits for a device gate with number matching, then puts the gates in the ID token', async () => {
+    const { gate, as } = await phoneGate();
+    expect((await call(env, 'PUT', '/api/v1/settings/sign-in-gates', { auth: 'alice', body: { audiences: { 'cronly.org': [{ any: [gate], timeout_s: 120 }] } } })).status).toBe(200);
+    const pending = await signIn();
+    expect(pending).toMatchObject({ pending: true, gate_request: { purpose: 'sign_in', action: 'sign_in', audience: 'cronly.org', number: expect.stringMatching(/^\d\d$/) } });
+    expect((await signIn()).gate_request.id).toBe(pending.gate_request.id);
+    // The approver does not see the number; it types what the sign-in page shows.
+    expect((await as('GET', `/api/v1/gate-requests/${pending.gate_request.id}`)).body.number).toBeUndefined();
+    const path = `/api/v1/gate-requests/${pending.gate_request.id}/answer`;
+    const wrong = pending.gate_request.number === '10' ? '11' : '10';
+    expect((await as('POST', path, { gate, decision: 'allow', number: wrong })).body.code).toBe('wrong_number');
+    expect((await as('POST', path, { gate, decision: 'allow', number: pending.gate_request.number })).body.status).toBe('allowed');
+    const done = await signIn({ acr_values: 'urn:devicebasedauth.org:acr:gated' });
+    expect(done.id_token).toMatchObject({ acr: 'urn:devicebasedauth.org:acr:gated', amr: ['session', 'swk', 'mfa'], dba_gates: [{ kind: 'dba-device', by: 'answer' }] });
+    // Spent: the next sign-in asks again.
+    expect((await signIn()).pending).toBe(true);
+  });
+
+  it('returns access_denied when the gate refuses, and honours acr_values against a timeout', async () => {
+    const { gate, as } = await phoneGate();
+    await call(env, 'PUT', '/api/v1/settings/sign-in-gates', { auth: 'alice', body: { default: [{ any: [gate], timeout_s: 30, on_timeout: 'allow' }] } });
+    const pending = await signIn();
+    await as('POST', `/api/v1/gate-requests/${pending.gate_request.id}/answer`, { gate, decision: 'deny' });
+    const denied = await signIn();
+    expect(new URL(denied.redirect).searchParams.get('error')).toBe('access_denied');
+    // After the denial's time, a new request; nobody answers it.
+    t += 31000;
+    expect((await signIn()).pending).toBe(true);
+    t += 31000;
+    // Allowed by silence: not enough for a site that asks for an answered sign-in…
+    expect(error(await signIn({ acr_values: 'urn:devicebasedauth.org:acr:gated' }))).toMatch(/acr_not_met/);
+    // …and marked as such for one that does not.
+    expect((await signIn()).id_token).toMatchObject({ acr: 'urn:devicebasedauth.org:acr:gated-timeout', amr: ['session'], dba_gates: [{ by: 'timeout' }] });
+  });
+
+  it('lets a site require sign-in gates', async () => {
+    const changed = await call(env, 'PATCH', '/api/v1/audiences/cronly.org', { auth: 'operator', body: { sign_in_gates: { require: true, kinds: ['totp', 'webauthn'] } } });
+    expect(changed.status).toBe(200);
+    t += 61000;
+    expect(error(await signIn())).toMatch(/requires a sign-in gate/);
+    const { gate } = await phoneGate();
+    await call(env, 'PUT', '/api/v1/settings/sign-in-gates', { auth: 'alice', body: { default: [{ any: [gate] }] } });
+    expect(error(await signIn())).toMatch(/other kinds/);
+  });
+});

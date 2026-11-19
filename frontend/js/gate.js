@@ -23,10 +23,14 @@ async function challengeFor(entry, decision) {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(text)));
 }
 
+/** A sign-in shows a two-digit number; the approver types it (number matching, plan §5.1). */
+const numberInput = h('input', { id: 'gate-number-input', inputmode: 'numeric', maxlength: 2, pattern: '[0-9]{2}', 'aria-label': 'Number shown on the sign-in page' });
+
 async function answer(entry, gate, decision, proof, status) {
   replace(status, h('span', { class: 'muted' }, 'Sending…'));
   try {
-    view = { ...await api(`/api/v1/gate-links/${encodeURIComponent(link)}/answer`, { method: 'POST', auth: false, body: { entry, gate, decision, ...proof } }), factors: view.factors };
+    const number = view.purpose === 'sign_in' && decision === 'allow' ? { number: numberInput.value.trim() } : {};
+    view = { ...await api(`/api/v1/gate-links/${encodeURIComponent(link)}/answer`, { method: 'POST', auth: false, body: { entry, gate, decision, ...number, ...proof } }), factors: view.factors };
     render(notice('success', decision === 'allow' ? 'Approved. Thank you.' : 'Denied. The device will be refused.'));
   } catch (error) {
     replace(status, notice('error', error.message));
@@ -88,12 +92,14 @@ function render(banner) {
     h('div', { id: 'gate-summary' },
       h('h2', {}, view.device_name || 'Unnamed device', ' ', badge(view.status === 'allowed' ? 'approved' : view.status === 'denied' ? 'denied' : 'pending', view.status)),
       dl([
-        ['Wants to', h('span', { class: 'mono' }, view.action)],
-        ['On', view.resource ? h('span', { class: 'mono' }, view.resource) : 'any resource'],
-        ['At', view.audience],
-        ['Request number', h('strong', { class: 'mono' }, view.number)],
+        ...(view.purpose === 'sign_in'
+          ? [['Wants to', `sign in to ${view.audience}`]]
+          : [['Wants to', h('span', { class: 'mono' }, view.action)], ['On', view.resource ? h('span', { class: 'mono' }, view.resource) : 'any resource'], ['At', view.audience], ['Request number', h('strong', { class: 'mono' }, view.number)]]),
         ['Asked', new Date(view.created_at).toLocaleString()]
       ])),
+    view.purpose === 'sign_in' && view.status === 'pending'
+      ? h('label', { class: 'gate-number' }, 'Number shown on the sign-in page ', numberInput, h('span', { class: 'hint' }, ' — if you are not signing in right now, deny.'))
+      : null,
     view.entries.map(entryView));
 }
 

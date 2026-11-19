@@ -7,7 +7,7 @@ import { price } from '../utils/pricing.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
 import { hasDbaAction } from '../auth/reverify.js';
-import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
+import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, ACR, meetsAcr, signInClaims, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -668,7 +668,7 @@ export class AccountDO {
           let approval = null;
           if (candidate.gates) {
             const signature = gateSignature(candidate);
-            const req = await findRequest(tx, { ...subject, signature }, now);
+            const req = await findRequest(tx, { purpose: 'authorize', ...subject, signature }, now);
             if (req) await this.refreshed(tx, req, now, byTimeout);
             const [waiting, refused] = candidate.step_up ? ['step_up_required', 'step_up_denied'] : ['gate_pending', 'gate_denied'];
             if (req?.outcome === 'deny') { reasons.push(req.entries.some(e => e.by === 'by_timeout_refused') ? 'by_timeout_refused' : refused); denied ||= { candidate, req }; continue; }
@@ -792,17 +792,17 @@ export class AccountDO {
    * contacted, and record it. A request the balance cannot pay for is recorded but not sent, so
    * its entries wait for their timeouts (plan §2, STATUS D13).
    */
-  async openGateRequest(tx, cred, subject, candidate, now) {
+  async openGateRequest(tx, cred, subject, candidate, now, rateKey = cred.device_id) {
     const gates = await loadGates(tx, candidate.gates.flatMap(e => e.any));
     const ids = [...gates.keys()];
     // Push fatigue: a device that keeps asking is refused, not left to time out, so flooding
     // cannot be used to force an allow-on-timeout (plan §8).
     const hour = now - 3600000;
     for (const id of ids) {
-      const recent = (this.gateRates.get(`${cred.device_id}:${id}`) || []).filter(at => at > hour);
+      const recent = (this.gateRates.get(`${rateKey}:${id}`) || []).filter(at => at > hour);
       if (recent.length >= GATE_REQUESTS_PER_HOUR) return { rate_limited: true };
     }
-    for (const id of ids) this.gateRates.set(`${cred.device_id}:${id}`, [...(this.gateRates.get(`${cred.device_id}:${id}`) || []).filter(at => at > hour), now]);
+    for (const id of ids) this.gateRates.set(`${rateKey}:${id}`, [...(this.gateRates.get(`${rateKey}:${id}`) || []).filter(at => at > hour), now]);
     const subscribed = ((await tx.get('push:subs')) || []).length > 0;
     const devices = new Map();
     for (const gate of gates.values()) if (gate.kind === 'dba-device') devices.set(gate.device_id, await tx.get(`device:${gate.device_id}`));
@@ -894,6 +894,82 @@ export class AccountDO {
   }
 
   // ---- Gates (STATUS B7) -------------------------------------------------------
+
+  async op_get_sign_in_gates() {
+    return (await this.storage.get('signin_gates')) || { default: null, audiences: {}, dashboard: null };
+  }
+
+  /** Store sign-in gate settings (cleaned by the Worker); every gate must exist and be set up. */
+  async op_put_sign_in_gates({ settings }, now) {
+    const next = await this.tx(async tx => {
+      const current = (await tx.get('signin_gates')) || { default: null, audiences: {}, dashboard: null };
+      const merged = { ...current, ...settings, audiences: settings.audiences ?? current.audiences ?? {} };
+      const lists = [merged.default, merged.dashboard, ...Object.values(merged.audiences)].filter(Boolean);
+      const gates = await loadGates(tx, lists.flatMap(entries => entries.flatMap(e => e.any)));
+      for (const id of new Set(lists.flatMap(entries => entries.flatMap(e => e.any)))) assert(gates.get(id) && (gates.get(id).state ?? 'active') === 'active', 'unknown_gate', `Gate ${id} does not exist or is not set up yet`, 400);
+      await tx.put('signin_gates', merged);
+      await this.audit(tx, now, 'sign_in_gates.changed', { before: current, after: merged });
+      return merged;
+    });
+    this.notify({ title: 'Sign-in gates changed', body: 'The gates that confirm sign-ins to your account were changed. If that was not you, sign in and check your account.', path: '#gates', tag: 'sign-in-gates' }, now);
+    return next;
+  }
+
+  /**
+   * A sign-in through Sign in with devicebasedauth.org (todo/additional_gates.md §5.1): resolve its
+   * gates (the account's for this site, or its default; and the site's policy), open or read their
+   * request, and once they pass (or when there are none) store the authorization code with the
+   * claims to put in the ID token. One account request either way, as before gates.
+   * Returns { status: 'stored' | 'pending' | 'denied', … }.
+   */
+  async op_sign_in({ account, client_id, policy = null, acr_values = '', requester, device_id = null, device_name = null, code }, now) {
+    let asked = null; const byTimeout = [];
+    const wanted = acr_values.split(' ').filter(Boolean);
+    const result = await this.tx(async tx => {
+      asked = null; byTimeout.length = 0;
+      const settings = (await tx.get('signin_gates')) || {};
+      const entries = settings.audiences?.[client_id] ?? settings.default ?? null;
+      const store = async claims => {
+        await tx.put(`code:${code.id}`, { ...code, ...claims, amr: [...new Set([...code.amr, ...(claims.amr || [])])], created_at: now });
+        const alarm = await tx.getAlarm();
+        if (!alarm || alarm > now + 600000) await tx.setAlarm(now + 600000);
+        return { status: 'stored' };
+      };
+      if (!entries) {
+        if (policy?.require) return { status: 'denied', code: 'gate_required', message: `${client_id} requires a sign-in gate; add one for it in your devicebasedauth.org dashboard` };
+        if (!meetsAcr(ACR.session, wanted)) return { status: 'denied', code: 'acr_not_met', message: `${client_id} asked for a gated sign-in (acr_not_met); add a sign-in gate in your devicebasedauth.org dashboard` };
+        return store({ acr: ACR.session });
+      }
+      const candidate = { gates: entries, fail_open: policy?.fail_open !== false };
+      if (policy?.require && !meetsPolicy(entries, policy.kinds ?? null, await loadGates(tx, entries.flatMap(e => e.any)))) return { status: 'denied', code: 'gate_required', message: `${client_id} requires sign-in gates of other kinds (${policy.kinds?.join(', ')})` };
+      const subject = { purpose: 'sign_in', action: 'sign_in', audience: client_id, requester, signature: gateSignature(candidate) };
+      let req = await findRequest(tx, subject, now);
+      if (req) await this.refreshed(tx, req, now, byTimeout);
+      else {
+        req = await this.openGateRequest(tx, { device_id, device: { name: device_name } }, subject, candidate, now, requester);
+        if (req.rate_limited) return { status: 'denied', code: 'gate_rate_limited', message: 'Too many sign-in approvals were asked for; wait and try again' };
+        await this.refreshed(tx, req, now, byTimeout);
+        if (!req.outcome) asked = req;
+      }
+      if (req.outcome === 'deny') {
+        const refused = req.entries.some(e => e.by === 'by_timeout_refused');
+        return { status: 'denied', code: refused ? 'by_timeout_refused' : 'gate_denied', message: refused ? `Nobody answered in time, and ${client_id} does not accept sign-ins allowed by silence` : 'The sign-in was not approved' };
+      }
+      if (req.outcome === 'allow') {
+        const claims = signInClaims(howPassed(req), !!req.by_timeout);
+        if (!meetsAcr(claims.acr, wanted)) return { status: 'denied', code: 'acr_not_met', message: `${client_id} asked for a sign-in approved by an answer (acr_not_met), but nobody answered in time` };
+        await tx.delete(requestKey(req.id));
+        return store(claims);
+      }
+      return { status: 'pending', gate_request: { ...visibleRequest(req, now), number: req.number, retry_after: RETRY_AFTER_S, ...(hasFactorGates(req) ? { approve_url: await approvalLink(this.env, account, req), factors: await factorView(tx, req, this.env) } : {}) } };
+    });
+    if (asked) {
+      await this.announceGateRequest(asked, now, account);
+      if (webhookTargets(asked).length) this.background(this.deliverWebhooks(asked.id, account));
+    }
+    this.announceTimeouts(byTimeout, now);
+    return result;
+  }
 
   async op_list_gates() {
     const rows = await this.storage.list({ prefix: 'gate:' });
