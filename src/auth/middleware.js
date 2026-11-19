@@ -93,7 +93,7 @@ async function authenticateDevice(request, env, credential, { anyAudience, recov
     assert(status.exists && !status.revoked && sameStatusEntry(status.status, payload.status.status_list), 'revoked', 'Credential has been revoked', 401);
     const dba = payload.aud.includes(appAudience(env));
     assert(dba || anyAudience, 'wrong_audience', `Credential is not valid for ${appAudience(env)}`, 401);
-    return { account: payload.acct, session: false, kind: 'device', rated: true, device: { payload, credential, proof: verifiedProof, dba, ...(recovered ? { recovery: true } : {}), location: { network: networkLocation(request), device: verifiedProof.loc } } };
+    return { account: payload.acct, session: false, kind: 'device', rated: true, device: { payload, credential, proof: verifiedProof, dba, ...(recovered ? { recovery: true } : {}), ...(status.parent_cid ? { delegated_by: status.parent_cid } : {}), location: { network: networkLocation(request), device: verifiedProof.loc } } };
   } catch (error) {
     if (error instanceof VerificationError) assert(false, error.code, error.message, 401);
     throw error;

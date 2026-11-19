@@ -304,9 +304,17 @@ describe('API keys, metered reads and delegation', () => {
     expect(ok.status).toBe(200);
     expect(ok.body.payload.exp).toBeLessThanOrEqual(inspectCredential(credential).payload.exp);
     expect((await issue([{ actions: ['hashbin:content:write'] }])).body.code).toBe('not_narrower');
+    // One level only (master plan §13): a delegated credential cannot delegate again, even one
+    // that was given dba:credentials:issue.
+    const middle = await newDevice();
+    const delegated = (await call(env, 'POST', '/api/v1/credentials', { headers: await admin.headers('POST', '/api/v1/credentials', credential), body: { public_jwk: middle.publicJwk, aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:credentials:issue'] }] } })).body.credential;
+    const deeper = await call(env, 'POST', '/api/v1/credentials', { headers: await middle.headers('POST', '/api/v1/credentials', delegated), body: { public_jwk: (await newDevice()).publicJwk, aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:credentials:issue'] }] } });
+    expect(deeper.status).toBe(403);
+    expect(deeper.body.code).toBe('delegation_depth');
     // Revoking the delegating credential revokes what it issued.
     const revoked = await call(env, 'DELETE', `/api/v1/credentials/${inspectCredential(credential).payload.cid}`, { auth: 'alice' });
-    expect(revoked.body.revoked).toEqual([inspectCredential(credential).payload.cid, ok.body.cid]);
+    expect(revoked.body.revoked[0]).toBe(inspectCredential(credential).payload.cid);
+    expect(revoked.body.revoked.slice(1).sort()).toEqual([ok.body.cid, inspectCredential(delegated).payload.cid].sort());
   });
 
   it('lets a dashboard device (dba:session) issue like its owner', async () => {
