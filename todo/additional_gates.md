@@ -377,7 +377,7 @@ STATUS row updated.
 | G1 ✅ | Spec text and vectors for `require.gates`, `require.confirmation`, confirmations, catalog policy; evaluator in JS, Python, Go | Every new vector passes in all three; step_up ≡ owner gate |
 | G2 ✅ | Gate registry (`gate:` rows, CRUD routes, scopes `gates:read`/`gates:write`), `gatereq:` engine replacing `stepup:`, `owner` and `dba-device` kinds, `/authorize` integration, timeouts both ways, audit and notices, D13 prices in cost policy | Concurrency tests: one answer settles; timeout allow/deny; deleted gate denies; balance refusal behaves per §2; cost-count test covers the new ops |
 | G3 ✅ | Audience gate policy: catalog field, issuance check, `/authorize` check, verify library `catalog` option | An ungated grant for a required action is refused online and gets `online_required` offline |
-| G4 | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
+| G4 ✅ | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
 | G5 | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
 | G6 | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
 | G7 | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
@@ -416,6 +416,18 @@ STATUS row updated.
   verifier's `catalog: true` fetches `GET /api/v1/audiences/{name}` (TTL as the JWKS; a stale
   copy is kept when a refresh fails, since policies only tighten); Python and Go take a static
   catalog. The audience console's editor for policies comes with G9.
+- **G4 done (2026-11-19).** `src/services/{sealing,totp,webauthn}.js`; TOTP and security-key gates
+  start `pending` (`POST /api/v1/gates` returns the secret or creation options once) and become
+  active with `POST /api/v1/gates/{id}/activate` (a first code, or the registration); pending gates
+  cannot be named at issuance and count as deleted in requests. The approval page is
+  `/gate.html#<link>` (not `/approve.html`, which is enrollment approval): `dbag_` links signed with
+  `TOKEN_SIGNING_KEY` name the account and request and expire a minute after its last deadline;
+  `GET/POST /api/v1/gate-links/{link}[/answer]` are public (behind the cost brake). TOTP keeps the
+  last accepted step on the gate row (later steps only); security keys keep the signature counter;
+  the assertion's challenge binds request, entry, decision and a per-request salt. Factor gates are
+  delivered with the owner's Web Push (a notice linking to the approval page), so "failed" means no
+  push subscription. Not done: a QR code for the otpauth URI (the page shows the secret and an
+  `otpauth:` link), and inline answers on the OIDC consent page (G6).
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

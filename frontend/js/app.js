@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { initAuth, renderSignIn, signOut, reauthenticate, authMode, signedInLabel, enrollDashboardDevice, preloadSdk, currentDevice } from './auth.js';
 import { h, $, replace, usd, money, num, date, relative, duration, pretty, jsonBlock, copyButton, badge, notice, table, dl, field, splitList, describeKey } from './html.js';
-import { inspectCredential, validateGrants, evaluateGrants } from '/lib/verify/index.js';
+import { inspectCredential, validateGrants, evaluateGrants, b64u, unb64u } from '/lib/verify/index.js';
 import { credentialsCsv, credentialsJson } from './export.js';
 
 /** Account API-key scopes (src/services/first-party.js DBA_SCOPES). */
@@ -346,6 +346,91 @@ async function approvals(_arg, current) {
     h('h1', {}, 'Approvals'),
     h('p', { class: 'muted' }, 'Grants with require.step_up ask you to approve each use. Requests expire after 10 minutes; this list refreshes every 10 seconds.'),
     list
+  ];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Gates (STATUS B7): devices and factors that approve requests named in require.gates
+
+const GATE_KINDS = { owner: 'Account owner', 'dba-device': 'Device', totp: 'Authenticator app (TOTP)', webauthn: 'Security key or passkey' };
+
+async function gatesView(_arg, current) {
+  const [gates, devices] = await Promise.all([api('/api/v1/gates'), api('/api/v1/devices')]);
+  const setup = h('div', { id: 'gate-setup' });
+  const rows = gates.items.map(g => [
+    [h('strong', {}, g.label), h('div', { class: 'small muted' }, GATE_KINDS[g.kind] || g.kind)],
+    h('span', { class: 'mono small' }, g.id),
+    g.builtin ? badge('active', 'built in') : badge(g.state === 'active' ? 'active' : 'pending', g.state),
+    g.builtin ? '' : confirmButton('Delete', `Delete gate “${g.label}”? Grants that name only this gate will deny.`, async () => {
+      await api(`/api/v1/gates/${enc(g.id)}`, { method: 'DELETE' });
+      flash('success', `Deleted gate “${g.label}”.`); await render();
+    }, { confirmLabel: 'Yes, delete' })
+  ]);
+  const label = (name, value) => h('label', {}, 'Label', h('input', { name, required: true, maxlength: 80, value }));
+  const deviceForm = h('form', { class: 'stack', id: 'gate-device-form' },
+    h('h3', {}, 'A device'),
+    h('p', { class: 'muted small' }, 'One of your devices answers in its own app (the CLI, the SDK, the mobile sample). Its credential needs dba:approvals:answer.'),
+    label('label', 'My phone'),
+    h('label', {}, 'Device', h('select', { name: 'device_id', required: true }, devices.items.filter(d => !d.revoked_at).map(d => h('option', { value: d.id }, `${d.name || 'Unnamed device'} (${d.id})`)))),
+    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Add device gate')));
+  deviceForm.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(deviceForm, async () => {
+      try { const g = await api('/api/v1/gates', { method: 'POST', body: { kind: 'dba-device', label: field(deviceForm, 'label'), device_id: field(deviceForm, 'device_id') } }); flash('success', `Added gate ${g.id}.`); await render(); }
+      catch (error) { flash('error', error.message); }
+    });
+  });
+  const totpForm = h('form', { class: 'stack', id: 'gate-totp-form' },
+    h('h3', {}, 'An authenticator app'),
+    h('p', { class: 'muted small' }, 'Google Authenticator, Authy, 1Password, Microsoft Authenticator… Whoever holds it answers with its 6-digit code.'),
+    label('label', 'Authenticator app'),
+    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Add authenticator app')));
+  totpForm.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(totpForm, async () => {
+      let g;
+      try { g = await api('/api/v1/gates', { method: 'POST', body: { kind: 'totp', label: field(totpForm, 'label') } }); } catch (error) { flash('error', error.message); return; }
+      const code = h('input', { name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6, required: true });
+      const confirm = h('form', { class: 'row', id: 'gate-totp-confirm' }, h('label', {}, 'Code from the app', code), h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Finish')));
+      confirm.addEventListener('submit', async e => {
+        e.preventDefault();
+        try { await api(`/api/v1/gates/${enc(g.id)}/activate`, { method: 'POST', body: { code: code.value.trim() } }); flash('success', `“${g.label}” is set up.`); await render(); }
+        catch (error) { flash('error', error.message); }
+      });
+      replace(setup, notice('info',
+        h('p', {}, h('strong', {}, 'Add this to your authenticator app now. '), 'It is shown only once.'),
+        h('p', {}, 'Secret: ', h('code', { id: 'totp-secret' }, g.setup.secret), ' ', copyButton('Copy', () => g.setup.secret)),
+        h('p', {}, 'On a phone: ', h('a', { href: g.setup.otpauth_uri }, 'open in authenticator app')),
+        confirm));
+    });
+  });
+  const keyForm = h('form', { class: 'stack', id: 'gate-key-form' },
+    h('h3', {}, 'A security key or passkey'),
+    h('p', { class: 'muted small' }, 'YubiKey, Titan, or a passkey on this device. Whoever holds it answers by touching it.'),
+    label('label', 'Security key'),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'uv' }), 'Also require its PIN or biometric'),
+    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Register security key')));
+  keyForm.addEventListener('submit', event => {
+    event.preventDefault();
+    busy(keyForm, async () => {
+      if (!window.PublicKeyCredential) { flash('error', 'This browser cannot use security keys.'); return; }
+      try {
+        const g = await api('/api/v1/gates', { method: 'POST', body: { kind: 'webauthn', label: field(keyForm, 'label'), user_verification: keyForm.elements.uv.checked ? 'required' : 'preferred' } });
+        const o = g.setup.public_key;
+        const made = await navigator.credentials.create({ publicKey: { ...o, challenge: unb64u(o.challenge), user: { ...o.user, id: unb64u(o.user.id) }, excludeCredentials: o.excludeCredentials.map(c => ({ ...c, id: unb64u(c.id) })) } });
+        await api(`/api/v1/gates/${enc(g.id)}/activate`, { method: 'POST', body: { registration: { clientDataJSON: b64u(new Uint8Array(made.response.clientDataJSON)), attestationObject: b64u(new Uint8Array(made.response.attestationObject)) } } });
+        flash('success', `“${g.label}” is registered.`); await render();
+      } catch (error) { flash('error', error.name === 'NotAllowedError' ? 'The security key did not answer (cancelled or timed out).' : error.message); }
+    });
+  });
+  if (!current()) return [];
+  return [
+    h('h1', {}, 'Gates'),
+    h('p', { class: 'muted' }, 'A gate approves or refuses uses of grants that name it in require.gates. Changing gates needs a recent sign-in and is announced to your browsers.'),
+    table(['Gate', 'Id', 'State', ''], rows, { id: 'gate-list' }),
+    setup,
+    h('h2', {}, 'Add a gate'),
+    h('div', { class: 'grid' }, deviceForm, totpForm, keyForm)
   ];
 }
 
@@ -818,7 +903,7 @@ async function panic() {
   ];
 }
 
-const VIEWS = { credentials, credential, devices, approvals, issue, tokens, account: accountView, transactions, keys, audiences, panic };
+const VIEWS = { credentials, credential, devices, approvals, gates: gatesView, issue, tokens, account: accountView, transactions, keys, audiences, panic };
 
 // ---------------------------------------------------------------------------------------------
 // Boot
