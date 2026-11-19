@@ -426,6 +426,9 @@ type AuthResult struct {
 	Credential *Credential
 	Proof      *Proof // nil for access tokens
 	Token      string // the presented credential string
+	// Confirmation holds the claims of the DBA-Confirmation header when one was presented and
+	// verified (spec/credential.md §9), or nil.
+	Confirmation *Object
 }
 
 // AuthenticateRequest verifies a request's credential (and proof) without deciding an action.
@@ -462,13 +465,44 @@ func (v *Verifier) authenticate(r *http.Request, found *Presented) (*AuthResult,
 			return nil, err
 		}
 	}
-	return &AuthResult{OK: true, Kind: found.Kind, Credential: cred, Proof: proof, Token: found.Credential}, nil
+	// A confirmation presented as this credential's that does not verify is refused, not ignored.
+	var confirmation *Object
+	if header := strings.TrimSpace(headerValue(r, "DBA-Confirmation")); header != "" && found.Kind == "device" {
+		check := func(force bool) (*Object, error) {
+			keys, err := v.JWKS(r.Context(), force)
+			if err != nil {
+				return nil, err
+			}
+			return VerifyConfirmation(header, ConfirmationOptions{JWKS: keys, Issuer: v.issuer, Audience: v.opts.Audience, Credential: cred})
+		}
+		confirmation, err = check(false)
+		if ErrorCode(err) == "unknown_kid" {
+			confirmation, err = check(true)
+		}
+		if code := ErrorCode(err); code != "" {
+			return nil, fail("confirmation_"+code, err.Error())
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	return &AuthResult{OK: true, Kind: found.Kind, Credential: cred, Proof: proof, Token: found.Credential, Confirmation: confirmation}, nil
+}
+
+// confirmationClaims keeps a nil *Object nil as an interface value.
+func confirmationClaims(o *Object) any {
+	if o == nil {
+		return nil
+	}
+	return o
 }
 
 // Check is the action a request wants to perform.
 type Check struct {
-	Action   string
-	Resource string
+	// Confirmation is a verified confirmation's claims (VerifyRequest fills it from the
+	// DBA-Confirmation header); set it yourself when calling Decide directly.
+	Confirmation *Object
+	Action       string
+	Resource     string
 	// Location overrides: a nil Network uses Options.NetworkLocation(request); a nil Device
 	// uses the verified proof's loc claim.
 	Location Location
@@ -503,6 +537,9 @@ func (v *Verifier) VerifyRequest(r *http.Request, check Check) (*Decision, error
 	if !auth.OK {
 		return &Decision{Status: auth.Status, Code: auth.Code, Message: auth.Message, Reasons: [][]string{}}, nil
 	}
+	if auth.Confirmation != nil && check.Confirmation == nil {
+		check.Confirmation = auth.Confirmation
+	}
 	d := v.Decide(auth.Credential, check, r, auth.Proof)
 	d.Kind = auth.Kind
 	return d, nil
@@ -532,7 +569,7 @@ func (v *Verifier) Decide(cred *Credential, check Check, r *http.Request, proof 
 	grants, _ := cred.Payload.Get("grants")
 	device, _ := cred.Payload.Get("device")
 	attestation, _ := get(device, "attestation")
-	result := EvaluateGrants(grants, Context{Now: v.clock(), Action: check.Action, Resource: check.Resource, Location: location, Attestation: attestation, Policy: v.opts.Catalog[check.Action]})
+	result := EvaluateGrants(grants, Context{Now: v.clock(), Action: check.Action, Resource: check.Resource, Location: location, Attestation: attestation, Policy: v.opts.Catalog[check.Action], Confirmation: confirmationClaims(check.Confirmation)})
 	d := &Decision{Allow: result.Allow, Status: 403, Code: "forbidden", Reasons: result.Reasons, GrantIndex: result.GrantIndex, Grant: result.Grant,
 		Caveats: result.Caveats, OnlineRequired: result.OnlineRequired, Credential: cred, Proof: proof,
 		Device: cred.Claims.Subject, Account: cred.Claims.Account, CredentialID: cred.Claims.CredentialID}

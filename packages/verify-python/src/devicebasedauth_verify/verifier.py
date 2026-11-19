@@ -21,7 +21,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from . import _js
 from .credential import (CLOCK_SKEW, DEFAULT_ISSUER, STATUS_LIST_TYP, ReplayCache, VerificationError,
-                         verify_credential, verify_proof)
+                         verify_confirmation, verify_credential, verify_proof)
 from .grants import evaluate_grants
 from .jose import decode_jws, parse_json, unb64u_json, verify_jws
 from .status_list import decode_status_list, get_bit
@@ -289,7 +289,22 @@ class Verifier:
                     return {"ok": False, "status": 401, "code": "proof_required"}
                 proof = verify_proof(found["proof"], method=_field(request, "method"), url=_field(request, "url"),
                                      credential=found["credential"], jkt=payload["cnf"]["jkt"], now=self._clock(), replay=self.replay)
-            return {"ok": True, "kind": found["kind"], "payload": payload, "proof": proof, "credential": found["credential"]}
+            # A confirmation presented as this credential's that does not verify is refused, not ignored.
+            confirmation = None
+            presented = (header(request, "DBA-Confirmation") or "").strip()
+            if presented and found["kind"] == "device":
+                def check(force):
+                    return verify_confirmation(presented, jwks=self.jwks(force), issuer=self.issuer, credential=payload, audience=self.audience)["payload"]
+                try:
+                    try:
+                        confirmation = check(False)
+                    except VerificationError as error:
+                        if error.code != "unknown_kid":
+                            raise
+                        confirmation = check(True)
+                except VerificationError as error:
+                    raise VerificationError(f"confirmation_{error.code}", error.message) from None
+            return {"ok": True, "kind": found["kind"], "payload": payload, "proof": proof, "credential": found["credential"], "confirmation": confirmation}
         except VerificationError as error:
             return {"ok": False, "status": error.status, "code": error.code, "message": error.message}
 
@@ -302,15 +317,15 @@ class Verifier:
         auth = self.authenticate_request(request)
         if not auth["ok"]:
             return {"allow": False, "status": auth["status"], "code": auth["code"], "message": auth.get("message"), "reasons": []}
-        return self.decide(auth["payload"], action, resource=resource, location=location, request=request, proof=auth["proof"])
+        return self.decide(auth["payload"], action, resource=resource, location=location, request=request, proof=auth["proof"], confirmation=auth.get("confirmation"))
 
     def allowed_actions(self, payload: dict, actions: list, *, request=None, proof=None, location=None) -> list:
         """Which of these actions does a verified credential allow right now (offline checks only)?"""
         return [a for a in actions if self.decide(payload, a, location=location, request=request, proof=proof)["allow"]]
 
     def decide(self, payload: dict, action: str, *, resource: Optional[str] = None, location: Optional[dict] = None,
-               request=None, proof: Optional[dict] = None) -> dict:
-        """Evaluate grants for an already-verified payload, with the verifier's clock (never the device's)."""
+               request=None, proof: Optional[dict] = None, confirmation: Optional[dict] = None) -> dict:
+        """Evaluate grants for an already-verified payload (and its verified confirmation's claims, if any), with the verifier's clock (never the device's)."""
         location = location or {}
         network = location.get("network")
         if network is None and request is not None:
@@ -327,6 +342,8 @@ class Verifier:
             context["attestation"] = attestation
         if action in self.catalog:
             context["policy"] = self.catalog[action]
+        if confirmation is not None:
+            context["confirmation"] = confirmation
         result = evaluate_grants(payload["grants"], context)
         return {
             "allow": result["allow"], "status": 200 if result["allow"] else 403,

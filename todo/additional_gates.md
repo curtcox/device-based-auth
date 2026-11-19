@@ -382,7 +382,7 @@ STATUS row updated.
 | G6 ✅ | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
 | G7 ✅ | Periodic confirmation: `confirm` at issuance, confirm endpoints, confirmation JWT, offline check, renew/token/certificate rules, SDK and CLI refresh | e2e: an offline verifier denies after `every_s` without a new confirmation and accepts after one |
 | G8 ✅ | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
-| G9 | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
+| G9 🚧 | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
 
 ## 11a. Progress
 
@@ -474,6 +474,9 @@ STATUS row updated.
   times are in memory and bounded by time since the push started, so polls write nothing; a poll
   that cannot be read counts as waiting. Live checks are owner steps after L9. Microsoft
   Authenticator push: no public third-party push API is known (not re-researched); TOTP only.
+- **G9 started (2026-11-19).** The Python (`verify_request`, `decide(confirmation=…)`) and Go
+  (`AuthResult.Confirmation`, `Check.Confirmation`) verifiers verify `DBA-Confirmation` and refuse
+  a bad one with `confirmation_<code>` (401), as the JS verifier does.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

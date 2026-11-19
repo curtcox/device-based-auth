@@ -52,6 +52,22 @@ class VerifierTest(unittest.TestCase):
         result = verifier.verify_request(self.request(), action="hashbin:content:write", resource="doc-1")
         self.assertEqual((result["allow"], result["code"]), (False, "online_required"))
 
+    def test_confirmation_header(self):
+        from devicebasedauth_verify import sign_jws
+        credential = self.issuer.credential(grants=[{"actions": ["hashbin:content:write"], "require": {"confirmation": True}}])
+        def confirm(cid, exp):
+            return sign_jws({"typ": "dba-confirmation+jwt", "kid": self.issuer.signer["kid"]}, {"iss": self.issuer.ISSUER, "sub": "dev_TESTDEVICE01", "aud": ["hashbin.org"], "cid": cid, "cnf": {"jkt": self.issuer.device_jkt}, "iat": exp - 700, "exp": exp, "gates": [], "by_timeout": False}, self.issuer.signer["key"])
+        def ask(header=None):
+            headers = self.issuer.headers("POST", URL, credential=credential)
+            if header:
+                headers["DBA-Confirmation"] = header
+            return self.verifier.verify_request(Request("POST", URL, headers), action="hashbin:content:write")
+        self.assertEqual(ask()["reasons"], [["confirmation_required"]])
+        self.assertTrue(ask(confirm("crd_TESTCRED0001", self.clock.t + 600))["allow"])
+        self.assertEqual(ask(confirm("crd_TESTCRED0001", self.clock.t - 100))["reasons"], [["confirmation_expired"]])
+        other = ask(confirm("crd_OTHER00001", self.clock.t + 600))
+        self.assertEqual((other["allow"], other["status"], other["code"]), (False, 401, "confirmation_wrong_credential"))
+
     def test_spend_cap_is_returned_as_a_caveat(self):
         credential = self.issuer.credential(grants=[{"actions": ["hashbin:*"], "limits": {"spend_usd_per_month": 5}}])
         result = self.verifier.verify_request(self.request(credential=credential), action="hashbin:content:write")

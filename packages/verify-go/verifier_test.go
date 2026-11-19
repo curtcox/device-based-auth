@@ -197,6 +197,39 @@ func TestCatalogGatePolicyMakesAnActionOnlineOnly(t *testing.T) {
 	}
 }
 
+func TestConfirmationHeader(t *testing.T) {
+	env := newTestEnv(t)
+	cred := env.credential(`[{"actions":["hashbin:content:write"],"require":{"confirmation":true}}]`, 4, CredentialTyp)
+	confirm := func(cid string, exp int64) string {
+		jws, err := SignJWS(NewObject("typ", ConfirmationTyp, "kid", env.signer.Kid), NewObject("iss", DefaultIssuer, "sub", "dev_GOTEST0001", "aud", []string{"hashbin.org"}, "cid", cid,
+			"cnf", NewObject("jkt", env.jkt), "iat", exp-700, "exp", exp, "gates", []any{}, "by_timeout", false), env.signer.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jws
+	}
+	v := env.verifier(nil)
+	ask := func(header string) *Decision {
+		r := deviceRequest(cred, env.proof("POST", testURL, cred, nil))
+		if header != "" {
+			r.Header.Set("DBA-Confirmation", header)
+		}
+		return mustDecide(t, v, r, Check{Action: "hashbin:content:write"})
+	}
+	if d := ask(""); d.Allow || d.Reasons[0][0] != "confirmation_required" {
+		t.Fatalf("without = %+v", d)
+	}
+	if d := ask(confirm("crd_GOTEST0001", env.now+600)); !d.Allow {
+		t.Fatalf("with = %+v", d)
+	}
+	if d := ask(confirm("crd_GOTEST0001", env.now-100)); d.Allow || d.Reasons[0][0] != "confirmation_expired" {
+		t.Fatalf("expired = %+v", d)
+	}
+	if d := ask(confirm("crd_OTHER00001", env.now+600)); d.Allow || d.Code != "confirmation_wrong_credential" || d.Status != 401 {
+		t.Fatalf("other = %+v", d)
+	}
+}
+
 func TestVerifyRequestDenials(t *testing.T) {
 	env := newTestEnv(t)
 	good := env.credential(writeGrant, 4, CredentialTyp)
