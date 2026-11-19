@@ -488,6 +488,13 @@ STATUS row updated.
   on calls that hit a gate (sites answer `gate_pending` in their own way), `dba gates test`.
   Sample `docs/samples/approve-from-cli.sh` (the harness approves the laptop with `confirm`, as
   the owner would once the approval page offers it).
+- **G9, browser SDK v1.2.0 (2026-11-19).** `dba.confirm({ timeoutMs, onPending })` (one shared wait
+  for concurrent callers; the confirmation is kept with the credential in IndexedDB);
+  `headers()`/`fetch()` add `DBA-Confirmation` and confirm first when it is missing or within 30 s
+  of its end (`{ confirm: false }` never waits); calls to DBA's own API (renew, token, revoke) do
+  not wait for one. `fetchWithGates(input, init, { timeoutMs, onPending })` is the plan's
+  "authorizeWithGates": it resends with a fresh proof every `retry_after` s while the site answers
+  403 `gate_pending`. Released as `frontend/sdk/v1.2.0/`.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

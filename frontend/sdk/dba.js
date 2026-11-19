@@ -1,4 +1,4 @@
-// devicebasedauth.org browser SDK v1.1.0. Built by scripts/build-sdk.mjs from packages/browser-sdk and packages/verify. MIT.
+// devicebasedauth.org browser SDK v1.2.0. Built by scripts/build-sdk.mjs from packages/browser-sdk and packages/verify. MIT.
 
 // packages/verify/src/jose.js
 var encoder = new TextEncoder();
@@ -455,7 +455,7 @@ async function createProof({ privateKey, publicJwk: jwk, method, url, credential
 }
 
 // packages/browser-sdk/dba.js
-var VERSION = "1.1.0";
+var VERSION = "1.2.0";
 var DB = "devicebasedauth";
 var STORE = "devices";
 function openDb() {
@@ -542,9 +542,9 @@ var DBA = class {
     }
     return this.state;
   }
-  async api(path, { method = "GET", body, auth = false } = {}) {
+  async api(path, { method = "GET", body, auth = false, confirm = true } = {}) {
     const url = `${this.origin}${path}`;
-    const headers = { ...body ? { "Content-Type": "application/json" } : {}, ...auth ? await this.headers(method, url) : {} };
+    const headers = { ...body ? { "Content-Type": "application/json" } : {}, ...auth ? await this.headers(method, url, { confirm }) : {} };
     const response = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : void 0 });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new DBAError(data.error || `HTTP ${response.status}`, data.code || "http_error", { status: response.status, details: data });
@@ -604,18 +604,99 @@ var DBA = class {
     await this.save();
     return result.credential;
   }
-  /** Headers for one request: Authorization: DBA <credential> and a fresh DPoP proof. */
-  async headers(method, url, { location: loc } = {}) {
+  /**
+   * Headers for one request: Authorization: DBA <credential> and a fresh DPoP proof, plus
+   * DBA-Confirmation for a credential issued with `confirm`. When that confirmation is missing or
+   * about to end, a new one is asked for first (see confirm(); pass { confirm: false } to send the
+   * request without one instead).
+   */
+  async headers(method, url, { location: loc, confirm = true } = {}) {
     if (!this.credential) throw new DBAError("No credential; call enroll() first", "no_credential");
+    const confirmation = this.payload.confirm ? this.confirmation || (confirm ? (await this.confirm()).confirmation : null) : null;
     const proof = await createProof({ privateKey: this.state.privateKey, publicJwk: this.state.publicJwk, method, url: new URL(url, location.href).href, credential: this.credential, location: loc });
-    return { Authorization: `DBA ${this.credential}`, DPoP: proof };
+    return { Authorization: `DBA ${this.credential}`, DPoP: proof, ...confirmation ? { "DBA-Confirmation": confirmation } : {} };
   }
-  /** fetch() with the credential and a proof attached. */
+  /** fetch() with the credential and a proof attached. init.dba: { location, confirm }. */
   async fetch(input, init = {}) {
     const request = new Request(input, init);
     const headers = new Headers(request.headers);
     for (const [k, v] of Object.entries(await this.headers(request.method, request.url, init.dba || {}))) headers.set(k, v);
     return fetch(new Request(request, { headers }));
+  }
+  /**
+   * fetch() that waits while the site's online check says the request's gates have not decided
+   * yet (403 { code: "gate_pending", gate_request: { retry_after } }, spec/credential.md §8): it
+   * sends the request again, with a fresh proof, every retry_after seconds until the site answers
+   * anything else or timeoutMs passes (then the last gate_pending response is returned).
+   * onPending(gate_request) is called once, so the page can say who must approve.
+   */
+  async fetchWithGates(input, init = {}, { timeoutMs = 5 * 6e4, onPending } = {}) {
+    const original = new Request(input, init);
+    const deadline = Date.now() + timeoutMs;
+    let told = false;
+    for (; ; ) {
+      const response = await this.fetch(original.clone(), { dba: init.dba });
+      if (response.status !== 403) return response;
+      const body = await response.clone().json().catch(() => null);
+      if (body?.code !== "gate_pending") return response;
+      if (!told) {
+        told = true;
+        onPending?.(body.gate_request);
+      }
+      const wait = Math.max(1, Number(body.gate_request?.retry_after) || 2) * 1e3;
+      if (Date.now() + wait > deadline) return response;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+  }
+  /**
+   * The saved confirmation while it is current (more than 30 s left, for this credential and key),
+   * else null. Only credentials issued with `confirm` need one.
+   */
+  get confirmation() {
+    const jwt = this.state?.confirmation;
+    const p = this.payload;
+    if (!jwt || !p) return null;
+    try {
+      const c = inspectCredential(jwt).payload;
+      return c.cid === p.cid && c.cnf?.jkt === p.cnf?.jkt && c.exp - 30 > Date.now() / 1e3 ? jwt : null;
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * Ask this credential's gates to confirm the device is still trusted (credentials issued with
+   * `confirm`; 12 µ$ when one is issued), waiting while they decide. Resolves with
+   * { confirmation, expires_at, by_timeout } and keeps the confirmation for headers(); rejects with
+   * DBAError 'gate_denied' or 'confirmation_timeout'. Concurrent calls share one wait.
+   * @param {object} [options] { timeoutMs (default 5 minutes), onPending(gate_request) }
+   */
+  confirm({ timeoutMs = 5 * 6e4, onPending } = {}) {
+    this.confirming ||= this.waitForConfirmation(timeoutMs, onPending).finally(() => {
+      this.confirming = null;
+    });
+    return this.confirming;
+  }
+  async waitForConfirmation(timeoutMs, onPending) {
+    const p = this.payload;
+    if (!p) throw new DBAError("No credential to confirm", "no_credential");
+    const deadline = Date.now() + timeoutMs;
+    let told = false;
+    for (; ; ) {
+      const result = await this.api(`/api/v1/credentials/${p.cid}/confirm`, { method: "POST", body: {}, auth: true, confirm: false });
+      if (result.status === "confirmed") {
+        this.state = { ...this.state, confirmation: result.confirmation };
+        await this.save();
+        return result;
+      }
+      if (result.status === "denied") throw new DBAError("The gates refused to confirm this device", result.code || "gate_denied");
+      if (!told) {
+        told = true;
+        onPending?.(result.gate_request);
+      }
+      const wait = Math.max(1, Number(result.gate_request?.retry_after) || 2) * 1e3;
+      if (Date.now() + wait > deadline) throw new DBAError("Gave up waiting for the gates to confirm this device", "confirmation_timeout", { gate_request: result.gate_request });
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
   }
   /** Renew before expiry (same key), or rotate to a fresh non-extractable key. */
   async renew({ rotate = false } = {}) {
@@ -630,7 +711,7 @@ var DBA = class {
       body.new_key_proof = await signJws({ typ: "dba-rotate+jwt", jwk }, { cid: p.cid, iat: Math.floor(Date.now() / 1e3) }, pair.privateKey);
       next = { privateKey: pair.privateKey, publicJwk: jwk };
     }
-    const result = await this.api(path, { method: "POST", body, auth: true });
+    const result = await this.api(path, { method: "POST", body, auth: true, confirm: false });
     this.state = { ...this.state, ...next || {}, credential: result.credential };
     await this.save();
     return result;
@@ -675,11 +756,11 @@ var DBA = class {
   }
   /** A short-lived bearer token for one audience (for code that cannot sign each request). */
   async token(audience) {
-    return (await this.api("/api/v1/token", { method: "POST", body: { audience }, auth: true })).access_token;
+    return (await this.api("/api/v1/token", { method: "POST", body: { audience }, auth: true, confirm: false })).access_token;
   }
   /** Revoke this device's credential everywhere and forget the key. */
   async revoke() {
-    if (this.credential) await this.api("/api/v1/self/revoke", { method: "POST", auth: true });
+    if (this.credential) await this.api("/api/v1/self/revoke", { method: "POST", auth: true, confirm: false });
     await this.forget();
   }
   /** Delete the key and credential from this browser (does not revoke). */

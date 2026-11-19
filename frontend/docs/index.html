@@ -109,7 +109,7 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 
 <section id="browser">
 <h2>Quick start: browser SDK</h2>
-<p>The SDK makes a non-extractable P-256 key with WebCrypto and keeps it in IndexedDB: scripts on your origin can sign with it, but nothing can read it out. Enrollment opens the approval page in a popup, so call it from a click handler. Pin a versioned copy with Subresource Integrity in production (<code>/sdk/v1.1.0/dba.js</code>; hashes in <a href="/sdk/integrity.json">/sdk/integrity.json</a>). Do not use v1.0.0: its <code>autoRenew()</code> renews in a loop for credentials living longer than about 37 days.</p>
+<p>The SDK makes a non-extractable P-256 key with WebCrypto and keeps it in IndexedDB: scripts on your origin can sign with it, but nothing can read it out. Enrollment opens the approval page in a popup, so call it from a click handler. Pin a versioned copy with Subresource Integrity in production (<code>/sdk/v1.2.0/dba.js</code>; hashes in <a href="/sdk/integrity.json">/sdk/integrity.json</a>). Do not use v1.0.0: its <code>autoRenew()</code> renews in a loop for credentials living longer than about 37 days.</p>
 <pre class="code"><code>&lt;script type=&quot;module&quot;&gt;
   import { DBA } from &#39;https://devicebasedauth.org/sdk/dba.js&#39;;
 
@@ -132,7 +132,9 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 <tr><td><code>ready()</code></td><td>Loads the stored key and credential; true when an unexpired credential exists.</td></tr>
 <tr><td><code>enroll(request, { popup, onApprovalUrl, timeoutMs })</code></td><td>Signs an enrollment request with a new key, opens the approval page and resolves with the credential (by <code>postMessage</code>, or by polling when approved elsewhere).</td></tr>
 <tr><td><code>fetch(input, init)</code></td><td><code>fetch()</code> with the credential and a fresh proof attached.</td></tr>
-<tr><td><code>headers(method, url)</code></td><td>Just the <code>Authorization</code> and <code>DPoP</code> headers for one request.</td></tr>
+<tr><td><code>headers(method, url)</code></td><td>Just the <code>Authorization</code> and <code>DPoP</code> headers for one request (and <code>DBA-Confirmation</code> for a credential issued with <code>confirm</code>).</td></tr>
+<tr><td><code>fetchWithGates(input, init, { timeoutMs, onPending })</code></td><td>Like <code>fetch()</code>, but while the site answers <code>403 gate_pending</code> (its online check waits for the grant's gates) it sends the request again with a fresh proof every <code>retry_after</code> seconds. <code>onPending(gate_request)</code> is called once, to tell the user who must approve. (v1.2.0)</td></tr>
+<tr><td><code>confirm({ timeoutMs, onPending })</code></td><td>For a credential issued with <code>confirm</code>: asks its gates to confirm the device and waits; <code>headers()</code> and <code>fetch()</code> send the confirmation and call this by themselves when it is missing or about to end (pass <code>{ dba: { confirm: false } }</code> to <code>fetch</code> to never wait). (v1.2.0)</td></tr>
 <tr><td><code>allows(action, { resource, location })</code></td><td>A local hint for UI (time, place and action checks only); servers still decide.</td></tr>
 <tr><td><code>payload</code>, <code>describe()</code>, <code>expiresIn()</code></td><td>The decoded credential, its grants in plain English, seconds left.</td></tr>
 <tr><td><code>renew({ rotate })</code>, <code>autoRenew()</code>, <code>keyWithdrawn()</code></td><td>Renew (or move to a new key) before expiry; <code>autoRenew()</code> also renews at once, free, if the issuer withdrew the key that signed the credential.</td></tr>
