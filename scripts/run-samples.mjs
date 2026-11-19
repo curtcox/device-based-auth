@@ -51,6 +51,18 @@ const SAMPLES = [
   { name: 'worker-middleware.mjs', run: workerMiddleware },
   { name: 'gate-webhook.mjs', run: gateWebhook },
   {
+    // The owner approves the laptop (the second enrollment) with "confirm every hour with Sample phone".
+    name: 'approve-from-cli.sh', command: ['bash', 'docs/samples/approve-from-cli.sh'],
+    setup: async () => ({ DBA_API_KEY: (await api('POST', '/api/v1/keys', { name: 'cli sample', scopes: ['gates:read', 'gates:write'] })).secret }),
+    approveWith: async index => {
+      if (index !== 1) return {};
+      const gate = (await api('GET', '/api/v1/gates')).items.find(g => g.label === 'Sample phone');
+      return { confirm: { gates: [{ any: [gate.id], timeout_s: 120 }], every_s: 3600 } };
+    },
+    expect: [/^Added gate gate_\w+ \(dba-device, active\)/m, /^gate_\w+\s+dba-device\s+active\s+Sample phone \(dev_\w+\)$/m, /^gtr_\w+ {2}Sample laptop asks to confirm it is still trusted$/m,
+      /^Allowed gtr_\w+: the request is now allowed\.$/m, /^Confirmed crd_\w+ until \S+ \(in 60 minutes\)\.$/m, /^DBA-Confirmation: ey/m]
+  },
+  {
     name: 'python_device.py', command: ['python3', 'docs/samples/python_device.py'],
     needs: () => has('python3', ['-c', 'import cryptography, requests']) || 'python3 with cryptography and requests',
     expect: [/^Approved\. Credential id: crd_\w+$/m, /^whoami: account sample-owner, device dev_\w+$/m, /^ - May "hashbin:content:write", on any resource\.$/m]
@@ -132,12 +144,13 @@ function runCommand(sample, env) {
     const [command, ...args] = sample.command;
     const child = spawn(command, args, { cwd: join(ROOT, sample.cwd || '.'), env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; const approved = new Set(); const approvals = [];
+    const approveTicket = async ticket => api('POST', '/api/v1/enrollments/approve', { request: ticket, ...await sample.approveWith?.(approved.size - 1) });
     const watch = data => {
       output += data;
       for (const [, ticket] of output.matchAll(APPROVAL_LINK)) {
         if (approved.has(ticket)) continue;
         approved.add(ticket);
-        approvals.push(approve(ticket).catch(error => { output += `\n[harness] approval failed: ${error.message}\n`; }));
+        approvals.push(approveTicket(ticket).catch(error => { output += `\n[harness] approval failed: ${error.message}\n`; }));
       }
     };
     child.stdout.on('data', watch); child.stderr.on('data', watch);
@@ -269,7 +282,7 @@ async function main() {
       let result;
       if (sample.run) result = await sample.run().catch(error => ({ code: 1, output: `${error.stack}\n` }));
       else {
-        const env = { ...process.env, DBA_ORIGIN: ORIGIN, DBA_HOME: await mkdtemp(join(persistDir, 'home-')), ...sample.env?.() };
+        const env = { ...process.env, DBA_ORIGIN: ORIGIN, DBA_HOME: await mkdtemp(join(persistDir, 'home-')), ...sample.env?.(), ...await sample.setup?.() };
         if (sample.credential) {
           credential ??= (await enrollDevice({ origin: ORIGIN, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], onApprovalUrl: url => approve(new URL(url).hash.slice(1)) })).credential;
           env.DBA_CREDENTIAL = credential;

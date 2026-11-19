@@ -378,6 +378,17 @@ export function visibleRequest(req, now) {
 }
 
 /**
+ * Add answer_as to a request shown to a device: per entry still waiting, the device's own gates
+ * that may answer it ([{ entry, gate }]). `mine` is the set of the device's gate ids (null: the
+ * owner, who is not given it).
+ */
+export function withAnswerAs(visible, mine) {
+  if (!mine) return visible;
+  const answerAs = visible.status !== 'pending' ? [] : visible.entries.flatMap((e, entry) => e.answer || e.outcome || e.expires_in <= 0 ? [] : e.gates.filter(g => mine.has(g.id) && ANSWERABLE.has(g.delivery)).map(g => ({ entry, gate: g.id })));
+  return { ...visible, answer_as: answerAs };
+}
+
+/**
  * Record one answer. `answerer` is { kind: 'owner' | 'device', device_id } as authenticated by
  * the Worker. Returns the updated request. The first answer settles an entry; a request that has
  * settled, or an entry past its deadline, takes no more answers.

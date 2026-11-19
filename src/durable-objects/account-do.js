@@ -10,7 +10,7 @@ import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../service
 import { hasDbaAction } from '../auth/reverify.js';
 import { startPush, pollPush, POLL_INTERVAL_MS, MAX_POLLS } from '../services/vendors.js';
 import { unseal } from '../services/sealing.js';
-import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, VENDOR_KINDS, vendorTargets, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, ACR, meetsAcr, signInClaims, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
+import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, VENDOR_KINDS, vendorTargets, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, ACR, meetsAcr, signInClaims, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest, withAnswerAs } from './gates.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -1286,7 +1286,9 @@ export class AccountDO {
   async op_list_gate_requests({ device_id }, now) {
     const gates = device_id ? new Set([...(await this.storage.list({ prefix: 'gate:' })).values()].filter(g => g.kind === 'dba-device' && g.device_id === device_id).map(g => g.id)) : null;
     const live = await this.liveRequests(now);
-    return { items: live.filter(req => !gates || req.entries.some(e => e.gates.some(g => gates.has(g.id)))).map(req => visibleRequest(req, now)) };
+    // A device is also told which of its gates may answer each entry still waiting (answer_as),
+    // so a CLI or app can answer without reading the gate registry (which needs gates:read).
+    return { items: live.filter(req => !gates || req.entries.some(e => e.gates.some(g => gates.has(g.id)))).map(req => withAnswerAs(visibleRequest(req, now), gates)) };
   }
 
   async op_get_gate_request({ id, device_id }, now) {
@@ -1295,12 +1297,13 @@ export class AccountDO {
       byTimeout.length = 0;
       const req = await tx.get(requestKey(id));
       assert(req && requestUntil(req) > now, 'not_found', 'Gate request not found or expired', 404);
+      let mine = null;
       if (device_id) {
         const ids = req.entries.flatMap(e => e.gates.map(g => g.id)).filter(g => g !== 'owner');
-        const mine = [...(await loadGates(tx, ids)).values()].some(g => g.device_id === device_id);
-        assert(mine || req.device_id === device_id, 'not_found', 'Gate request not found or expired', 404);
+        mine = new Set([...(await loadGates(tx, ids)).values()].filter(g => g.kind === 'dba-device' && g.device_id === device_id).map(g => g.id));
+        assert(mine.size || req.device_id === device_id, 'not_found', 'Gate request not found or expired', 404);
       }
-      return visibleRequest(await this.refreshed(tx, req, now, byTimeout), now);
+      return withAnswerAs(visibleRequest(await this.refreshed(tx, req, now, byTimeout), now), mine);
     });
     this.announceTimeouts(byTimeout, now);
     return found;

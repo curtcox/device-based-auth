@@ -77,12 +77,15 @@ describe('gate requests', () => {
     expect((await ask()).gate_request.id).toBe(first.gate_request.id); // retries reuse it
     const mine = (await as('GET', '/api/v1/gate-requests')).body.items;
     expect(mine).toHaveLength(1);
-    expect(mine[0]).toMatchObject({ id: first.gate_request.id, device_id: deviceId, action: 'hashbin:content:delete', status: 'pending' });
+    expect(mine[0]).toMatchObject({ id: first.gate_request.id, device_id: deviceId, action: 'hashbin:content:delete', status: 'pending', answer_as: [{ entry: 0, gate }] });
+    expect((await as('GET', `/api/v1/gate-requests/${first.gate_request.id}`)).body.answer_as).toEqual([{ entry: 0, gate }]);
+    expect((await call(env, 'GET', '/api/v1/gate-requests', { auth: 'alice' })).body.items[0].answer_as).toBeUndefined();
     // The owner may not answer for the phone's gate, and an API key may not answer at all.
     const path = `/api/v1/gate-requests/${first.gate_request.id}/answer`;
     expect((await call(env, 'POST', path, { auth: 'alice', body: { gate, decision: 'allow' } })).body.code).toBe('not_the_gate');
     const answered = await as('POST', path, { gate, decision: 'allow' });
     expect(answered.body).toMatchObject({ status: 'allowed', entries: [{ outcome: 'allow', by: 'answer' }] });
+    expect((await as('GET', `/api/v1/gate-requests/${first.gate_request.id}`)).body.answer_as).toEqual([]);
     // One answer settles it; later answers change nothing.
     expect((await as('POST', path, { gate, decision: 'deny' })).status).toBe(409);
     const allowed = await ask();

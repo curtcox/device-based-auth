@@ -4851,7 +4851,7 @@
     "/api/v1/gate-requests": {
       "get": {
         "operationId": "get_api_v1_gate_requests",
-        "summary": "Gate requests: list the ones waiting or approved (the owner sees all; a device holding dba:approvals:answer sees those its gates can answer), read one, or answer one: POST …/answer { gate, decision: \"allow\" | \"deny\", entry? }. The first answer settles an entry; a device never approves its own request.",
+        "summary": "Gate requests: list the ones waiting or approved (the owner sees all; a device holding dba:approvals:answer sees those its gates can answer, each with answer_as: [{ entry, gate }] naming its gates that may still answer), read one, or answer one: POST …/answer { gate, decision: \"allow\" | \"deny\", entry? }. The first answer settles an entry; a device never approves its own request.",
         "x-access": "authenticated",
         "security": [
           {
@@ -4920,7 +4920,7 @@
     "/api/v1/gate-requests/{id}": {
       "get": {
         "operationId": "get_api_v1_gate_requests_id",
-        "summary": "Gate requests: list the ones waiting or approved (the owner sees all; a device holding dba:approvals:answer sees those its gates can answer), read one, or answer one: POST …/answer { gate, decision: \"allow\" | \"deny\", entry? }. The first answer settles an entry; a device never approves its own request.",
+        "summary": "Gate requests: list the ones waiting or approved (the owner sees all; a device holding dba:approvals:answer sees those its gates can answer, each with answer_as: [{ entry, gate }] naming its gates that may still answer), read one, or answer one: POST …/answer { gate, decision: \"allow\" | \"deny\", entry? }. The first answer settles an entry; a device never approves its own request.",
         "x-access": "authenticated",
         "security": [
           {
@@ -4998,7 +4998,7 @@
     "/api/v1/gate-requests/{id}/answer": {
       "post": {
         "operationId": "post_api_v1_gate_requests_id_answer",
-        "summary": "Gate requests: list the ones waiting or approved (the owner sees all; a device holding dba:approvals:answer sees those its gates can answer), read one, or answer one: POST …/answer { gate, decision: \"allow\" | \"deny\", entry? }. The first answer settles an entry; a device never approves its own request.",
+        "summary": "Gate requests: list the ones waiting or approved (the owner sees all; a device holding dba:approvals:answer sees those its gates can answer, each with answer_as: [{ entry, gate }] naming its gates that may still answer), read one, or answer one: POST …/answer { gate, decision: \"allow\" | \"deny\", entry? }. The first answer settles an entry; a device never approves its own request.",
         "x-access": "authenticated",
         "security": [
           {

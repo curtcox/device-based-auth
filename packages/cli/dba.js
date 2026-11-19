@@ -12,7 +12,8 @@ import { join } from 'node:path';
 import {
   UsageError, ApiError, parseArgs, splitCommand, configPaths, resolveOrigin, audiencesFromOption, grantsFromOptions, secondsOption,
   enrollmentPayload, enrollmentTokenOption, newDeviceKey, tpmKeyFile, loadDeviceKey, keyStoreOption, osSecretStore, saveDeviceKey, forgetDeviceKey, signEnrollmentRequest, rotationProof, deviceHeaders, credentialMatchesKey,
-  curlRequest, curlArgs, curlHeaderFile, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList
+  curlRequest, curlArgs, curlHeaderFile, createClient, pollEnrollment, describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList,
+  needsConfirmation, currentConfirmation, waitForConfirmation, confirmationHeaders, formatGateList, gateInputFromOptions, describeGateRequest, answerFor
 } from './lib.js';
 import { inspectCredential, createProof } from '@devicebasedauth/verify';
 import { TPM_BACKEND, TPM_PROTECTION, TPM_NAME, createTpmKey, tpmAttestation, tpmAvailable } from './tpm.js';
@@ -60,6 +61,26 @@ Use the credential:
                                             for a daily cron job on rarely used devices).
   dba revoke                                Revoke this device's credential and delete its files.
 
+Gates and confirmation:
+  dba confirm [--wait SECONDS]              Ask this credential's gates to confirm it is still trusted
+                                            (credentials issued with "confirm"). Waits (default 300 s),
+                                            saves confirmation.jwt; 12 µ$. headers and curl send it as
+                                            DBA-Confirmation and ask for a new one when it is due
+                                            (DBA_AUTO_CONFIRM=0: never ask on their own).
+  dba approvals [--watch] [--json]          Gate requests this device can answer as a dba-device gate
+                                            (its credential needs dba:approvals:answer). --watch keeps
+                                            listing new ones every 5 s until Ctrl-C.
+  dba approvals allow|deny REQUEST [--entry N] [--number NN]
+                                            Answer one. Sign-ins hide their number: type the one shown
+                                            where the sign-in waits with --number.
+  dba gates [--json]                        The account's gates (DBA_API_KEY with gates:read, or this
+                                            device with dba:gates:read).
+  dba gates add --kind dba-device --label TEXT --device dev_…
+  dba gates add --kind webhook --label TEXT --url https://… --public-jwk JSON
+  dba gates remove GATE                     Changing gates needs DBA_API_KEY with gates:write (a device
+                                            cannot: that needs a recent sign-in). TOTP, security keys,
+                                            Duo and Okta Verify are set up on the dashboard's Gates page.
+
 The account:
   dba list [--status active|expired|revoked] [--audience SITE] [--device ID] [--all] [--json]
       Every credential on the account, 50 at a time (--all: every page). Uses DBA_API_KEY (an
@@ -98,6 +119,9 @@ const COMMANDS = {
   renew: { booleans: ['rotate', 'if-due'] },
   revoke: {},
   list: { values: ['status', 'audience', 'device'], booleans: ['all', 'json'] },
+  confirm: { values: ['wait'] },
+  approvals: { values: ['entry', 'number'], booleans: ['watch', 'json'] },
+  gates: { values: ['kind', 'label', 'device', 'url', 'public-jwk'], booleans: ['json'] },
   help: {}
 };
 const GLOBAL = { values: ['profile', 'origin'], booleans: ['help', 'no-renew'] };
@@ -367,7 +391,8 @@ async function importCredential(profile, { positionals }) {
 async function headers(profile, { positionals }) {
   const { method, url } = requestTarget(positionals, 'headers');
   const device = await usableDevice(profile);
-  for (const [name, value] of Object.entries(await deviceHeaders({ ...device, method, url }))) out(`${name}: ${value}`);
+  const all = { ...await deviceHeaders({ ...device, method, url }), ...confirmationHeaders(await usableConfirmation(profile, device)) };
+  for (const [name, value] of Object.entries(all)) out(`${name}: ${value}`);
 }
 
 async function sign(profile, { positionals }) {
@@ -383,7 +408,8 @@ async function curl(profile, args) {
   const dir = await mkdtemp(join(tmpdir(), 'dba-curl-'));
   try {
     const file = join(dir, 'headers');
-    await writeFile(file, curlHeaderFile(await deviceHeaders({ ...device, method, url })), { mode: 0o600 });
+    const confirmation = await usableConfirmation(profile, device);
+    await writeFile(file, curlHeaderFile({ ...await deviceHeaders({ ...device, method, url }), ...confirmationHeaders(confirmation) }), { mode: 0o600 });
     const child = spawn('curl', curlArgs(args, file), { stdio: 'inherit' });
     return await new Promise((resolve, reject) => {
       child.on('error', error => reject(error.code === 'ENOENT' ? new UsageError('curl is not installed') : error));
@@ -467,7 +493,7 @@ async function revoke(profile) {
     out(`${cid} was already ${error.code}.`);
   }
   await forgetDeviceKey(await readJsonFile(profile.paths.key), { secrets: profile.secrets });
-  for (const path of [profile.paths.credential, profile.paths.key, profile.paths.config, profile.paths.certificate, profile.paths.certificateKey, profile.paths.ca]) await rm(path, { force: true });
+  for (const path of [profile.paths.credential, profile.paths.confirmation, profile.paths.key, profile.paths.config, profile.paths.certificate, profile.paths.certificateKey, profile.paths.ca]) await rm(path, { force: true });
   await rmdir(profile.paths.dir).catch(() => {});
   out(`Deleted the key and credential in ${profile.paths.dir}.`);
 }
@@ -492,7 +518,121 @@ async function list(profile, { options }) {
   if (more) note('More credentials exist: add --all to list every page.');
 }
 
-const HANDLERS = { list, enroll, status, whoami: status, inspect, import: importCredential, headers, sign, token, certificate, renew, revoke };
+/**
+ * Ask this credential's gates to confirm it, wait, and save the confirmation. Says on stderr who
+ * must approve while it waits. Throws when the gates deny or the wait ends.
+ */
+async function obtainConfirmation(profile, device, waitSeconds) {
+  const result = await waitForConfirmation(profile.client, device, {
+    waitSeconds,
+    onPending: req => {
+      note(`Waiting for this device's gates to confirm it (request ${req.id}${req.number ? `, number ${req.number}` : ''}; giving up ${relativeTime(Math.floor(Date.now() / 1000) + waitSeconds)})…`);
+      if (req.approve_url) note(`Approve with a code or security key at ${req.approve_url}`);
+    }
+  });
+  if (result.status === 'denied') throw new ApiError('The gates refused to confirm this device.', result.code || 'gate_denied');
+  if (result.status !== 'confirmed') throw new ApiError('Gave up waiting for the gates to confirm this device.', 'confirmation_timeout');
+  await writePrivate(profile.paths.confirmation, `${result.confirmation}\n`);
+  return result;
+}
+
+/**
+ * The confirmation to send with a request, for credentials that need one: the saved one while it
+ * is current, else a new one (waiting for the gates) unless DBA_AUTO_CONFIRM=0. Credentials
+ * without `confirm` need none.
+ */
+async function usableConfirmation(profile, device) {
+  const payload = inspectCredential(device.credential).payload;
+  if (!needsConfirmation(payload)) return null;
+  const saved = currentConfirmation(await readTextFile(profile.paths.confirmation), payload);
+  if (saved) return saved;
+  if (!autoRenewEnabled({ env: { DBA_AUTO_RENEW: process.env.DBA_AUTO_CONFIRM } })) {
+    note('dba: this credential needs a current confirmation and has none; run `dba confirm` (sites will refuse it until then).');
+    return null;
+  }
+  return (await obtainConfirmation(profile, device, 300)).confirmation;
+}
+
+async function confirm(profile, { options }) {
+  const waitSeconds = secondsOption(options.wait, 'wait') ?? 300;
+  const device = await usableDevice(profile);
+  const payload = inspectCredential(device.credential).payload;
+  if (!needsConfirmation(payload)) throw new UsageError(`${payload.cid} was not issued with "confirm": it needs no confirmation.`);
+  const result = await obtainConfirmation(profile, device, waitSeconds);
+  out(`Confirmed ${payload.cid} until ${new Date(result.expires_at * 1000).toISOString()} (${relativeTime(result.expires_at)})${result.by_timeout ? ', by timeout (no gate answered)' : ''}.`);
+  out(`Saved ${profile.paths.confirmation}; \`dba headers\` and \`dba curl\` send it as DBA-Confirmation.`);
+}
+
+/** API key from DBA_API_KEY, else this device's credential. */
+async function accountAuth(profile, scope) {
+  const apiKey = process.env.DBA_API_KEY?.trim();
+  if (apiKey) return { apiKey };
+  try { return { device: await usableDevice(profile) }; } catch (error) {
+    if (error instanceof UsageError) throw new UsageError(`${error.message} Or set DBA_API_KEY to an API key with ${scope}.`);
+    throw error;
+  }
+}
+
+async function gatesCommand(profile, { options, positionals }) {
+  const [sub = 'list', id] = positionals;
+  if (sub === 'list') {
+    const { items } = await profile.client.request('GET', '/api/v1/gates', await accountAuth(profile, 'gates:read'));
+    if (options.json) { out(JSON.stringify({ items }, null, 2)); return; }
+    for (const line of formatGateList(items)) out(line);
+    return;
+  }
+  if (sub === 'add') {
+    const body = gateInputFromOptions(options);
+    const created = await profile.client.request('POST', '/api/v1/gates', { ...await accountAuth(profile, 'gates:write'), body });
+    if (options.json) { out(JSON.stringify(created, null, 2)); return; }
+    out(`Added gate ${created.id} (${created.kind}, ${created.state ?? 'active'}). Name it in grants: "require": { "gates": [{ "any": ["${created.id}"] }] }`);
+    return;
+  }
+  if (sub === 'remove') {
+    if (!id) throw new UsageError('Usage: dba gates remove GATE');
+    await profile.client.request('DELETE', `/api/v1/gates/${encodeURIComponent(id)}`, await accountAuth(profile, 'gates:write'));
+    out(`Removed gate ${id}. Requests that needed only it are now denied.`);
+    return;
+  }
+  throw new UsageError(`Unknown gates command "${sub}" (list, add, remove)`);
+}
+
+async function approvals(profile, { options, positionals }) {
+  const [sub = 'list', id] = positionals;
+  const device = await usableDevice(profile);
+  if (sub === 'allow' || sub === 'deny') {
+    if (!id) throw new UsageError(`Usage: dba approvals ${sub} REQUEST`);
+    const entry = options.entry === undefined ? undefined : Number(options.entry);
+    if (entry !== undefined && !(Number.isSafeInteger(entry) && entry >= 0 && entry < 3)) throw new UsageError('--entry must be 0, 1 or 2');
+    const path = `/api/v1/gate-requests/${encodeURIComponent(id)}`;
+    const req = await profile.client.request('GET', path, { device });
+    const body = answerFor(req, { decision: sub, entry, number: options.number });
+    const result = await profile.client.request('POST', `${path}/answer`, { device, body });
+    if (options.json) { out(JSON.stringify(result, null, 2)); return; }
+    out(`${sub === 'allow' ? 'Allowed' : 'Denied'} ${id}${result.status === 'pending' ? ' (other gates must still answer)' : `: the request is now ${result.status}`}.`);
+    return;
+  }
+  if (sub !== 'list') throw new UsageError(`Unknown approvals command "${sub}" (list, allow, deny)`);
+  const seen = new Set();
+  for (;;) {
+    const { items } = await profile.client.request('GET', '/api/v1/gate-requests', { device });
+    const waiting = items.filter(r => r.status === 'pending' && r.answer_as?.length);
+    if (options.json) out(JSON.stringify(options.watch ? waiting.filter(r => !seen.has(r.id)) : { items }, null, options.watch ? 0 : 2));
+    else {
+      if (!options.watch && !waiting.length) out('Nothing is waiting for this device.');
+      for (const req of waiting) {
+        if (seen.has(req.id)) continue;
+        for (const line of describeGateRequest(req)) out(line);
+        out(`  Answer: dba approvals allow ${req.id}${req.number ? '' : ' --number NN'}   (or deny)`);
+      }
+    }
+    for (const req of waiting) seen.add(req.id);
+    if (!options.watch) return;
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+}
+
+const HANDLERS = { list, confirm, approvals, gates: gatesCommand, enroll, status, whoami: status, inspect, import: importCredential, headers, sign, token, certificate, renew, revoke };
 
 async function main(argv) {
   const { globals, command, rest } = splitCommand(argv);

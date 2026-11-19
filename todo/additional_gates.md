@@ -477,6 +477,17 @@ STATUS row updated.
 - **G9 started (2026-11-19).** The Python (`verify_request`, `decide(confirmation=…)`) and Go
   (`AuthResult.Confirmation`, `Check.Confirmation`) verifiers verify `DBA-Confirmation` and refuse
   a bad one with `confirmation_<code>` (401), as the JS verifier does.
+- **G9, CLI (2026-11-19).** `dba gates [--json]`, `dba gates add --kind dba-device|webhook`,
+  `dba gates remove` (DBA_API_KEY, or a device with `dba:gates:read` for listing; changing gates
+  needs an API key since devices cannot pass the recent-sign-in check; TOTP, security keys, Duo and
+  Okta stay on the dashboard). `dba approvals [--watch] [--json]`, `dba approvals allow|deny ID
+  [--entry N] [--number NN]`: requests listed to a device carry `answer_as: [{ entry, gate }]`
+  (its own gates that may still answer), so the CLI needs no `gates:read`. `dba confirm [--wait]`
+  saves `confirmation.jwt`; `dba headers` and `dba curl` send it as `DBA-Confirmation` and ask
+  for a new one 30 s before it ends (`DBA_AUTO_CONFIRM=0`: never on their own). Not done: `--wait`
+  on calls that hit a gate (sites answer `gate_pending` in their own way), `dba gates test`.
+  Sample `docs/samples/approve-from-cli.sh` (the harness approves the laptop with `confirm`, as
+  the owner would once the approval page offers it).
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).
