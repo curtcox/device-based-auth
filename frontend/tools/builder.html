@@ -64,10 +64,16 @@
 </div>
 <label class="check"><input type="checkbox" name="online"> Check online every time (instant revocation, decision log)</label>
 <label class="check"><input type="checkbox" name="step_up"> The owner approves each use (step-up)</label>
+<div class="row">
+<label>Gates that approve each use<span class="hint"> — gate ids from your Gates page (any one of them), or <code>owner</code></span><input name="gates" placeholder="gate_…, owner" autocomplete="off" spellcheck="false"></label>
+<label>Time to answer (s)<input type="number" name="gate_timeout" min="10" max="86400" step="1" placeholder="300"></label>
+<label>If nobody answers<select name="gate_on_timeout"><option value="">deny</option><option value="allow">allow</option></select></label>
+<label>Reuse an approval for (s)<input type="number" name="gates_reuse_s" min="1" max="3600" step="1" placeholder="each use"></label>
+</div>
 <label>Key attestation<select name="attestation"><option value="">not required</option><option value="hardware">key attested in secure hardware (TEE, StrongBox, Secure Enclave or TPM)</option><option value="strongbox">key attested in StrongBox</option></select></label>
 <label class="check"><input type="checkbox" name="verified_boot"> Only from an attested device with verified boot and a locked bootloader</label>
 <label>Attested apps<input name="app_ids" placeholder="TEAMID.com.example.app, android:com.example.app:<sha256>, …" autocomplete="off" spellcheck="false"></label>
-<p class="hint">Usage limits, online checks and step-up need online authorization; offline verifiers deny these grants with <code>online_required</code>. Attestation is checked offline from the credential (Android devices that sent a Keystore attestation chain, iOS apps that sent an App Attest attestation). Apple attests the app, not the key, so an iOS attestation counts only for the apps you list here.</p>
+<p class="hint">Usage limits, online checks, step-up and gates need online authorization; offline verifiers deny these grants with <code>online_required</code>. Attestation is checked offline from the credential (Android devices that sent a Keystore attestation chain, iOS apps that sent an App Attest attestation). Apple attests the app, not the key, so an iOS attestation counts only for the apps you list here.</p>
 </fieldset>
 <fieldset><legend>Device</legend>
 <div class="row">

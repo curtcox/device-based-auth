@@ -32,6 +32,7 @@ function decode() {
     return null;
   }
   const { header, payload } = decoded;
+  if (header.typ === 'dba-confirmation+jwt') { replace(local, describeConfirmation(header, payload)); return null; }
   const kind = header.typ === 'dba-access+jwt' ? 'access' : header.typ === 'dba-device+jwt' ? 'device' : null;
   const problems = kind ? validateCredentialPayload(payload, { typ: header.typ }) : [`typ "${header.typ}" is not a devicebasedauth.org credential`];
   if (header.alg !== 'ES256') problems.unshift(`alg must be ES256, not ${header.alg}`);
@@ -52,7 +53,8 @@ function decode() {
       ['Expires', date(payload.exp, true)],
       ['Right now', h('span', { id: 'validity' }, validity(payload))],
       ['Bound to key', payload.cnf?.jkt ? h('span', { class: 'mono small' }, payload.cnf.jkt) : kind === 'access' ? 'no — a bearer token' : '—'],
-      ['Status list', payload.status?.status_list ? h('span', { class: 'mono small' }, `${payload.status.status_list.uri} #${payload.status.status_list.idx}`) : '—']
+      ['Status list', payload.status?.status_list ? h('span', { class: 'mono small' }, `${payload.status.status_list.uri} #${payload.status.status_list.idx}`) : '—'],
+      payload.confirm ? ['Periodic confirmation', h('span', { id: 'confirm-summary' }, describeConfirm(payload.confirm))] : null
     ]),
     problems.length ? notice('error', h('strong', {}, 'Structural problems: '), h('ul', { id: 'problems' }, problems.map(p => h('li', {}, p)))) : null,
     h('h3', {}, 'Grants in plain English'),
@@ -60,6 +62,37 @@ function decode() {
     h('h3', {}, 'Header'), jsonBlock(header, { id: 'decoded-header' }),
     h('h3', {}, 'Payload'), jsonBlock(payload, { id: 'decoded-payload' }));
   return text;
+}
+
+const seconds = s => (s % 86400 === 0 ? `${s / 86400} day${s === 86400 ? '' : 's'}` : s % 3600 === 0 ? `${s / 3600} hour${s === 3600 ? '' : 's'}` : `${Math.round(s / 60)} minutes`);
+
+/** The confirm claim in words (spec/credential.md §9). Untrusted: rendered as text only. */
+function describeConfirm(confirm) {
+  const entries = Array.isArray(confirm?.gates) ? confirm.gates : [];
+  const who = entries.map(e => (Array.isArray(e?.any) ? e.any.map(String).join(' or ') : '?')).join(', then ');
+  return `Works only while ${who || '?'} confirmed the device in the last ${Number.isSafeInteger(confirm?.every_s) ? seconds(confirm.every_s) : '?'}; sites check a DBA-Confirmation header.`;
+}
+
+/** A dba-confirmation+jwt: decoded only (verifiers check it with the issuer's JWKS). */
+function describeConfirmation(header, payload) {
+  const gates = Array.isArray(payload.gates) ? payload.gates : [];
+  return [
+    h('h2', {}, 'Confirmation', ' ', h('span', { class: 'muted small' }, 'decoded locally — not verified')),
+    dl([
+      ['Type', h('code', {}, String(header.typ))],
+      ['Signed by', [h('code', {}, String(header.kid)), ` (${header.alg})`]],
+      ['Issuer', String(payload.iss ?? '—')],
+      ['Credential id', h('span', { class: 'mono' }, String(payload.cid ?? '—'))],
+      ['Device id', h('span', { class: 'mono' }, String(payload.sub ?? '—'))],
+      ['Bound to key', h('span', { class: 'mono small' }, String(payload.cnf?.jkt ?? '—'))],
+      ['Confirmed', date(payload.iat, true)],
+      ['Until', date(payload.exp, true)],
+      ['Right now', h('span', { id: 'validity' }, validity(payload))],
+      ['How', h('span', { id: 'confirmation-how' }, payload.by_timeout ? 'by timeout: nobody answered and the gate allows that' : gates.map(g => `${String(g?.kind ?? '?')} (${String(g?.by ?? '?')})`).join(', ') || '—')]
+    ]),
+    h('p', { class: 'muted small' }, 'Send it as the DBA-Confirmation header beside the credential it names. Verifiers check its signature and that cid, sub and cnf.jkt match the credential.'),
+    h('h3', {}, 'Payload'), jsonBlock(payload, { id: 'decoded-payload' })
+  ];
 }
 
 async function check(text) {

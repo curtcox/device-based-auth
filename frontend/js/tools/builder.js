@@ -75,6 +75,17 @@ export function readGrant() {
   const require = {};
   if (form.elements.online.checked) require.online = true;
   if (form.elements.step_up.checked) require.step_up = true;
+  // Gates (spec/evaluation.md §3.6): one entry, any of the listed gates approves.
+  const gates = listOrUndefined(form.elements.gates.value);
+  if (gates) {
+    const entry = { any: gates };
+    const timeout = numberOrUndefined(form.elements.gate_timeout.value);
+    if (timeout !== undefined) entry.timeout_s = timeout;
+    if (form.elements.gate_on_timeout.value) entry.on_timeout = form.elements.gate_on_timeout.value;
+    require.gates = [entry];
+    const reuse = numberOrUndefined(form.elements.gates_reuse_s.value);
+    if (reuse !== undefined) require.gates_reuse_s = reuse;
+  }
   if (form.elements.attestation.value) require.attestation = form.elements.attestation.value;
   if (form.elements.verified_boot.checked) require.verified_boot = true;
   const appIds = form.elements.app_ids.value.split(/[\s,]+/).filter(Boolean);

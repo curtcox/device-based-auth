@@ -500,6 +500,10 @@ STATUS row updated.
   answer, refuse or confirm when nobody answers) sent as `confirm` in the approve body. The
   dashboard's credential page shows the confirmation state and "Stop trusting now" (`…/unconfirm`).
   Playwright covers both, with a Node-side device confirming through a phone gate.
+- **G9, tools (2026-11-19).** Grant builder: "Gates that approve each use" (ids, any of; time to
+  answer; deny or allow when nobody answers; reuse seconds) as one `require.gates` entry. Inspector:
+  a "Periodic confirmation" row for `confirm`, and `dba-confirmation+jwt` decoded (credential, key,
+  until, how it passed). Not yet: the playground taking a confirmation.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

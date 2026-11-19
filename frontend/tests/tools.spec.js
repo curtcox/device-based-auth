@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { generateKeyPair, exportPublicJwk, createProof } from '../../packages/verify/src/index.js';
 import { separateVisitors, fund, uniqueName, enrollViaApi, signIn, asLocal } from './helpers.js';
 
 separateVisitors();
@@ -144,4 +145,41 @@ test('the API explorer calls endpoints as the dashboard user, anonymously, and w
   await expect(page.locator('#response-status')).toHaveText(/^200/);
   await expect(page.locator('#response-body')).toContainText('"balance_microdollars"');
   await expect(page.locator('#response-cost')).toContainText('µ$');
+});
+
+test('the grant builder writes gates, and the inspector explains confirm and confirmations (STATUS B7 G9)', async ({ page, request }) => {
+  await page.goto('/tools/builder.html');
+  await page.getByLabel(/hashbin:content:write/).check();
+  await page.getByLabel(/Gates that approve each use/).fill('gate_abcdefgh, owner');
+  await page.getByLabel('Time to answer (s)').fill('120');
+  await page.getByLabel('If nobody answers').selectOption('allow');
+  await page.getByLabel('Reuse an approval for (s)').fill('60');
+  expect(JSON.parse(await page.locator('#grant-json').textContent())).toEqual({ actions: ['hashbin:content:write'], require: { gates: [{ any: ['gate_abcdefgh', 'owner'], timeout_s: 120, on_timeout: 'allow' }], gates_reuse_s: 60 } });
+  await expect(page.locator('#validation')).toContainText('Valid grant');
+  // step_up and gates together are refused, as the spec says.
+  await page.getByLabel(/owner approves each use/).check();
+  await expect(page.locator('#problems')).toBeVisible();
+
+  // A credential with confirm, and a confirmation for it, in the inspector.
+  const owner = uniqueName('inspect-confirm');
+  await fund(request, owner);
+  const phone = await enrollViaApi(request, owner, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:approvals:answer'] }], name: 'Phone' });
+  const gate = await (await request.post('/api/v1/gates', { headers: asLocal(owner), data: { kind: 'dba-device', label: 'Phone', device_id: phone.device_id } })).json();
+  const pair = await generateKeyPair(false);
+  const jwk = await exportPublicJwk(pair.publicKey);
+  const issued = await (await request.post('/api/v1/credentials', { headers: asLocal(owner), data: { public_jwk: jwk, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], confirm: { gates: [{ any: [gate.id] }], every_s: 7200 } } })).json();
+  await page.goto('/tools/inspector.html');
+  await page.getByLabel('Credential or access token').fill(issued.credential);
+  await expect(page.locator('#confirm-summary')).toContainText(`Works only while ${gate.id} confirmed the device in the last 2 hours`);
+  await expect(page.locator('#grant-descriptions')).toContainText('recent confirmation');
+  const signed = async (key, publicJwk, cred, method, path, data) => request.fetch(path, { method, data, headers: { Authorization: `DBA ${cred}`, DPoP: await createProof({ privateKey: key, publicJwk, method, url: new URL(path, page.url()).href, credential: cred }) } });
+  const confirmPath = `/api/v1/credentials/${issued.cid}/confirm`;
+  await signed(pair.privateKey, jwk, issued.credential, 'POST', confirmPath, {});
+  const [waiting] = (await (await signed(phone.device.privateKey, phone.device.publicJwk, phone.credential, 'GET', '/api/v1/gate-requests')).json()).items;
+  await signed(phone.device.privateKey, phone.device.publicJwk, phone.credential, 'POST', `/api/v1/gate-requests/${waiting.id}/answer`, { ...waiting.answer_as[0], decision: 'allow' });
+  const { confirmation } = await (await signed(pair.privateKey, jwk, issued.credential, 'POST', confirmPath, {})).json();
+  await page.getByLabel('Credential or access token').fill(confirmation);
+  await expect(page.locator('#local-result h2')).toContainText('Confirmation');
+  await expect(page.locator('#confirmation-how')).toContainText('dba-device (answer)');
+  await expect(page.locator('#validity')).toContainText('within its validity window');
 });
