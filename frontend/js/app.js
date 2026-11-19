@@ -422,7 +422,7 @@ async function approvals(_arg, current) {
 // ---------------------------------------------------------------------------------------------
 // Gates (STATUS B7): devices and factors that approve requests named in require.gates
 
-const GATE_KINDS = { owner: 'Account owner', 'dba-device': 'Device', totp: 'Authenticator app (TOTP)', webauthn: 'Security key or passkey', webhook: 'Approval service (webhook)' };
+const GATE_KINDS = { owner: 'Account owner', 'dba-device': 'Device', totp: 'Authenticator app (TOTP)', webauthn: 'Security key or passkey', webhook: 'Approval service (webhook)', duo: 'Duo Push', 'okta-verify': 'Okta Verify push' };
 
 async function gatesView(_arg, current) {
   const [gates, devices] = await Promise.all([api('/api/v1/gates'), api('/api/v1/devices')]);
@@ -508,6 +508,33 @@ async function gatesView(_arg, current) {
       catch (error) { flash('error', error.message); }
     });
   });
+  // Duo Push and Okta Verify (STATUS B7 G8): the secret is sealed on the server and never shown again.
+  const vendorForm = (id, title, intro, fields, kind, button) => {
+    const form = h('form', { class: 'stack', id }, h('h3', {}, title), h('p', { class: 'muted small' }, intro), label('label', title), fields, h('div', { class: 'actions' }, h('button', { type: 'submit' }, button)));
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      busy(form, async () => {
+        const body = { kind, label: field(form, 'label') };
+        for (const el of form.querySelectorAll('input[data-key]')) body[el.dataset.key] = el.value.trim();
+        try { const g = await api('/api/v1/gates', { method: 'POST', body }); flash('success', `Added gate ${g.id}.`); await render(); }
+        catch (error) { flash('error', error.message); }
+      });
+    });
+    return form;
+  };
+  const input = (text, key, attrs = {}) => h('label', {}, text, h('input', { dataset: { key }, required: true, autocomplete: 'off', spellcheck: 'false', ...attrs }));
+  const duoForm = vendorForm('gate-duo-form', 'Duo Push', 'A push to a Duo Mobile user, through a Duo Auth API application you create in the Duo Admin Panel.', [
+    input('API hostname', 'api_host', { placeholder: 'api-XXXXXXXX.duosecurity.com' }),
+    input('Integration key', 'integration_key', { placeholder: 'DI…' }),
+    input('Secret key', 'secret_key', { type: 'password' }),
+    input('Duo username', 'username')
+  ], 'duo', 'Add Duo Push');
+  const oktaForm = vendorForm('gate-okta-form', 'Okta Verify', 'A push to an Okta user\'s Okta Verify app, through an API token from your Okta org.', [
+    input('Org URL', 'org_url', { type: 'url', placeholder: 'https://example.okta.com' }),
+    input('API token', 'api_token', { type: 'password' }),
+    input('User id', 'user_id', { placeholder: '00u…' }),
+    input('Okta Verify push factor id', 'factor_id', { placeholder: 'opf…' })
+  ], 'okta-verify', 'Add Okta Verify');
   const signIn = await api('/api/v1/settings/sign-in-gates');
   const settingsBox = h('textarea', { name: 'settings', rows: 8, spellcheck: 'false', value: JSON.stringify({ default: signIn.default, audiences: signIn.audiences, dashboard: signIn.dashboard }, null, 2) });
   const settingsForm = h('form', { class: 'stack', id: 'sign-in-gates-form' },
@@ -535,7 +562,7 @@ async function gatesView(_arg, current) {
     table(['Gate', 'Id', 'State', ''], rows, { id: 'gate-list' }),
     setup,
     h('h2', {}, 'Add a gate'),
-    h('div', { class: 'grid' }, deviceForm, totpForm, keyForm, hookForm),
+    h('div', { class: 'grid' }, deviceForm, totpForm, keyForm, hookForm, duoForm, oktaForm),
     h('h2', {}, 'Sign-in gates'),
     settingsForm,
     h('h3', {}, 'Recovery codes'),

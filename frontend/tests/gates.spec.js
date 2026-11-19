@@ -164,3 +164,40 @@ test('the dashboard waits for its sign-in gate, and a recovery code opens it onc
   await third.getByRole('button', { name: 'Use recovery code' }).click();
   await expect(third.locator('#flash')).toContainText('not valid');
 });
+
+test('Duo Push and Okta Verify gates are added from the Gates page, their secrets never shown again (STATUS B7 G9)', async ({ page, request }) => {
+  const owner = uniqueName('vendor');
+  await fund(request, owner);
+  await signIn(page, owner);
+  await page.getByRole('link', { name: 'Gates', exact: true }).click();
+  const duo = page.locator('#gate-duo-form');
+  await duo.getByLabel('Label').fill('Duo for Sam');
+  await duo.getByLabel('API hostname').fill('api-1234abcd.duosecurity.com');
+  await duo.getByLabel('Integration key').fill('DIWJ8X6AEYOR5OMC6TQ1');
+  await duo.getByLabel('Secret key').fill('Zh5eGmUq9zpfQnyUIu5OL9iWoMMv5ZNmk3zLJ4Ep');
+  await duo.getByLabel('Duo username').fill('sam');
+  await page.getByRole('button', { name: 'Add Duo Push' }).click();
+  await expect(page.locator('#flash')).toContainText('Added gate gate_');
+  await expect(page.locator('#gate-list')).toContainText('Duo for Sam');
+  await expect(page.locator('#gate-list')).toContainText('Duo Push');
+  const okta = page.locator('#gate-okta-form');
+  await okta.getByLabel('Label').fill('Okta for Sam');
+  await okta.getByLabel('Org URL').fill('https://example.okta.com');
+  await okta.getByLabel('API token').fill('00abcdefghijklmnopqrstuvwxyz0123456789ABCD');
+  await okta.getByLabel('User id').fill('00u1abcdefGHIJKLM357');
+  await okta.getByLabel('Okta Verify push factor id').fill('opf1abcdefGHIJKLM357');
+  await page.getByRole('button', { name: 'Add Okta Verify' }).click();
+  await expect(page.locator('#gate-list')).toContainText('Okta Verify push');
+  const items = (await (await request.get('/api/v1/gates', { headers: asLocal(owner) })).json()).items;
+  expect(items.find(g => g.kind === 'duo')).toMatchObject({ api_host: 'api-1234abcd.duosecurity.com', username: 'sam', state: 'active' });
+  expect(JSON.stringify(items)).not.toContain('Zh5eGmUq9zpfQnyUIu5OL9iWoMMv5ZNmk3zLJ4Ep');
+  expect(JSON.stringify(items)).not.toContain('00abcdefghijklmnopqrstuvwxyz0123456789ABCD');
+  // A bad value is explained, not saved.
+  await duo.getByLabel('Label').fill('Broken');
+  await duo.getByLabel('API hostname').fill('evil.example.com');
+  await duo.getByLabel('Integration key').fill('DIWJ8X6AEYOR5OMC6TQ1');
+  await duo.getByLabel('Secret key').fill('Zh5eGmUq9zpfQnyUIu5OL9iWoMMv5ZNmk3zLJ4Ep');
+  await duo.getByLabel('Duo username').fill('sam');
+  await page.getByRole('button', { name: 'Add Duo Push' }).click();
+  await expect(page.locator('#flash')).toContainText('api_host must be your Duo API hostname');
+});

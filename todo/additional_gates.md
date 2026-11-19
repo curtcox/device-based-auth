@@ -511,6 +511,9 @@ STATUS row updated.
 - **G9, Python webhook sample (2026-11-19).** `docs/samples/gate_webhook.py` (standard library HTTP
   server, `cryptography`, `requests`) runs in CI through the same checks as the Node service
   (`checkGateService` in the harness): approved at once, refused, approved by a late signed answer.
+- **G9, Duo and Okta forms (2026-11-19).** The dashboard's Gates page adds Duo Push (API hostname,
+  integration key, secret key, username) and Okta Verify (org URL, API token, user and factor ids)
+  gates; the secrets are sealed and never listed (Playwright checks).
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).
