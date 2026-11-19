@@ -4792,7 +4792,7 @@
     "/api/v1/settings/sign-in-gates": {
       "get": {
         "operationId": "get_api_v1_settings_sign_in_gates",
-        "summary": "Sign-in gates: { default, audiences: { <site>: entries }, dashboard } where entries are gate entries as in require.gates (not the owner gate). A Sign in with devicebasedauth.org then waits on the consent page until they pass (POST /oauth/authorize answers { pending, gate_request } meanwhile, with the request number to match) and the ID token carries amr, acr (urn:devicebasedauth.org:acr:gated or …:gated-timeout) and dba_gates. PUT needs a recent sign-in.",
+        "summary": "Sign-in gates: { default, audiences: { <site>: entries }, dashboard } where entries are gate entries as in require.gates (not the owner gate). A Sign in with devicebasedauth.org then waits on the consent page until they pass (POST /oauth/authorize answers { pending, gate_request } meanwhile, with the request number to match) and the ID token carries amr, acr (urn:devicebasedauth.org:acr:gated or …:gated-timeout) and dba_gates. PUT needs a recent sign-in in the dashboard (API keys and devices: 403 session_required). A change that loosens a list (removes it, adds gates that may answer, or lets an entry allow on timeout) waits for that list's current gates: 202 { status: \"pending\", code: \"gate_pending\", gate_request } until they approve this exact change (send it again after retry_after), 403 gate_denied or by_timeout_refused (silence never approves it).",
         "x-access": "gates:read",
         "security": [
           {
@@ -4860,7 +4860,7 @@
       },
       "put": {
         "operationId": "put_api_v1_settings_sign_in_gates",
-        "summary": "Sign-in gates: { default, audiences: { <site>: entries }, dashboard } where entries are gate entries as in require.gates (not the owner gate). A Sign in with devicebasedauth.org then waits on the consent page until they pass (POST /oauth/authorize answers { pending, gate_request } meanwhile, with the request number to match) and the ID token carries amr, acr (urn:devicebasedauth.org:acr:gated or …:gated-timeout) and dba_gates. PUT needs a recent sign-in.",
+        "summary": "Sign-in gates: { default, audiences: { <site>: entries }, dashboard } where entries are gate entries as in require.gates (not the owner gate). A Sign in with devicebasedauth.org then waits on the consent page until they pass (POST /oauth/authorize answers { pending, gate_request } meanwhile, with the request number to match) and the ID token carries amr, acr (urn:devicebasedauth.org:acr:gated or …:gated-timeout) and dba_gates. PUT needs a recent sign-in in the dashboard (API keys and devices: 403 session_required). A change that loosens a list (removes it, adds gates that may answer, or lets an entry allow on timeout) waits for that list's current gates: 202 { status: \"pending\", code: \"gate_pending\", gate_request } until they approve this exact change (send it again after retry_after), 403 gate_denied or by_timeout_refused (silence never approves it).",
         "x-access": "gates:write",
         "security": [
           {

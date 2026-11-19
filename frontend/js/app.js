@@ -560,7 +560,12 @@ async function gatesView(_arg, current) {
     event.preventDefault();
     busy(settingsForm, async () => {
       let body; try { body = JSON.parse(settingsBox.value); } catch { flash('error', 'Sign-in gates must be JSON.'); return; }
-      try { await api('/api/v1/settings/sign-in-gates', { method: 'PUT', body }); flash('success', 'Saved sign-in gates.'); }
+      try {
+        const r = await api('/api/v1/settings/sign-in-gates', { method: 'PUT', body });
+        // Loosening (removing gates, or letting more pass) waits for the current gates (202).
+        if (r.status === 'pending') flash('info', `This change loosens your sign-in gates, so their current gates must approve it (request ${r.gate_request.id}, number ${r.gate_request.number ?? '—'})${r.gate_request.approve_url ? ' — your browsers were sent an approval link' : ''}. Save again once approved.`);
+        else flash('success', 'Saved sign-in gates.');
+      }
       catch (error) { flash('error', error.message); }
     });
   });

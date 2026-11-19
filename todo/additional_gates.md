@@ -443,8 +443,8 @@ STATUS row updated.
   The owner gate is refused in sign-in gates (the owner is who signs in). Number matching: a
   sign-in's number is only in the consent page's response; approvers on the approval page or a
   device must send it with an allow (`wrong_number`); webhook services need not. Allow-on-timeout
-  entries refuse answers from the signed-in session (`not_inline`). Not yet: "loosening sign-in
-  gates also needs the current gates to pass" (only a recent sign-in is required today).
+  entries refuse answers from the signed-in session (`not_inline`). "Loosening sign-in gates also
+  needs the current gates to pass" came with G9 (below).
 - **G6, second half (2026-11-19): the dashboard.** Sessions are keyed `sid:<Clerk sid>`,
   `local:<name>` (local sign-ins now name a random per-browser session: `LocalDev <account>
   <session>`) or `cid:<credential>` for dashboard devices; `op_init` / `op_credential_status`
@@ -528,6 +528,13 @@ STATUS row updated.
 - **G9, playground (2026-11-19).** A "Confirmation" fieldset (sent or not, minutes since, hours
   valid, by timeout) passed to the evaluator; a preset "Works only while confirmed by a phone";
   reasons `confirmation_*` and `gate_required` explained.
+- **G9, loosening sign-in gates (2026-11-19).** `PUT /api/v1/settings/sign-in-gates` is refused
+  to API keys and devices (403 `session_required`). A list is loosened unless every current entry
+  is matched by a new one whose gates are among its gates and that does not newly allow on
+  timeout; a loosening opens a `settings` gate request on the loosened lists' current entries
+  (at most 3, `fail_open: false`, so silence never approves it), keyed by a hash of the exact
+  change, and the PUT answers 202 `gate_pending` until it is allowed (then the same PUT applies),
+  403 `gate_denied` or `by_timeout_refused`. The Gates page says so instead of "Saved".
 - **G9 left:** a QR code for the TOTP `otpauth:` URI (the page shows the secret and a link; it
   needs a QR encoder, either written here or a vendored MIT one such as qrcode-generator, which is
   the owner's call since it ships third-party code to every visitor); `--wait` on CLI calls that

@@ -10,7 +10,7 @@ import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../service
 import { hasDbaAction } from '../auth/reverify.js';
 import { startPush, pollPush, POLL_INTERVAL_MS, MAX_POLLS } from '../services/vendors.js';
 import { unseal } from '../services/sealing.js';
-import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, VENDOR_KINDS, vendorTargets, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, ACR, meetsAcr, signInClaims, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest, withAnswerAs } from './gates.js';
+import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, FACTOR_KINDS, VENDOR_KINDS, vendorTargets, activateGate, approvalLink, callbackUrl, postGateEvent, signGateEvent, verifyGateAnswer, webhookTargets, factorView, hasFactorGates, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, ACR, meetsAcr, signInClaims, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest, withAnswerAs, looseningEntries } from './gates.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -1004,10 +1004,32 @@ export class AccountDO {
   }
 
   /** Store sign-in gate settings (cleaned by the Worker); every gate must exist and be set up. */
-  async op_put_sign_in_gates({ settings }, now) {
+  async op_put_sign_in_gates({ settings, account }, now) {
+    // A change that loosens a list (removes it, or lets more gates or a timeout pass) waits for the
+    // current gates of that list, so a stolen session cannot switch them off (plan §3.3). The
+    // request is keyed by the exact change: approving one change approves only that one.
+    const change = b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(settings)))));
+    let asked = null; const byTimeout = [];
     const next = await this.tx(async tx => {
+      asked = null; byTimeout.length = 0;
       const current = (await tx.get('signin_gates')) || { default: null, audiences: {}, dashboard: null };
       const merged = { ...current, ...settings, audiences: settings.audiences ?? current.audiences ?? {} };
+      const loosening = looseningEntries(current, merged);
+      if (loosening.length) {
+        const candidate = { gates: loosening, fail_open: false };
+        const subject = { purpose: 'settings', action: 'sign_in_gates', audience: 'devicebasedauth.org', requester: `settings:${change}`, signature: gateSignature(candidate) };
+        let req = await findRequest(tx, subject, now);
+        if (req) await this.refreshed(tx, req, now, byTimeout);
+        else {
+          req = await this.openGateRequest(tx, { device_id: null, device: { name: 'Change to sign-in gates' } }, subject, candidate, now, 'settings');
+          if (req.rate_limited) return { status: 'denied', code: 'gate_rate_limited' };
+          await this.refreshed(tx, req, now, byTimeout);
+          if (!req.outcome) asked = req;
+        }
+        if (req.outcome === 'deny') return { status: 'denied', code: req.entries.some(e => e.by === 'by_timeout_refused') ? 'by_timeout_refused' : 'gate_denied' };
+        if (req.outcome !== 'allow') return { status: 'pending', gate_request: { ...visibleRequest(req, now), retry_after: RETRY_AFTER_S, ...(hasFactorGates(req) ? { approve_url: await approvalLink(this.env, account, req) } : {}) } };
+        await tx.delete(requestKey(req.id));
+      }
       const lists = [merged.default, merged.dashboard, ...Object.values(merged.audiences)].filter(Boolean);
       const gates = await loadGates(tx, lists.flatMap(entries => entries.flatMap(e => e.any)));
       for (const id of new Set(lists.flatMap(entries => entries.flatMap(e => e.any)))) assert(gates.get(id) && (gates.get(id).state ?? 'active') === 'active', 'unknown_gate', `Gate ${id} does not exist or is not set up yet`, 400);
@@ -1015,9 +1037,15 @@ export class AccountDO {
       // recovery codes first (plan §5.2).
       if (merged.dashboard?.some(e => e.on_timeout !== 'allow')) assert(((await tx.get('recovery'))?.hashes?.length ?? 0) > 0, 'recovery_codes_required', 'Make recovery codes first (POST /api/v1/settings/recovery-codes): a dashboard gate that denies on timeout could otherwise lock you out', 409);
       await tx.put('signin_gates', merged);
-      await this.audit(tx, now, 'sign_in_gates.changed', { before: current, after: merged });
+      await this.audit(tx, now, 'sign_in_gates.changed', { before: current, after: merged, ...(loosening.length ? { approved_by_gates: true } : {}) });
       return merged;
     });
+    if (asked) {
+      await this.announceGateRequest(asked, now, account);
+      this.deliverAsync(asked, account);
+    }
+    this.announceTimeouts(byTimeout, now);
+    if (next.status) return next;
     this.notify({ title: 'Sign-in gates changed', body: 'The gates that confirm sign-ins to your account were changed. If that was not you, sign in and check your account.', path: '#gates', tag: 'sign-in-gates' }, now);
     return next;
   }

@@ -471,6 +471,51 @@ describe('sign-in gates (G6)', () => {
   });
 });
 
+describe('loosening sign-in gates (G6, finished in G9)', () => {
+  const put = body => call(env, 'PUT', '/api/v1/settings/sign-in-gates', { auth: 'alice', body });
+
+  it('tightens at once, but loosening waits for the current gates, which may refuse', async () => {
+    const { gate, as } = await phoneGate();
+    const { gate: other } = await phoneGate('alice', 'Tablet');
+    // Adding gates, or narrowing them, is never a loosening.
+    expect((await put({ default: [{ any: [gate, other], timeout_s: 120, on_timeout: 'allow' }] })).status).toBe(200);
+    expect((await put({ default: [{ any: [gate], timeout_s: 120 }] })).status).toBe(200);
+    // Switching them off waits for the phone, for exactly this change.
+    const off = await put({ default: null });
+    expect(off.status).toBe(202);
+    expect(off.body).toMatchObject({ status: 'pending', code: 'gate_pending', gate_request: { purpose: 'settings', action: 'sign_in_gates', retry_after: expect.any(Number) } });
+    expect((await call(env, 'GET', '/api/v1/settings/sign-in-gates', { auth: 'alice' })).body.default[0].any).toEqual([gate]);
+    // Another loosening is a different request, so approving one never approves the other.
+    const wider = await put({ default: [{ any: [gate, other], timeout_s: 120 }] });
+    expect(wider.status).toBe(202);
+    expect(wider.body.gate_request.id).not.toBe(off.body.gate_request.id);
+    expect((await put({ default: null })).body.gate_request.id).toBe(off.body.gate_request.id);
+    const [mine] = (await as('GET', '/api/v1/gate-requests')).body.items.filter(r => r.id === off.body.gate_request.id);
+    expect((await as('POST', `/api/v1/gate-requests/${mine.id}/answer`, { ...mine.answer_as[0], decision: 'allow' })).body.status).toBe('allowed');
+    expect((await put({ default: null })).status).toBe(200);
+    expect((await call(env, 'GET', '/api/v1/settings/sign-in-gates', { auth: 'alice' })).body.default).toBeNull();
+    expect(await audit('alice')).toContain('sign_in_gates.changed');
+    // The other change is still waiting; refused, it is 403.
+    await as('POST', `/api/v1/gate-requests/${wider.body.gate_request.id}/answer`, { gate, decision: 'deny' });
+  });
+
+  it('refuses a loosening the gates turn down, and never lets silence or an API key switch them off', async () => {
+    const { gate, as } = await phoneGate();
+    expect((await put({ default: [{ any: [gate], timeout_s: 30, on_timeout: 'allow' }] })).status).toBe(200);
+    const off = await put({ default: null });
+    expect(off.status).toBe(202);
+    // Even an allow-on-timeout entry does not pass a loosening by silence.
+    t += 31000;
+    expect(await put({ default: null })).toMatchObject({ status: 403, body: { code: 'by_timeout_refused' } });
+    t += 5 * 60000;
+    const again = await put({ default: null });
+    await as('POST', `/api/v1/gate-requests/${again.body.gate_request.id}/answer`, { gate, decision: 'deny' });
+    expect(await put({ default: null })).toMatchObject({ status: 403, body: { code: 'gate_denied' } });
+    const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'k', scopes: ['gates:read', 'gates:write'] } })).body.secret;
+    expect(await call(env, 'PUT', '/api/v1/settings/sign-in-gates', { auth: `ApiKey ${key}`, body: { default: null } })).toMatchObject({ status: 403, body: { code: 'session_required' } });
+  });
+});
+
 describe('dashboard sign-in gate and recovery codes (G6)', () => {
   // "LocalDev alice <session>" names a local browser session.
   const as = (session, method, path, body) => call(env, method, path, { auth: `alice ${session}`, body });

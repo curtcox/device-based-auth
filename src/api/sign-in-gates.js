@@ -22,6 +22,9 @@ export function cleanSignInEntries(entries, path) {
  */
 export async function signInGates(route, request, env, auth) {
   if (request.method === 'GET') return rpc(env.ACCOUNTS, auth.account, 'get-sign-in-gates');
+  // A person's own setting: never an API key or an app (they could switch sign-in gates off
+  // without anyone signing in), nor a device; and a recent sign-in.
+  assert(auth.session === true, 'session_required', 'Sign-in gates are changed from the dashboard by the signed-in owner, not with an API key or a device', 403);
   requireRecentSignIn(auth, 'change your sign-in gates');
   const body = await readJson(request, 16384);
   for (const key of Object.keys(body)) assert(['default', 'audiences', 'dashboard'].includes(key), 'invalid_gates', `${key} is not a sign-in gate setting (default, audiences, dashboard)`);
@@ -36,7 +39,12 @@ export async function signInGates(route, request, env, auth) {
       settings.audiences[name] = cleanSignInEntries(entries, `audiences["${name}"]`);
     }
   }
-  return rpc(env.ACCOUNTS, auth.account, 'put-sign-in-gates', { settings });
+  const result = await rpc(env.ACCOUNTS, auth.account, 'put-sign-in-gates', { settings, account: auth.account });
+  // Loosening waits for the current gates (202, send the same change again after retry_after);
+  // a refusal is 403. Anything else is the saved settings.
+  if (result.status === 'pending') return Response.json({ ...result, error: 'This change loosens your sign-in gates, so their current gates must approve it first; send it again once they have', code: 'gate_pending' }, { status: 202 });
+  assert(result.status !== 'denied', result.code, 'Your current sign-in gates refused this change', 403);
+  return result;
 }
 
 /**

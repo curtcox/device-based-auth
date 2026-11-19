@@ -310,9 +310,36 @@ export async function refreshRequest(tx, req, now) {
  * resource and audience, or a sign-in's site and requester, plus the exact gate list.
  */
 export function requestKeyFor({ purpose = 'authorize', cid, action, resource, audience, requester, signature }) {
-  return purpose === 'sign_in' || purpose === 'dashboard'
+  return purpose === 'sign_in' || purpose === 'dashboard' || purpose === 'settings'
     ? [purpose, audience, requester, signature].join('\n')
     : ['authorize', cid, action, resource ?? '', audience, signature].join('\n');
+}
+
+/**
+ * Is `next` at least as strict as `current` (both sign-in gate entry lists, or null)? Every
+ * current entry must be matched by a next entry whose gates are among its gates (fewer gates that
+ * may answer is stricter) and that does not allow on timeout where the current one denies.
+ * Anything else loosens the list, which needs the current gates' approval (plan §3.3).
+ */
+export function atLeastAsStrict(current, next) {
+  if (!current?.length) return true;
+  if (!next?.length) return false;
+  return current.every(c => next.some(n => n.any.every(id => c.any.includes(id)) && (c.on_timeout === 'allow' || n.on_timeout !== 'allow')));
+}
+
+/**
+ * The current entries a sign-in gate change must pass: those of every list it loosens, without
+ * duplicates, at most 3 (the most a gate list holds). Empty when nothing is loosened.
+ */
+export function looseningEntries(current, merged) {
+  const lists = [[current.default, merged.default], [current.dashboard, merged.dashboard],
+    ...Object.entries(current.audiences || {}).map(([name, entries]) => [entries, merged.audiences?.[name]])];
+  const seen = new Map();
+  for (const [before, after] of lists) {
+    if (atLeastAsStrict(before, after)) continue;
+    for (const entry of before) seen.set(JSON.stringify(entry), entry);
+  }
+  return [...seen.values()].slice(0, 3);
 }
 
 /** The live request for this subject and gate list, if any. */

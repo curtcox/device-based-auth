@@ -83,31 +83,26 @@ test('a security key gate: registered and approved with a virtual authenticator'
 test('a sign-in waits for its gate: inline with an authenticator code, and through the approval link with number matching', async ({ page, browser, request }) => {
   const owner = uniqueName('signin');
   await fund(request, owner);
-  // An authenticator app gate, set up through the API (the dashboard flow is tested above).
-  const created = await (await request.post('/api/v1/gates', { headers: asLocal(owner), data: { kind: 'totp', label: 'Phone app' } })).json();
-  const secret = unbase32(created.setup.secret);
-  expect((await request.post(`/api/v1/gates/${created.id}/activate`, { headers: asLocal(owner), data: { code: await code(secret) } })).ok()).toBeTruthy();
-  // Deny on timeout: answerable right on the consent page.
-  expect((await request.put('/api/v1/settings/sign-in-gates', { headers: asLocal(owner), data: { audiences: { 'cronly.org': [{ any: [created.id], timeout_s: 120 }] } } })).ok()).toBeTruthy();
+  // Two authenticator app gates, set up through the API (the dashboard flow is tested above).
+  const totpGate = async label => {
+    const made = await (await request.post('/api/v1/gates', { headers: asLocal(owner), data: { kind: 'totp', label } })).json();
+    const key = unbase32(made.setup.secret);
+    expect((await request.post(`/api/v1/gates/${made.id}/activate`, { headers: asLocal(owner), data: { code: await code(key) } })).ok()).toBeTruthy();
+    return { id: made.id, secret: key };
+  };
+  const phone = await totpGate('Phone app');
+  const tablet = await totpGate('Tablet app');
+  const setGates = async entries => {
+    const response = await request.put('/api/v1/settings/sign-in-gates', { headers: asLocal(owner), data: { audiences: { 'cronly.org': entries } } });
+    expect(response.status()).toBe(200); // never a 202: each change here tightens the last one
+  };
 
   await page.route('https://cronly.org/**', route => route.fulfill({ status: 200, contentType: 'text/plain', body: 'back at cronly' }));
   const query = new URLSearchParams({ client_id: 'cronly.org', redirect_uri: 'https://cronly.org/auth/dba/callback', response_type: 'code', scope: 'openid', state: 'st', code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', code_challenge_method: 'S256', acr_values: 'urn:devicebasedauth.org:acr:gated' });
   await signIn(page, owner);
-  await page.goto(`/authorize.html?${query}`);
-  await page.getByRole('button', { name: 'Sign in to cronly.org' }).click();
-  await expect(page.locator('#sign-in-gate')).toContainText('Waiting for approval');
-  await expect(page.locator('#gate-number')).toHaveText(/^\d\d$/);
-  await page.getByLabel('Code from Phone app').fill(await code(secret, 1));
-  await page.getByRole('button', { name: 'Approve with code' }).click();
-  await page.waitForURL(url => url.hostname === 'cronly.org');
-  expect(new URL(page.url()).searchParams.get('code')).toMatch(/^dbac_/);
 
   // Allow on timeout: never answered inline, only through the link, by someone who types the number.
-  // (A second authenticator: the first one's codes up to the next step are spent.)
-  const tablet = await (await request.post('/api/v1/gates', { headers: asLocal(owner), data: { kind: 'totp', label: 'Tablet app' } })).json();
-  const tabletSecret = unbase32(tablet.setup.secret);
-  expect((await request.post(`/api/v1/gates/${tablet.id}/activate`, { headers: asLocal(owner), data: { code: await code(tabletSecret) } })).ok()).toBeTruthy();
-  expect((await request.put('/api/v1/settings/sign-in-gates', { headers: asLocal(owner), data: { audiences: { 'cronly.org': [{ any: [tablet.id], timeout_s: 120, on_timeout: 'allow' }] } } })).ok()).toBeTruthy();
+  await setGates([{ any: [tablet.id, phone.id], timeout_s: 120, on_timeout: 'allow' }]);
   await page.goto(`/authorize.html?${query}`);
   await page.getByRole('button', { name: 'Sign in to cronly.org' }).click();
   await expect(page.locator('#sign-in-gate')).toContainText('allowed if nobody answers within 2 minutes');
@@ -119,9 +114,20 @@ test('a sign-in waits for its gate: inline with an authenticator code, and throu
   await expect(approver.locator('#gate-summary')).toContainText('sign in to cronly.org');
   await expect(approver.locator('#gate-summary')).not.toContainText(number);
   await approver.getByLabel('Number shown on the sign-in page').fill(number);
-  await approver.getByLabel('Code from Tablet app').fill(await code(tabletSecret, 1));
-  await approver.getByRole('button', { name: 'Approve', exact: true }).click();
+  await approver.getByLabel('Code from Tablet app').fill(await code(tablet.secret, 1));
+  await approver.locator('form.gate-totp', { has: approver.getByLabel('Code from Tablet app') }).getByRole('button', { name: 'Approve', exact: true }).click();
   await expect(approver.locator('#gate-root')).toContainText('Approved. Thank you.');
+  await page.waitForURL(url => url.hostname === 'cronly.org');
+  expect(new URL(page.url()).searchParams.get('code')).toMatch(/^dbac_/);
+
+  // Deny on timeout, only the phone (a tightening, so saved at once): answerable right on the consent page.
+  await setGates([{ any: [phone.id], timeout_s: 120 }]);
+  await page.goto(`/authorize.html?${query}`);
+  await page.getByRole('button', { name: 'Sign in to cronly.org' }).click();
+  await expect(page.locator('#sign-in-gate')).toContainText('Waiting for approval');
+  await expect(page.locator('#gate-number')).toHaveText(/^\d\d$/);
+  await page.getByLabel('Code from Phone app').fill(await code(phone.secret, 1));
+  await page.getByRole('button', { name: 'Approve with code' }).click();
   await page.waitForURL(url => url.hostname === 'cronly.org');
   expect(new URL(page.url()).searchParams.get('code')).toMatch(/^dbac_/);
 });
