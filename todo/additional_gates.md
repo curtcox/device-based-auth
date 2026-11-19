@@ -504,6 +504,10 @@ STATUS row updated.
   answer; deny or allow when nobody answers; reuse seconds) as one `require.gates` entry. Inspector:
   a "Periodic confirmation" row for `confirm`, and `dba-confirmation+jwt` decoded (credential, key,
   until, how it passed). Not yet: the playground taking a confirmation.
+- **G9, audience console (2026-11-19).** "Gate policies" on each of your audiences: per catalog
+  action and for signing in, require gates (optionally of kinds) and refuse allows by timeout;
+  saved with `PATCH /api/v1/audiences/{name}` (catalog and `sign_in_gates`, the audience price).
+  The catalog table shows each action's policy.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

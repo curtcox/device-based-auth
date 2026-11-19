@@ -78,6 +78,18 @@ test('devices, API keys, audiences and the panic button', async ({ page, request
   await expect(page.getByLabel(/Revocation webhook/)).toHaveValue('http://localhost:9/hook');
   await page.getByRole('button', { name: /^Send test event/ }).click();
   await expect(page.locator('.webhook-form')).toContainText('Not delivered');
+  // Gate policies (B7): require security-key or TOTP gates for an action, and no allow by timeout on sign-in.
+  await page.getByText('Gate policies').click();
+  await page.getByLabel(`Require gates for ${owner}:notes:read`).check();
+  await page.getByLabel(`Gate kinds for ${owner}:notes:read`).fill('totp, webauthn');
+  await page.getByLabel('Refuse allow by timeout for Signing in (OpenID Connect)').check();
+  await page.locator('.gate-policies').getByRole('button', { name: /^Save for/ }).click();
+  await expect(page.locator('#flash')).toContainText(`Gate policies for ${owner}.localhost saved.`);
+  await expect(page.locator('#view')).toContainText('gates required (totp, webauthn)');
+  await expect(page.locator('#view')).toContainText('Signing in: no allow by timeout');
+  const audience = await (await request.get(`/api/v1/audiences/${owner}.localhost`)).json();
+  expect(audience.catalog[0].gates).toEqual({ require: true, kinds: ['totp', 'webauthn'] });
+  expect(audience.sign_in_gates).toEqual({ fail_open: false });
 
   await page.getByRole('link', { name: 'Revoke everything' }).click();
   const button = page.locator('#panic-button');

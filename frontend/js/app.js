@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { initAuth, renderSignIn, signOut, reauthenticate, authMode, signedInLabel, enrollDashboardDevice, preloadSdk, currentDevice } from './auth.js';
 import { h, $, replace, usd, money, num, date, relative, duration, pretty, jsonBlock, copyButton, badge, notice, table, dl, field, splitList, describeKey } from './html.js';
-import { inspectCredential, validateGrants, evaluateGrants, b64u, unb64u } from '/lib/verify/index.js';
+import { inspectCredential, validateGrants, evaluateGrants, b64u, unb64u, GATE_KINDS as POLICY_GATE_KINDS } from '/lib/verify/index.js';
 import { credentialsCsv, credentialsJson } from './export.js';
 
 /** Account API-key scopes (src/services/first-party.js DBA_SCOPES). */
@@ -938,6 +938,48 @@ function audienceWebhook(audience) {
   return form;
 }
 
+/** A catalog gate policy in words (spec/evaluation.md §3.8). */
+function describeGatePolicy(policy) {
+  if (!policy?.require && policy?.fail_open !== false) return '—';
+  return [policy.require ? `gates required${policy.kinds ? ` (${policy.kinds.join(', ')})` : ''}` : null, policy.fail_open === false ? 'no allow by timeout' : null].filter(Boolean).join('; ');
+}
+
+/**
+ * Gate policies for an audience the owner registered: per catalog action, and for signing in.
+ * Each row: require gates, optionally of some kinds, and refuse approvals that passed by timeout.
+ * They apply at once, also to credentials issued before (STATUS B7 G3).
+ */
+function audienceGatePolicies(audience) {
+  const out = h('div', {});
+  const kindsText = policy => (policy?.kinds || []).join(', ');
+  const row = (key, label, policy) => h('tr', { dataset: { key } },
+    h('td', {}, key ? h('code', {}, key) : label),
+    h('td', {}, h('input', { type: 'checkbox', class: 'policy-require', checked: !!policy?.require, 'aria-label': `Require gates for ${label}` })),
+    h('td', {}, h('input', { class: 'policy-kinds', value: kindsText(policy), placeholder: 'any kind', spellcheck: 'false', 'aria-label': `Gate kinds for ${label}` })),
+    h('td', {}, h('input', { type: 'checkbox', class: 'policy-strict', checked: policy?.fail_open === false, 'aria-label': `Refuse allow by timeout for ${label}` })));
+  const rows = [...(audience.catalog || []).map(c => row(c.action, c.action, c.gates)), row('', 'Signing in (OpenID Connect)', audience.sign_in_gates)];
+  const form = h('details', { class: 'gate-policies' }, h('summary', {}, 'Gate policies'),
+    h('p', { class: 'hint' }, 'Require that grants for an action name gates (an approval from the owner, a phone, a security key…), optionally of certain kinds, and refuse approvals that passed only because nobody answered. Kinds: ', POLICY_GATE_KINDS.join(', '), '. Policies apply at once, also to credentials already issued; offline verifiers that load your catalog deny those actions with online_required.'),
+    h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Action'), h('th', {}, 'Require gates'), h('th', {}, 'Of kinds'), h('th', {}, 'No allow by timeout'))), h('tbody', {}, rows)),
+    h('div', { class: 'actions' }, h('button', { type: 'button', class: 'save-policies' }, `Save for ${usd(config.prices.audience)}`)), out);
+  const read = tr => {
+    const require = tr.querySelector('.policy-require').checked;
+    const kinds = splitList(tr.querySelector('.policy-kinds').value);
+    const strict = tr.querySelector('.policy-strict').checked;
+    const policy = { ...(require ? { require: true } : {}), ...(require && kinds.length ? { kinds } : {}), ...(strict ? { fail_open: false } : {}) };
+    return Object.keys(policy).length ? policy : null;
+  };
+  form.querySelector('.save-policies').addEventListener('click', () => busy(form, async () => {
+    const policies = new Map([...form.querySelectorAll('tbody tr')].map(tr => [tr.dataset.key, read(tr)]));
+    const catalog = (audience.catalog || []).map(c => ({ action: c.action, description: c.description, ...(policies.get(c.action) ? { gates: policies.get(c.action) } : {}) }));
+    try {
+      await api(`/api/v1/audiences/${enc(audience.name)}`, { method: 'PATCH', body: { catalog, sign_in_gates: policies.get('') } });
+      flash('success', `Gate policies for ${audience.name} saved.`); await refreshStrip(); await render();
+    } catch (error) { replace(out, errorBox(error)); }
+  }));
+  return form;
+}
+
 async function audiences() {
   const all = (await api('/api/v1/audiences', { auth: false })).items;
   const mine = await myAudiences(all);
@@ -969,9 +1011,10 @@ async function audiences() {
     h('p', { class: 'muted' }, 'An audience is a site or API that accepts devicebasedauth.org credentials. It owns an action namespace and publishes a catalog of actions that grants can name; its OpenID Connect client id is its domain name.'),
     h('h2', {}, 'Yours'),
     mine.length ? mine.map((a, i) => h('div', { class: 'panel', dataset: { audience: a.name } }, h('h3', {}, a.name, ' ', h('span', { class: 'muted small' }, `${a.namespace}:*`)), h('p', {}, a.description || ''),
-      table(['Action', 'Allows'], (a.catalog || []).map(c => [h('code', {}, c.action), c.description])),
+      table(['Action', 'Allows', 'Gates'], (a.catalog || []).map(c => [h('code', {}, c.action), c.description, describeGatePolicy(c.gates)])),
+      a.sign_in_gates ? h('p', { class: 'small' }, 'Signing in: ', describeGatePolicy(a.sign_in_gates)) : null,
       a.redirect_uris?.length ? h('p', { class: 'small' }, 'Redirect URIs: ', a.redirect_uris.join(', ')) : null,
-      audienceUsage(usage[i]), audienceWebhook(a))) : h('p', { class: 'muted' }, 'You have not registered an audience.'),
+      audienceUsage(usage[i]), audienceWebhook(a), audienceGatePolicies(a))) : h('p', { class: 'muted' }, 'You have not registered an audience.'),
     h('h2', {}, 'Register an audience'),
     notice('info', h('p', {}, h('strong', {}, 'Prove you control the domain. '), 'Before registering, publish this JSON at ', h('code', {}, 'https://<your domain>/.well-known/devicebasedauth.json'), ':'),
       h('pre', { class: 'code' }, JSON.stringify({ account: accountInfo.account })),
