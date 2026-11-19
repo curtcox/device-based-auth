@@ -132,7 +132,8 @@ export async function oidcUserinfo(request, env) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   let decoded = null;
   try { const { header: h } = decodeJws(token); const key = jwks(env).keys.find(k => k.kid === h.kid); if (h.typ === 'at+jwt' && key) decoded = await verifyJws(token, key); } catch { decoded = null; }
-  if (!decoded || decoded.payload.iss !== issuerName(env) || decoded.payload.exp < Math.floor(Date.now() / 1000)) return oauthError('invalid_token', 'Access token is invalid or expired', 401);
+  // Sign-in access tokens only: an MCP app's token (aud /mcp, key_id) is for the MCP server.
+  if (!decoded || decoded.payload.iss !== issuerName(env) || decoded.payload.exp < Math.floor(Date.now() / 1000) || decoded.payload.key_id !== undefined || decoded.payload.aud === mcpResource(env)) return oauthError('invalid_token', 'Access token is invalid or expired', 401);
   const { sub, acct, dev, cid, device_name } = decoded.payload;
   return new Response(JSON.stringify({ sub, acct, ...(dev ? { dev, cid, device_name } : {}) }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
 }

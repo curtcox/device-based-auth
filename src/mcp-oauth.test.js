@@ -73,6 +73,7 @@ describe('MCP OAuth authorization and tokens', () => {
     expect(tokens.refresh_token).toMatch(/^dbar_/);
     expect(decodeJws(tokens.access_token).payload).toMatchObject({ aud: `${ORIGIN}/mcp`, sub: 'alice' });
     const bearer = `Bearer ${tokens.access_token}`;
+    expect((await call(env, 'GET', '/oauth/userinfo', { auth: bearer })).status).toBe(401);
     const listed = await rpcCall(bearer, 'list_credentials');
     expect(listed.body.result.isError, listed.body.result.content[0].text).toBe(false);
     expect(JSON.parse(listed.body.result.content[0].text).items).toEqual([]);
