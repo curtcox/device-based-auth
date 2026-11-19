@@ -64,6 +64,11 @@ type Options struct {
 	NetworkLocation func(*http.Request) *NetworkLocation
 	// OnlineAPIKey enables VerifyOnline (POST {issuer}/api/v1/authorize, metered).
 	OnlineAPIKey string
+	// Catalog holds your action catalog's gate policies by action, each the catalog entry as
+	// JSON-shaped data ({"action": …, "gates": {"require": true, "kinds": […], "fail_open": false}};
+	// spec/evaluation.md §3.8). Gated actions become online only. Without it, an audience's policy
+	// is enforced online only.
+	Catalog map[string]any
 }
 
 // Verifier verifies credentials and requests for one audience. It is safe for concurrent use.
@@ -527,7 +532,7 @@ func (v *Verifier) Decide(cred *Credential, check Check, r *http.Request, proof 
 	grants, _ := cred.Payload.Get("grants")
 	device, _ := cred.Payload.Get("device")
 	attestation, _ := get(device, "attestation")
-	result := EvaluateGrants(grants, Context{Now: v.clock(), Action: check.Action, Resource: check.Resource, Location: location, Attestation: attestation})
+	result := EvaluateGrants(grants, Context{Now: v.clock(), Action: check.Action, Resource: check.Resource, Location: location, Attestation: attestation, Policy: v.opts.Catalog[check.Action]})
 	d := &Decision{Allow: result.Allow, Status: 403, Code: "forbidden", Reasons: result.Reasons, GrantIndex: result.GrantIndex, Grant: result.Grant,
 		Caveats: result.Caveats, OnlineRequired: result.OnlineRequired, Credential: cred, Proof: proof,
 		Device: cred.Claims.Subject, Account: cred.Claims.Account, CredentialID: cred.Claims.CredentialID}

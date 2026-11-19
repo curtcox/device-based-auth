@@ -7,7 +7,7 @@ import { price } from '../utils/pricing.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../services/webhooks.js';
 import { MAX_SUBSCRIPTIONS, broadcast, nextNotice, noticeText } from '../services/push.js';
 import { hasDbaAction } from '../auth/reverify.js';
-import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
+import { GATE_REQUESTS_PER_HOUR, RETRY_AFTER_S, OWNER_GATE, answerRequest, checkGatesForIssue, contactedGates, createGate, findRequest, gateKey, meetsPolicy, gateSignature, howPassed, loadGates, newRequest, refreshRequest, requestKey, requestUntil, visibleGate, visibleRequest } from './gates.js';
 
 const PAGE = 50;
 const EVENTS_KEPT = 50;
@@ -278,7 +278,7 @@ export class AccountDO {
    * Charge and store a newly signed credential (and its device). The Worker signs first so the
    * stored JWS is exactly what the device receives; if the charge fails nothing is kept.
    */
-  async op_store_credential({ record, device, price, charge_id, fingerprint, reinstate = false, source, enrollment_token }, now) {
+  async op_store_credential({ record, gate_policies = [], device, price, charge_id, fingerprint, reinstate = false, source, enrollment_token }, now) {
     let announce = 0; let reinstated = false;
     const urgent = hasDbaAction(record.grants);
     const stored = await this.tx(async tx => {
@@ -290,7 +290,7 @@ export class AccountDO {
         token = await tx.get(`etok:${enrollment_token.id}`);
         assert(token && token.hash === enrollment_token.hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
       }
-      await checkGatesForIssue(tx, record.grants, record.device_id);
+      await checkGatesForIssue(tx, record.grants, record.device_id, gate_policies);
       const issuedToday = (await readBalance(tx, now, { flush: false })).day.counts?.issue || 0; // before this charge counts
       const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid }, receipt: { cid: record.cid, ...(fingerprint ? { fingerprint } : {}) }, annotate: subscribed ? state => { announce = nextNotice(state, now, urgent); } : undefined }, now);
       // The same charge id again (an Idempotency-Key retry, two approvals of one enrollment racing):
@@ -628,7 +628,7 @@ export class AccountDO {
    * gate) and usage counters. candidates: grant indexes that passed every static check, in order,
    * with their online needs ({ index, uses, step_up, gates, gates_reuse_s, fail_open }).
    */
-  async op_authorize({ cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country, token_namespace = null }, now) {
+  async op_authorize({ cid, jti, status_list, proof_jti, proof_exp, candidates, action, resource, audience, caller, country, token_namespace = null, gate_policy = null }, now) {
     const nowSeconds = Math.floor(now / 1000);
     for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
     let asked = null; let byTimeout = [];
@@ -660,6 +660,9 @@ export class AccountDO {
             if (used >= candidate.uses.count) { reasons.push('usage_limit_reached'); continue; }
             usage = { key, used };
           }
+          // The audience's policy for this action (spec/evaluation.md §3.8), checked here because
+          // only the account knows its gates' kinds; it applies to credentials issued before it.
+          if (gate_policy?.require && !meetsPolicy(candidate.gates, gate_policy.kinds ?? null, await loadGates(tx, (candidate.gates || []).flatMap(e => e.any)))) { reasons.push('gate_required'); continue; }
           let approval = null;
           if (candidate.gates) {
             const signature = gateSignature(candidate);

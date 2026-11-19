@@ -131,6 +131,26 @@ describe('verifier', () => {
     expect(await verifier.verifyRequest(await request('POST', undefined, { 'DBA-Confirmation': await confirm({ by_timeout: true }) }), check)).toMatchObject({ allow: false, reasons: [['confirmation_by_timeout_refused']] });
     expect(await verifier.verifyRequest(await request('POST', undefined, { 'DBA-Confirmation': await confirm({ cid: 'crd_OTHER00001' }) }), check)).toMatchObject({ allow: false, status: 401, code: 'confirmation_wrong_credential' });
   });
+  it('fetches the audience catalog when asked, and fails closed without it', async () => {
+    const key = await issuerKey(); const signer = await issuerSigner(key); const dev = await device();
+    const credential = await signCredential(payload(dev), signer);
+    const uri = `${ISSUER}/status/v1/lists/0`;
+    const list = await signStatusList({ uri, bytes: new Uint8Array(1), issuer: ISSUER, now: NOW }, signer);
+    let catalogUp = false; let catalogFetches = 0;
+    const fetch = async url => {
+      if (url.endsWith('/.well-known/jwks.json')) return Response.json(jwksFor([key]));
+      if (url === uri) return new Response(list);
+      if (url === `${ISSUER}/api/v1/audiences/hashbin.org`) { catalogFetches++; return catalogUp ? Response.json({ name: 'hashbin.org', catalog: [{ action: 'hashbin:content:write', gates: { require: true } }] }) : new Response('down', { status: 503 }); }
+      return new Response('nope', { status: 404 });
+    };
+    let now = NOW + 1;
+    const verifier = createVerifier({ audience: 'hashbin.org', fetch, now: () => now, catalog: true });
+    const request = async () => new Request('https://hashbin.org/api/content', { method: 'POST', headers: { Authorization: `DBA ${credential}`, DPoP: await createProof({ ...dev, method: 'POST', url: 'https://hashbin.org/api/content', credential, now }) } });
+    expect(await verifier.verifyRequest(await request(), { action: 'hashbin:content:write' })).toMatchObject({ allow: false, status: 503, code: 'catalog_unavailable' });
+    catalogUp = true; now += 31;
+    expect(await verifier.verifyRequest(await request(), { action: 'hashbin:content:write' })).toMatchObject({ allow: false, code: 'online_required' });
+    expect(catalogFetches).toBe(2);
+  });
   it('makes actions whose catalog entry requires gates online only', async () => {
     const { verifier, request } = await setup({ catalog: [{ action: 'hashbin:content:write', gates: { require: true } }] });
     expect(await verifier.verifyRequest(await request(), { action: 'hashbin:content:write' })).toMatchObject({ allow: false, code: 'online_required', online_required: true });

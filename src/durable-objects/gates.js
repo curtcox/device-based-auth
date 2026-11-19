@@ -72,15 +72,34 @@ export async function loadGates(tx, ids) {
  * At issuance: every gate a grant names must exist, and no dba-device gate may be the device the
  * credential is for (it would approve its own requests).
  */
-export async function checkGatesForIssue(tx, grants, deviceId) {
+export async function checkGatesForIssue(tx, grants, deviceId, policies = []) {
   const ids = (grants || []).flatMap(g => Array.isArray(g?.require?.gates) ? g.require.gates.flatMap(e => e.any) : []);
-  if (!ids.length) return;
   const gates = await loadGates(tx, ids);
   for (const id of new Set(ids)) {
     const gate = gates.get(id);
     assert(gate, 'unknown_gate', `Gate ${id} does not exist in this account; create it first (GET /api/v1/gates lists them)`, 400);
     assert(!(gate.kind === 'dba-device' && gate.device_id === deviceId), 'self_gate', `Gate ${id} is the device this credential is for; a device cannot approve its own requests`, 400);
   }
+  for (const { grant_index: i, action, kinds } of policies) {
+    assert(meetsPolicy(grantEntries(grants[i]), kinds, gates), 'gate_required', `grants[${i}]: ${action} requires a gate entry whose gates are all of kind ${kinds?.join(' or ') ?? 'any'}`, 400, { grant_index: i, action, policy: { require: true, ...(kinds ? { kinds } : {}) } });
+  }
+}
+
+/** A grant's gate entries (step_up is the owner entry), or []. */
+function grantEntries(grant) {
+  if (Array.isArray(grant?.require?.gates)) return grant.require.gates;
+  return grant?.require?.step_up === true ? [{ any: ['owner'] }] : [];
+}
+
+/**
+ * Does one entry consist only of gates of the accepted kinds (any kind when `kinds` is null)?
+ * spec/evaluation.md §3.8; `gates` maps ids to rows (a missing gate is of no kind).
+ */
+export function meetsPolicy(entries, kinds, gates) {
+  return (entries || []).some(entry => entry.any.every(id => {
+    const kind = id === 'owner' ? 'owner' : gates.get(id)?.kind;
+    return typeof kind === 'string' && (!kinds || kinds.includes(kind));
+  }));
 }
 
 /** Requests are matched to the grant's gates exactly: a different gate list needs its own approval. */

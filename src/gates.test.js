@@ -182,3 +182,51 @@ describe('gate requests', () => {
     expect([...account.storage.rows.keys()].some(k => k.startsWith('gatereq:'))).toBe(false);
   });
 });
+
+describe('audience gate policy (G3)', () => {
+  /** hashbin.org (owned by the operator) requires gates on content:delete. */
+  async function policy(gates) {
+    const current = (await call(env, 'GET', '/api/v1/audiences/hashbin.org')).body;
+    const catalog = current.catalog.map(e => e.action === 'hashbin:content:delete' ? { ...e, gates } : e);
+    const changed = await call(env, 'PATCH', '/api/v1/audiences/hashbin.org', { auth: 'operator', body: { catalog } });
+    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+    // Online decisions cache audience records for a minute.
+    t += 61000;
+  }
+
+  it('validates policies in the catalog and publishes them', async () => {
+    const current = (await call(env, 'GET', '/api/v1/audiences/hashbin.org')).body;
+    const bad = current.catalog.map(e => e.action === 'hashbin:content:delete' ? { ...e, gates: { require: true, kinds: ['sms'] } } : e);
+    expect((await call(env, 'PATCH', '/api/v1/audiences/hashbin.org', { auth: 'operator', body: { catalog: bad } })).body.code).toBe('invalid_catalog');
+    await policy({ require: true, kinds: ['dba-device'], fail_open: false });
+    const entry = (await call(env, 'GET', '/api/v1/audiences/hashbin.org')).body.catalog.find(e => e.action === 'hashbin:content:delete');
+    expect(entry.gates).toEqual({ require: true, kinds: ['dba-device'], fail_open: false });
+  });
+
+  it('refuses to issue an ungated grant, or gates of the wrong kind, for a gated action', async () => {
+    await policy({ require: true, kinds: ['dba-device'] });
+    const issue = grants => call(env, 'POST', '/api/v1/credentials', { auth: 'alice', body: { public_jwk: newKey.publicJwk, aud: ['hashbin.org'], grants } });
+    const newKey = await newDevice();
+    const ungated = await issue([{ actions: ['hashbin:content:delete'] }]);
+    expect(ungated).toMatchObject({ status: 400, body: { code: 'gate_required', grant_index: 0, action: 'hashbin:content:delete', policy: { require: true, kinds: ['dba-device'] } } });
+    expect((await issue([{ actions: ['hashbin:content:delete'], require: { step_up: true } }])).body.code).toBe('gate_required');
+    const { gate } = await phoneGate();
+    expect((await issue([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: [gate] }] } }])).status).toBe(200);
+  });
+
+  it('applies at once to credentials issued before the policy', async () => {
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'] }, { actions: ['hashbin:content:write'] }]);
+    expect((await ask()).allow).toBe(true);
+    await policy({ require: true });
+    expect(await ask()).toMatchObject({ allow: false, code: 'forbidden', reasons: ['gate_required'] });
+    expect((await ask('hashbin:content:write')).allow).toBe(true);
+  });
+
+  it('refuses allows by timeout where the audience forbids fail-open', async () => {
+    const { ask } = await asker([{ actions: ['hashbin:content:delete'], require: { gates: [{ any: ['owner'], timeout_s: 30, on_timeout: 'allow' }] } }]);
+    await policy({ fail_open: false });
+    expect((await ask()).code).toBe('gate_pending');
+    t += 31000;
+    expect(await ask()).toMatchObject({ allow: false, code: 'by_timeout_refused', reasons: ['by_timeout_refused'] });
+  });
+});

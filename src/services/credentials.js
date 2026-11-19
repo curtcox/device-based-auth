@@ -70,9 +70,20 @@ export async function validateIssue(env, { aud, grants, lifetime_seconds }) {
     const known = action.endsWith(':*') || audience.catalog.some(c => c.action === action);
     assert(known, 'invalid_grants', `grants[${i}]: "${action}" is not in ${audience.name}'s action catalog`);
   }
+  // Audience gate policies (spec/evaluation.md §3.8): a grant naming an action whose catalog entry
+  // requires gates must have them. The kinds of its gates are checked in the account, which holds
+  // them (AccountDO store-credential). Wildcard grants are not refused here; /authorize answers
+  // gate_required for the gated actions they cover.
+  const gatePolicies = [];
+  for (const [i, grant] of grants.entries()) for (const action of grant.actions) {
+    const policy = namespaces.get(actionNamespace(action))?.catalog.find(c => c.action === action)?.gates;
+    if (!policy?.require) continue;
+    assert(grant.require?.gates || grant.require?.step_up, 'gate_required', `grants[${i}]: ${action} requires gates${policy.kinds ? ` of kind ${policy.kinds.join(' or ')}` : ''} (${actionNamespace(action)}'s policy); add require.gates`, 400, { grant_index: i, action, policy });
+    gatePolicies.push({ grant_index: i, action, kinds: policy.kinds ?? null });
+  }
   const lifetime = lifetime_seconds ?? LIFETIME.default;
   assert(Number.isSafeInteger(lifetime) && lifetime >= LIFETIME.min && lifetime <= LIFETIME.max, 'invalid_lifetime', `lifetime_seconds must be ${LIFETIME.min}–${LIFETIME.max}`);
-  return { aud: [...new Set(aud)], grants, lifetime, audiences };
+  return { aud: [...new Set(aud)], grants, lifetime, audiences, gatePolicies };
 }
 
 // Shards this isolate has seen full. A shard never empties (indexes are not reused), so once full
@@ -126,7 +137,7 @@ export async function issueCredential(env, account, request, { source, chargeId,
   // `attestation` comes only from a verified key attestation (services/attestation.js), never
   // from a request body: cleanDevice drops anything else the caller put in device.
   const device = withAttestation(cleanDevice(request.device), attestation, Math.floor(now / 1000));
-  const { aud, grants, lifetime } = await validateIssue(env, request);
+  const { aud, grants, lifetime, gatePolicies } = await validateIssue(env, request);
   // Audiences bound a credential as much as grants do: a site may accept any credential naming it
   // to identify the account, so a delegate cannot name a site its delegator could not.
   if (parentAud) assert(aud.every(a => parentAud.includes(a)), 'not_narrower', `aud must be within the delegating credential's audiences (${parentAud.join(', ')})`, 403);
@@ -146,7 +157,7 @@ export async function issueCredential(env, account, request, { source, chargeId,
   // With a caller's charge id (Idempotency-Key, an enrollment's id) a retry gets the first
   // credential back; the fingerprint tells a retry from a different request reusing the key.
   const fingerprint = chargeId ? await sha256b64u(JSON.stringify({ jkt, aud, grants, lifetime, device: cleanDevice(request.device), parentCid: parentCid ?? null })) : undefined;
-  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, fingerprint, reinstate, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
+  const stored = await rpc(env.ACCOUNTS, account, 'store-credential', { record, gate_policies: gatePolicies, device: { id: deviceId, jkt, public_jwk: jwk, ...device }, price: amount, charge_id: chargeId || `issue-${cid}`, fingerprint, reinstate, source, ...(enrollmentToken ? { enrollment_token: enrollmentToken } : {}), now });
   if (stored.duplicate) return { credential: stored.jws, cid: stored.cid, device_id: stored.device_id, payload: inspectCredential(stored.jws).payload, charged: 0, balance_microdollars: stored.balance_microdollars, replay: true };
   return { credential, cid, device_id: deviceId, payload, charged: stored.charged, balance_microdollars: stored.balance_microdollars };
 }

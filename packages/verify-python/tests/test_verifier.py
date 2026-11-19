@@ -46,6 +46,12 @@ class VerifierTest(unittest.TestCase):
         result = self.verifier.verify_request(self.request(credential=credential), action="hashbin:content:write")
         self.assertEqual((result["allow"], result["code"], result["online_required"]), (False, "online_required", True))
 
+    def test_catalog_gate_policy_makes_an_action_online_only(self):
+        verifier = create_verifier("hashbin.org", fetch=self.issuer.fetch, now=self.clock,
+                                   catalog=[{"action": "hashbin:content:write", "gates": {"require": True}}])
+        result = verifier.verify_request(self.request(), action="hashbin:content:write", resource="doc-1")
+        self.assertEqual((result["allow"], result["code"]), (False, "online_required"))
+
     def test_spend_cap_is_returned_as_a_caveat(self):
         credential = self.issuer.credential(grants=[{"actions": ["hashbin:*"], "limits": {"spend_usd_per_month": 5}}])
         result = self.verifier.verify_request(self.request(credential=credential), action="hashbin:content:write")

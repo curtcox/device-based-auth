@@ -4212,7 +4212,7 @@
     "/api/v1/audiences": {
       "get": {
         "operationId": "get_api_v1_audiences",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it.",
         "x-access": "public",
         "security": [],
         "parameters": [],
@@ -4269,7 +4269,7 @@
       },
       "post": {
         "operationId": "post_api_v1_audiences",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it.",
         "x-access": "audiences:write",
         "security": [
           {
@@ -4368,7 +4368,7 @@
     "/api/v1/audiences/{name}": {
       "get": {
         "operationId": "get_api_v1_audiences_name",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it.",
         "x-access": "public",
         "security": [],
         "parameters": [
@@ -4434,7 +4434,7 @@
       },
       "patch": {
         "operationId": "patch_api_v1_audiences_name",
-        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner.",
+        "summary": "Audiences (relying parties): list, read, register (domain check, charges the audience price) and change. revocation_webhook (https on the audience domain, or null) receives signed credentials.revoked events (spec/events.md); it is only shown to the owner. A catalog entry may carry a gate policy, gates: { require, kinds, fail_open } (spec/evaluation.md §3.8): grants for that action must have gates (of those kinds), and fail_open: false refuses allows by timeout; it applies at once, also to credentials issued before it.",
         "x-access": "audiences:write",
         "security": [
           {

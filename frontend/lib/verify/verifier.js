@@ -49,9 +49,12 @@ export function credentialFromRequest(request) {
  *   audience  — your audience name, e.g. "hashbin.org" (required)
  *   jwksCooldown — seconds between JWKS refetches forced by an unknown kid (default 30)
  *   online    — { apiKey } to enable verifyOnline (POST {issuer}/api/v1/authorize)
- *   catalog   — your action catalog ([{ action, gates: { require, kinds, fail_open } }]); actions
- *               whose entry requires gates are then online only, and confirmations that passed by
- *               timeout are refused where fail_open is false (spec/evaluation.md §3.8)
+ *   catalog   — your action catalog's gate policies (spec/evaluation.md §3.8): true to fetch your
+ *               audience's public record from the issuer (cached like the JWKS; requests fail
+ *               closed with 503 catalog_unavailable while it cannot be loaded), or a static list
+ *               [{ action, gates: { require, kinds, fail_open } }]. Actions whose entry requires
+ *               gates are then online only, and confirmations that passed by timeout are refused
+ *               where fail_open is false. Without it, an audience's policy is enforced online only.
  */
 export function createVerifier(options = {}) {
   const issuer = options.issuer || DEFAULT_ISSUER;
@@ -62,7 +65,8 @@ export function createVerifier(options = {}) {
   const jwksTtl = options.jwksTtl ?? 3600; const statusTtl = options.statusTtl ?? 300;
   const replay = options.replay === false ? null : options.replay || new ReplayCache();
   let jwksCache = null; const statusCache = new Map();
-  const catalog = new Map((Array.isArray(options.catalog) ? options.catalog : []).map(entry => [entry.action, entry]));
+  let catalog = new Map((Array.isArray(options.catalog) ? options.catalog : []).map(entry => [entry.action, entry]));
+  let catalogCache = null; let catalogFailure = null;
   // Revocations pushed by webhook (handleEvent): "uri#idx" -> credential exp. Checked before the
   // cached status list, so a pushed revocation takes effect before the list's TTL runs out.
   const pushedRevocations = new Map(); const seenEvents = new Map();
@@ -124,6 +128,31 @@ export function createVerifier(options = {}) {
     return bytes;
   }
 
+  /** Load the audience's catalog when options.catalog is true (throws catalog_unavailable). */
+  async function loadCatalog() {
+    if (options.catalog !== true) return catalog;
+    const now = clock();
+    if (catalogCache && catalogCache.expires > now) return catalog;
+    if (catalogFailure && catalogFailure.until > now) {
+      if (catalogCache) return catalog;
+      throw new VerificationError('catalog_unavailable', catalogFailure.message);
+    }
+    let response;
+    try { response = await fetcher(`${issuer}/api/v1/audiences/${encodeURIComponent(audience)}`); } catch (error) { response = { ok: false, status: error.message }; }
+    let record = null;
+    if (response.ok) { try { record = await response.json(); } catch { record = null; } }
+    if (!record || record.name !== audience || !Array.isArray(record.catalog)) {
+      catalogFailure = { until: now + FAILURE_BACKOFF, message: `Audience catalog fetch failed (${response.status})` };
+      // A stale copy is better than none: policies only ever tighten what the grants allow.
+      if (catalogCache) return catalog;
+      throw new VerificationError('catalog_unavailable', catalogFailure.message);
+    }
+    catalogFailure = null;
+    catalog = new Map(record.catalog.map(entry => [entry.action, entry]));
+    catalogCache = { expires: now + jwksTtl };
+    return catalog;
+  }
+
   /** Is the credential revoked? (true / false; throws status_unavailable when unknown) */
   async function isRevoked(payload) {
     const { idx, uri } = payload.status.status_list;
@@ -156,6 +185,7 @@ export function createVerifier(options = {}) {
     try {
       if (found.kind === 'access' && options.acceptAccessTokens === false) return { ok: false, status: 401, code: 'access_tokens_not_accepted' };
       const { payload } = await verify(found.credential, { typ: found.kind });
+      await loadCatalog();
       let proof = null;
       if (found.kind === 'device') {
         if (!found.proof) return { ok: false, status: 401, code: 'proof_required' };
@@ -175,7 +205,7 @@ export function createVerifier(options = {}) {
       }
       return { ok: true, kind: found.kind, payload, proof, confirmation, credential: found.credential };
     } catch (error) {
-      if (error instanceof VerificationError) return { ok: false, status: ['jwks_unavailable', 'status_unavailable'].includes(error.code) ? 503 : 401, code: error.code, message: error.message };
+      if (error instanceof VerificationError) return { ok: false, status: ['jwks_unavailable', 'status_unavailable', 'catalog_unavailable'].includes(error.code) ? 503 : 401, code: error.code, message: error.message };
       throw error;
     }
   }
@@ -254,5 +284,5 @@ export function createVerifier(options = {}) {
     return { ok: true, type: payload.type, payload, duplicate };
   }
 
-  return { jwks, verify, isRevoked, handleEvent, authenticateRequest, verifyRequest, allowedActions, verifyOnline, decide, issuer, audience };
+  return { jwks, verify, isRevoked, loadCatalog, handleEvent, authenticateRequest, verifyRequest, allowedActions, verifyOnline, decide, issuer, audience };
 }

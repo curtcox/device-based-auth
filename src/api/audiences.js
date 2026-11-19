@@ -6,6 +6,7 @@ import { AUDIENCE_NAME } from '../durable-objects/registry-do.js';
 import { authenticate } from '../auth/middleware.js';
 import { canAccess, paysForReads } from '../auth/scopes.js';
 import { cleanWebhookUrl, signEvent, postEvent } from '../services/webhooks.js';
+import { GATE_KINDS } from '../../packages/verify/src/grants.js';
 
 const ACTION_SUFFIX = /^[a-z0-9_.-]{1,64}(?::[a-z0-9_.-]{1,64})*$/;
 
@@ -16,8 +17,28 @@ function cleanCatalog(namespace, catalog) {
     const action = String(entry?.action ?? '');
     assert(action.startsWith(`${namespace}:`) && ACTION_SUFFIX.test(action.slice(namespace.length + 1)), 'invalid_catalog', `catalog[${i}].action must look like "${namespace}:verb"`);
     assert(!seen.has(action), 'invalid_catalog', `catalog[${i}] duplicates ${action}`); seen.add(action);
-    return { action, description: String(entry.description ?? '').replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 300) };
+    const gates = entry.gates === undefined || entry.gates === null ? undefined : cleanGatePolicy(entry.gates, `catalog[${i}].gates`);
+    return { action, description: String(entry.description ?? '').replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 300), ...(gates ? { gates } : {}) };
   });
+}
+
+/**
+ * An action's gate policy (spec/evaluation.md §3.8): `require` gates (of `kinds`, if listed) on
+ * every grant used for it, and `fail_open: false` to refuse allows by timeout.
+ */
+export function cleanGatePolicy(policy, path) {
+  assert(policy && typeof policy === 'object' && !Array.isArray(policy), 'invalid_catalog', `${path} must be an object`);
+  for (const key of Object.keys(policy)) assert(['require', 'kinds', 'fail_open'].includes(key), 'invalid_catalog', `${path}.${key} is not a gate policy member (require, kinds, fail_open)`);
+  assert(policy.require === undefined || typeof policy.require === 'boolean', 'invalid_catalog', `${path}.require must be true or false`);
+  assert(policy.fail_open === undefined || typeof policy.fail_open === 'boolean', 'invalid_catalog', `${path}.fail_open must be true or false`);
+  const kinds = policy.kinds;
+  assert(kinds === undefined || (Array.isArray(kinds) && kinds.length >= 1 && kinds.every(k => GATE_KINDS.includes(k)) && new Set(kinds).size === kinds.length), 'invalid_catalog', `${path}.kinds must list different gate kinds from ${GATE_KINDS.join(', ')}`);
+  assert(kinds === undefined || policy.require === true, 'invalid_catalog', `${path}.kinds only applies with require: true`);
+  const clean = {};
+  if (policy.require) clean.require = true;
+  if (kinds) clean.kinds = [...kinds];
+  if (policy.fail_open === false) clean.fail_open = false;
+  return Object.keys(clean).length ? clean : undefined;
 }
 
 /**

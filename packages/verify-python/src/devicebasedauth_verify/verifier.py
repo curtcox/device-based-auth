@@ -152,7 +152,7 @@ class Verifier:
     def __init__(self, audience: str, *, issuer: str = DEFAULT_ISSUER, fetch: Optional[Callable[..., FetchResponse]] = None,
                  now: Optional[Callable[[], int]] = None, jwks_ttl: int = 3600, status_ttl: int = 300, replay=None,
                  failure_backoff: int = 30, jwks_cooldown: int = 30, accept_access_tokens: bool = True,
-                 online_api_key: Optional[str] = None):
+                 online_api_key: Optional[str] = None, catalog: Optional[list] = None):
         if not audience:
             raise ValueError("Verifier needs an audience")
         self.audience = audience
@@ -165,6 +165,10 @@ class Verifier:
         self.replay = None if replay is False else (replay or ReplayCache())
         self.accept_access_tokens = accept_access_tokens
         self.online_api_key = online_api_key
+        # Your action catalog's gate policies ([{action, gates: {require, kinds, fail_open}}],
+        # spec/evaluation.md §3.8): gated actions become online only. Without it, an audience's
+        # policy is enforced online only.
+        self.catalog = {e["action"]: e for e in (catalog or []) if isinstance(e, dict) and isinstance(e.get("action"), str)}
         self._jwks_cache: Optional[dict] = None
         self._jwks_failure: Optional[dict] = None
         self._status_cache: dict = {}
@@ -321,6 +325,8 @@ class Verifier:
         attestation = payload.get("device", {}).get("attestation") if isinstance(payload.get("device"), dict) else None
         if attestation is not None:
             context["attestation"] = attestation
+        if action in self.catalog:
+            context["policy"] = self.catalog[action]
         result = evaluate_grants(payload["grants"], context)
         return {
             "allow": result["allow"], "status": 200 if result["allow"] else 403,

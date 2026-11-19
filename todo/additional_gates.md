@@ -376,7 +376,7 @@ STATUS row updated.
 |-------|-------------|---------------|
 | G1 ✅ | Spec text and vectors for `require.gates`, `require.confirmation`, confirmations, catalog policy; evaluator in JS, Python, Go | Every new vector passes in all three; step_up ≡ owner gate |
 | G2 ✅ | Gate registry (`gate:` rows, CRUD routes, scopes `gates:read`/`gates:write`), `gatereq:` engine replacing `stepup:`, `owner` and `dba-device` kinds, `/authorize` integration, timeouts both ways, audit and notices, D13 prices in cost policy | Concurrency tests: one answer settles; timeout allow/deny; deleted gate denies; balance refusal behaves per §2; cost-count test covers the new ops |
-| G3 | Audience gate policy: catalog field, issuance check, `/authorize` check, verify library `catalog` option | An ungated grant for a required action is refused online and gets `online_required` offline |
+| G3 ✅ | Audience gate policy: catalog field, issuance check, `/authorize` check, verify library `catalog` option | An ungated grant for a required action is refused online and gets `online_required` offline |
 | G4 | `totp` and `webauthn` gates, sealing key, approval page | Playwright: approve with a virtual authenticator and a TOTP code; replayed code refused |
 | G5 | `webhook` gate: signed request, sync answer, signed callback | CI sample service approves and denies; unreachable service follows `on_timeout` |
 | G6 | Sign-in gates: OIDC consent, number matching, inline factors, `amr`/`acr`/`dba_gates`, dashboard gate, recovery codes | Playwright: OIDC sign-in waits for and passes a gate; `acr_values` enforced; dashboard locked until confirmed; recovery code works once |
@@ -407,6 +407,15 @@ STATUS row updated.
   Requests the owner cannot pay for are `unpaid` and wait for their timeout (D13 pending).
   `dba:*` grants cannot have gates (DBA checks them per request with no engine). Issuance refuses
   `require.confirmation` (400 `confirmation_not_available`) until G7.
+- **G3 done (2026-11-19).** `cleanGatePolicy` in `src/api/audiences.js`; issuance check in
+  `validateIssue` (exact action names only: a wildcard grant is not refused at issuance, and
+  `/authorize` answers `gate_required` for the gated actions it covers) and, for kinds, in the
+  account (`checkGatesForIssue`); `/authorize` passes the policy to the account, which checks kinds
+  against its gate rows (no extra request) before any gate request is opened; `fail_open: false`
+  makes the engine deny an entry that would pass by timeout (`by_timeout_refused`). The JS
+  verifier's `catalog: true` fetches `GET /api/v1/audiences/{name}` (TTL as the JWKS; a stale
+  copy is kept when a refresh fails, since policies only tighten); Python and Go take a static
+  catalog. The audience console's editor for policies comes with G9.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

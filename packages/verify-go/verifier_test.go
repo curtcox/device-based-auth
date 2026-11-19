@@ -183,6 +183,20 @@ func TestVerifyRequestAllows(t *testing.T) {
 	}
 }
 
+func TestCatalogGatePolicyMakesAnActionOnlineOnly(t *testing.T) {
+	env := newTestEnv(t)
+	cred := env.credential(writeGrant, 4, CredentialTyp)
+	entry, err := ParseJSON([]byte(`{"action":"hashbin:content:write","gates":{"require":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := env.verifier(func(o *Options) { o.Catalog = map[string]any{"hashbin:content:write": entry} })
+	d := mustDecide(t, v, deviceRequest(cred, env.proof("POST", testURL, cred, nil)), Check{Action: "hashbin:content:write"})
+	if d.Allow || d.Code != "online_required" {
+		t.Fatalf("decision = %+v", d)
+	}
+}
+
 func TestVerifyRequestDenials(t *testing.T) {
 	env := newTestEnv(t)
 	good := env.credential(writeGrant, 4, CredentialTyp)
