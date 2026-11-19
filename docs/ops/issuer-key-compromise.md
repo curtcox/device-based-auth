@@ -8,7 +8,8 @@ can mint credentials that every verifier accepts until the key leaves the JWKS.
    `"withdrawn": true` (drop any other keys you also distrust the same way). Redeploy. The new key
    signs; the JWKS and `/.well-known/dba-ca.pem` omit the withdrawn `kid`, so every credential it
    signed fails with `unknown_kid` once verifier caches expire (≤ 1 hour with the default
-   `jwksTtl`; verifiers refetch immediately on an unknown kid).
+   `jwksTtl`; a verifier refetches on an unknown kid, at most once every 30 seconds, so credentials
+   from the new key may be refused for up to 30 seconds by a verifier that fetched just before).
 2. **Recovery renewal (mass force-renew)**: devices do not re-enroll. `POST
    /api/v1/credentials/{cid}/renew` still accepts a credential signed by a withdrawn key, but only
    when the account's registry holds that exact credential byte for byte (so anything the attacker

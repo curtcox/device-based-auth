@@ -150,6 +150,21 @@ describe('verifier', () => {
     expect(await down.verifyRequest(new Request(url, { headers: { Authorization: 'DBA not-a-jws' } }), { action: 'x:y' })).toMatchObject({ code: 'invalid_format' });
     expect(calls).toBe(1);
   });
+  it('refetches the JWKS for an unknown kid at most once per cooldown', async () => {
+    const key = await issuerKey(); const newKey = await issuerKey('k2'); const dev = await device();
+    let published = [key]; let fetches = 0; let now = NOW + 1;
+    const fetch = async url => { if (url.endsWith('/.well-known/jwks.json')) fetches++; return Response.json(jwksFor(published)); };
+    const verifier = createVerifier({ audience: 'hashbin.org', fetch, now: () => now });
+    await verifier.jwks();
+    const made = await signCredential(payload(dev), await issuerSigner(newKey));
+    // Junk kids (anyone can send them) cost no fetch inside the cooldown.
+    for (let i = 0; i < 5; i++) await expect(verifier.verify(made)).rejects.toMatchObject({ code: 'unknown_kid' });
+    expect(fetches).toBe(1);
+    // A key published since is picked up once the cooldown has passed.
+    published = [key, newKey]; now += 30;
+    await expect(verifier.verify(made)).rejects.not.toMatchObject({ code: 'unknown_kid' });
+    expect(fetches).toBe(2);
+  });
   it('accepts access tokens as bearer credentials', async () => {
     const { verifier, signer } = await setup();
     const token = await signAccessToken({ ...payload({ jkt: 'x' }), jti: 'tok_1', exp: NOW + 600, cnf: undefined }, signer);

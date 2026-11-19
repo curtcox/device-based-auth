@@ -135,13 +135,15 @@ class Verifier:
 
     jwks_ttl / status_ttl bound how long keys and revocation lists are trusted (a status list's
     own ``ttl`` claim can shorten it further); failure_backoff stops a dead issuer being fetched
-    on every request; replay=False disables the proof replay cache (not recommended).
+    on every request; jwks_cooldown spaces out the JWKS refetches an unknown kid forces (anyone can
+    send a made-up kid); replay=False disables the proof replay cache (not recommended).
     online_api_key enables verify_online (POST {issuer}/api/v1/authorize, metered).
     """
 
     def __init__(self, audience: str, *, issuer: str = DEFAULT_ISSUER, fetch: Optional[Callable[..., FetchResponse]] = None,
                  now: Optional[Callable[[], int]] = None, jwks_ttl: int = 3600, status_ttl: int = 300, replay=None,
-                 failure_backoff: int = 30, accept_access_tokens: bool = True, online_api_key: Optional[str] = None):
+                 failure_backoff: int = 30, jwks_cooldown: int = 30, accept_access_tokens: bool = True,
+                 online_api_key: Optional[str] = None):
         if not audience:
             raise ValueError("Verifier needs an audience")
         self.audience = audience
@@ -150,6 +152,7 @@ class Verifier:
         self._fetch = fetch or (lambda url, **kw: default_fetch(url, **kw))
         self._clock = now or (lambda: int(time.time()))
         self.jwks_ttl, self.status_ttl, self.failure_backoff = jwks_ttl, status_ttl, failure_backoff
+        self.jwks_cooldown = jwks_cooldown
         self.replay = None if replay is False else (replay or ReplayCache())
         self.accept_access_tokens = accept_access_tokens
         self.online_api_key = online_api_key
@@ -167,8 +170,10 @@ class Verifier:
     def jwks(self, force: bool = False) -> dict:
         """The issuer's JWKS, cached for jwks_ttl. A stale copy beats none while the issuer is down."""
         now = self._clock()
-        if not force and self._jwks_cache and self._jwks_cache["expires"] > now:
-            return self._jwks_cache["value"]
+        cache = self._jwks_cache
+        # A forced refetch (unknown kid) happens at most once per jwks_cooldown.
+        if cache and (cache["fetched"] + self.jwks_cooldown > now if force else cache["expires"] > now):
+            return cache["value"]
         # While the issuer is unreachable, fail fast instead of fetching on every request.
         if self._jwks_failure and self._jwks_failure["until"] > now:
             if self._jwks_cache:
@@ -181,7 +186,7 @@ class Verifier:
                 return self._jwks_cache["value"]
             raise VerificationError("jwks_unavailable", self._jwks_failure["message"])
         self._jwks_failure = None
-        self._jwks_cache = {"value": response.json(), "expires": now + self.jwks_ttl}
+        self._jwks_cache = {"value": response.json(), "expires": now + self.jwks_ttl, "fetched": now}
         return self._jwks_cache["value"]
 
     def _status_bytes(self, uri: str) -> bytes:

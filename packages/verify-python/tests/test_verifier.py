@@ -141,6 +141,11 @@ class VerifierTest(unittest.TestCase):
         self.issuer.jwks = {"keys": []}
         self.verifier.jwks()  # cache a JWKS without the key
         self.issuer.jwks = old_jwks
+        # Within the cooldown an unknown kid costs no fetch (anyone can send one)...
+        self.assertEqual(self.verifier.verify_request(self.request(), action="hashbin:content:write")["code"], "unknown_kid")
+        self.assertEqual(self.issuer.count(JWKS_URL), 1)
+        # ...after it, the newly published key is fetched once.
+        self.clock.t += 30
         self.assertTrue(self.verifier.verify_request(self.request(), action="hashbin:content:write")["allow"])
         self.assertEqual(self.issuer.count(JWKS_URL), 2)
 

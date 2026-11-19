@@ -36,8 +36,9 @@ export function credentialFromRequest(request) {
 }
 
 /**
- * createVerifier({ audience, issuer, fetch, jwksTtl, statusTtl, replay, now, online })
+ * createVerifier({ audience, issuer, fetch, jwksTtl, jwksCooldown, statusTtl, replay, now, online })
  *   audience  — your audience name, e.g. "hashbin.org" (required)
+ *   jwksCooldown — seconds between JWKS refetches forced by an unknown kid (default 30)
  *   online    — { apiKey } to enable verifyOnline (POST {issuer}/api/v1/authorize)
  */
 export function createVerifier(options = {}) {
@@ -55,10 +56,13 @@ export function createVerifier(options = {}) {
 
   let jwksFailure = null; const statusFailures = new Map();
   const FAILURE_BACKOFF = options.failureBackoff ?? 30;
+  // An unknown kid forces a refetch (a new key may be out), but at most once per cooldown:
+  // anyone can send a credential with a made-up kid, and each would otherwise cost a JWKS fetch.
+  const JWKS_COOLDOWN = options.jwksCooldown ?? 30;
 
   async function jwks(force = false) {
     const now = clock();
-    if (!force && jwksCache && jwksCache.expires > now) return jwksCache.value;
+    if (jwksCache && (force ? jwksCache.fetched + JWKS_COOLDOWN > now : jwksCache.expires > now)) return jwksCache.value;
     // While the issuer is unreachable, fail fast instead of fetching on every request.
     if (jwksFailure && jwksFailure.until > now) {
       if (jwksCache) return jwksCache.value;
@@ -72,7 +76,7 @@ export function createVerifier(options = {}) {
       throw new VerificationError('jwks_unavailable', jwksFailure.message);
     }
     jwksFailure = null;
-    jwksCache = { value: await response.json(), expires: now + jwksTtl };
+    jwksCache = { value: await response.json(), expires: now + jwksTtl, fetched: now };
     return jwksCache.value;
   }
 

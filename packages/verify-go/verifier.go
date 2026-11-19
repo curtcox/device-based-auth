@@ -40,6 +40,9 @@ type Options struct {
 	// FailureBackoff (default 30 s): after a failed fetch, fail fast for this long instead of
 	// hitting an unreachable issuer on every request.
 	FailureBackoff time.Duration
+	// JWKSCooldown (default 30 s) spaces out the JWKS refetches an unknown kid forces: anyone
+	// can send a credential with a made-up kid, and each would otherwise cost a fetch.
+	JWKSCooldown time.Duration
 	// Replay is the DPoP proof replay cache; default a per-Verifier ReplayCache.
 	Replay Replay
 	// DisableReplay turns replay protection off (only for tests or a shared external check).
@@ -72,6 +75,7 @@ type Verifier struct {
 	jwksTTL   int64
 	statusTTL int64
 	backoff   int64
+	cooldown  int64
 	replay    Replay
 
 	mu             sync.Mutex
@@ -84,6 +88,7 @@ type Verifier struct {
 type jwksEntry struct {
 	value   *JWKS
 	expires int64
+	fetched int64
 }
 
 type statusEntry struct {
@@ -110,6 +115,7 @@ func NewVerifier(opts Options) (*Verifier, error) {
 	}
 	v := &Verifier{opts: opts, issuer: opts.Issuer, client: opts.HTTPClient, clock: opts.Now,
 		jwksTTL: seconds(opts.JWKSTTL, time.Hour), statusTTL: seconds(opts.StatusTTL, 5*time.Minute), backoff: seconds(opts.FailureBackoff, 30*time.Second),
+		cooldown:    seconds(opts.JWKSCooldown, 30*time.Second),
 		statusCache: map[string]statusEntry{}, statusFailures: map[string]fetchFailure{}}
 	if v.issuer == "" {
 		v.issuer = DefaultIssuer
@@ -161,13 +167,13 @@ func (v *Verifier) get(ctx context.Context, url, accept string) (body []byte, fa
 	return body, "", nil
 }
 
-// JWKS returns the issuer's key set, from cache unless force is set. While the issuer is
-// unreachable it serves the last good set (keys rotate slowly), and fails with
-// jwks_unavailable only when it has none.
+// JWKS returns the issuer's key set, from cache unless force is set; even forced, it refetches
+// at most once per JWKSCooldown. While the issuer is unreachable it serves the last good set
+// (keys rotate slowly), and fails with jwks_unavailable only when it has none.
 func (v *Verifier) JWKS(ctx context.Context, force bool) (*JWKS, error) {
 	now := v.clock()
 	v.mu.Lock()
-	if !force && v.jwksCache != nil && v.jwksCache.expires > now {
+	if c := v.jwksCache; c != nil && ((!force && c.expires > now) || (force && c.fetched+v.cooldown > now)) {
 		defer v.mu.Unlock()
 		return v.jwksCache.value, nil
 	}
@@ -198,7 +204,7 @@ func (v *Verifier) JWKS(ctx context.Context, force bool) (*JWKS, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dbaverify: JWKS is not JSON: %w", err)
 	}
-	v.jwksCache = &jwksEntry{value: jwks, expires: now + v.jwksTTL}
+	v.jwksCache = &jwksEntry{value: jwks, expires: now + v.jwksTTL, fetched: now}
 	return jwks, nil
 }
 

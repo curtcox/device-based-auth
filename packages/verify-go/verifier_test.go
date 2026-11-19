@@ -287,6 +287,14 @@ func TestKeyRotationRefetchesJWKS(t *testing.T) {
 	env.serveJWKS(previous, env.signer)
 	env.serveStatusList(testStatusURI, 3)
 	cred := env.credential(writeGrant, 4, CredentialTyp)
+	// Within the cooldown an unknown kid costs no fetch (anyone can send a made-up kid).
+	if d := mustDecide(t, v, deviceRequest(cred, env.proof("POST", testURL, cred, nil)), Check{Action: "hashbin:content:write"}); d.Code != "unknown_kid" {
+		t.Fatalf("inside cooldown: %+v", d)
+	}
+	if n := env.fetcher.count(DefaultIssuer + "/.well-known/jwks.json"); n != 1 {
+		t.Errorf("jwks fetched %d times inside the cooldown, want 1", n)
+	}
+	env.now += 30
 	if d := mustDecide(t, v, deviceRequest(cred, env.proof("POST", testURL, cred, nil)), Check{Action: "hashbin:content:write"}); !d.Allow {
 		t.Fatalf("new key: %+v", d)
 	}
