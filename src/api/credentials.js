@@ -22,7 +22,7 @@ export async function createCredential(request, env, auth) {
     source: parent ? 'delegation' : auth.key_id ? 'api' : 'dashboard',
     chargeId: key ? `issue-${auth.account}-${key}` : undefined,
     // A device may only delegate grants narrower than its own, and never past its own expiry.
-    parentGrants: parent?.grants, maxExp: parent?.exp, parentCid: parent?.cid, reinstate
+    parentGrants: parent?.grants, parentAud: parent?.aud, maxExp: parent?.exp, parentCid: parent?.cid, reinstate
   }), { person: !parent });
   return { credential: issued.credential, cid: issued.cid, device_id: issued.device_id, payload: issued.payload, cost_microdollars: issued.charged, balance_microdollars: issued.balance_microdollars, ...(issued.replay ? { idempotent_replay: true } : {}) };
 }

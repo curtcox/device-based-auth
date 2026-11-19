@@ -115,12 +115,15 @@ export async function requireFunds(env, account, amount) {
  * Issue a credential: validate, check funds, allocate a status index, sign, then charge and store
  * atomically in the account. Returns { credential, cid, payload, charged }.
  */
-export async function issueCredential(env, account, request, { source, chargeId, parentGrants, maxExp, parentCid, enrollmentToken, attestation, reinstate = false, now = Date.now() }) {
+export async function issueCredential(env, account, request, { source, chargeId, parentGrants, parentAud, maxExp, parentCid, enrollmentToken, attestation, reinstate = false, now = Date.now() }) {
   const jwk = cleanJwk(request.public_jwk);
   // `attestation` comes only from a verified key attestation (services/attestation.js), never
   // from a request body: cleanDevice drops anything else the caller put in device.
   const device = withAttestation(cleanDevice(request.device), attestation, Math.floor(now / 1000));
   const { aud, grants, lifetime } = await validateIssue(env, request);
+  // Audiences bound a credential as much as grants do: a site may accept any credential naming it
+  // to identify the account, so a delegate cannot name a site its delegator could not.
+  if (parentAud) assert(aud.every(a => parentAud.includes(a)), 'not_narrower', `aud must be within the delegating credential's audiences (${parentAud.join(', ')})`, 403);
   if (parentGrants) assert(grantsNarrow(grants, parentGrants), 'not_narrower', 'A device can only issue credentials whose grants are narrower than its own (same constraints, covered actions and resources)', 403);
   const amount = price('issue');
   await requireFunds(env, account, amount);

@@ -324,6 +324,11 @@ describe('API keys, metered reads and delegation', () => {
     expect(ok.status).toBe(200);
     expect(ok.body.payload.exp).toBeLessThanOrEqual(inspectCredential(credential).payload.exp);
     expect((await issue([{ actions: ['hashbin:content:write'] }])).body.code).toBe('not_narrower');
+    // Nor may it name an audience its own credential does not (cronly.org could identify the
+    // account from such a credential even with no cronly grants in it).
+    const wider = await call(env, 'POST', '/api/v1/credentials', { headers: await admin.headers('POST', '/api/v1/credentials', credential), body: { public_jwk: child.publicJwk, aud: ['hashbin.org', 'cronly.org'], grants: [{ actions: ['hashbin:content:write'], where: { source: 'network', countries: ['US'] } }] } });
+    expect(wider.status).toBe(403);
+    expect(wider.body.code).toBe('not_narrower');
     // One level only (master plan §13): a delegated credential cannot delegate again, even one
     // that was given dba:credentials:issue.
     const middle = await newDevice();
