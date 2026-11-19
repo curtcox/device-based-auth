@@ -262,6 +262,9 @@ describe('TOTP and security-key gates (G4)', () => {
     const pending = await ask();
     expect(pending.gate_request.approve_url).toMatch(/^http:\/\/localhost:8787\/gate\.html#dbag_/);
     const link = linkOf(pending.gate_request.approve_url);
+    // The owner's dashboard list links to the same approval page.
+    const listed = (await call(env, 'GET', '/api/v1/gate-requests', { auth: 'alice' })).body.items.find(r => r.id === pending.gate_request.id);
+    expect(linkOf(listed.approve_url)).toBe(link);
     const view = (await call(env, 'GET', `/api/v1/gate-links/${link}`)).body;
     expect(view).toMatchObject({ id: pending.gate_request.id, action: 'hashbin:content:delete', status: 'pending', factors: { entries: [{ gates: [{ id: gate, kind: 'totp', label: 'Authenticator' }] }] } });
     const code = await codeAt(secret, t);

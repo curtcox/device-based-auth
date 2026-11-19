@@ -387,34 +387,64 @@ async function devices() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Step-up approvals
+// Approvals: every gate request still waiting or approved (step-up is the owner gate, STATUS B7)
+
+/** What a gate request asks for, in words. */
+function requestSubject(r) {
+  switch (r.purpose) {
+    case 'authorize': return [h('span', { class: 'mono' }, r.action), h('div', { class: 'small muted' }, `on ${r.audience}${r.resource ? ` · resource ${r.resource}` : ''}`)];
+    case 'confirm': return [h('span', {}, 'Confirm this credential'), h('div', { class: 'small muted' }, 'periodic confirmation: it stops working without one')];
+    case 'sign_in': return [h('span', {}, `Sign in to ${r.audience}`), h('div', { class: 'small muted' }, 'with Sign in with devicebasedauth.org')];
+    case 'dashboard': return [h('span', {}, 'Sign in to this dashboard'), h('div', { class: 'small muted' }, 'a new session waits for its sign-in gate')];
+    case 'settings': return [h('span', {}, 'Loosen your sign-in gates'), h('div', { class: 'small muted' }, 'a change waits for your current gates')];
+    default: return [h('span', {}, r.purpose)];
+  }
+}
 
 async function approvals(_arg, current) {
   const list = h('div', { id: 'approval-list' });
+  let labels = new Map();
+  const gateName = g => g.id === 'owner' ? 'You (this dashboard)' : `${labels.get(g.id) || g.id} (${GATE_KINDS[g.kind] || g.kind})`;
+  const entryCell = (r, e, index) => {
+    const waiting = r.status === 'pending' && !e.answer && !e.outcome && e.expires_in > 0;
+    const owner = e.gates.some(g => g.id === 'owner');
+    const factor = e.gates.some(g => g.kind === 'totp' || g.kind === 'webauthn');
+    return h('div', { class: 'stack small', dataset: { entry: index } },
+      h('div', {}, e.gates.map(gateName).join(' or ')),
+      h('div', { class: 'muted' }, e.answer ? `${e.answer.decision === 'allow' ? 'Allowed' : 'Denied'} by ${e.answer.gate === 'owner' ? 'you' : labels.get(e.answer.gate) || e.answer.gate}`
+        : e.outcome ? ({ timeout: `${e.outcome === 'allow' ? 'Allowed' : 'Denied'}: nobody answered`, by_timeout_refused: 'Denied: nobody answered, and the site refuses allows by timeout' }[e.by] || (e.outcome === 'allow' ? 'Allowed' : 'Denied'))
+          : waiting ? `${e.on_timeout === 'allow' ? 'Allowed' : 'Denied'} ${relative(Math.floor(Date.now() / 1000) + e.expires_in)} unless answered` : 'No longer waiting'),
+      waiting && owner ? h('div', { class: 'actions' },
+        h('button', { type: 'button', class: 'small', onclick: () => decide(r, index, true) }, 'Approve'),
+        h('button', { type: 'button', class: 'secondary small', onclick: () => decide(r, index, false) }, 'Deny')) : null,
+      waiting && factor && r.approve_url ? h('a', { href: r.approve_url, class: 'button small secondary' }, 'Answer with a code or security key') : null);
+  };
   const load = async () => {
     let data;
-    try { data = await api('/api/v1/step-ups'); } catch (error) { replace(list, errorBox(error)); return; }
+    try { data = await api('/api/v1/gate-requests'); } catch (error) { replace(list, errorBox(error)); return; }
     if (!current()) return;
     if (!data.items.length) { replace(list, h('p', { class: 'muted' }, 'Nothing is waiting for your approval.')); return; }
-    replace(list, table(['Device', 'Wants to', 'Requested', 'Decision'], data.items.map(s => [
-      [h('strong', {}, s.device_name || 'Unnamed device'), h('div', { class: 'small' }, h('a', { href: `#credential/${enc(s.cid)}` }, s.cid))],
-      [h('span', { class: 'mono' }, s.action), h('div', { class: 'small muted' }, `on ${s.audience}${s.resource ? ` · resource ${s.resource}` : ''}`)],
-      [relative(Math.floor(s.requested_at / 1000)), h('div', { class: 'small muted' }, s.approved_at ? `approved, usable until ${date(s.approved_until)}` : `expires ${relative(Math.floor(s.expires_at / 1000))}`)],
-      s.approved_at ? badge('approved') : h('div', { class: 'actions' },
-        h('button', { type: 'button', class: 'small', onclick: () => decide(s.id, true) }, 'Approve'),
-        h('button', { type: 'button', class: 'secondary small', onclick: () => decide(s.id, false) }, 'Deny'))
+    replace(list, table(['Asked by', 'Wants to', 'Requested', 'Gates', 'Status'], data.items.map(r => [
+      [h('strong', {}, r.device_name || (r.purpose === 'dashboard' || r.purpose === 'settings' ? 'You' : 'Unnamed device')), r.cid ? h('div', { class: 'small' }, h('a', { href: `#credential/${enc(r.cid)}` }, r.cid)) : null],
+      requestSubject(r),
+      relative(Math.floor(r.created_at / 1000)),
+      r.entries.map((e, i) => entryCell(r, e, i)),
+      [badge(r.status), r.by_timeout ? h('div', { class: 'small muted' }, 'by timeout') : null]
     ])));
   };
-  const decide = async (id, approve) => {
-    try { await api(`/api/v1/step-ups/${enc(id)}/${approve ? 'approve' : 'deny'}`, { method: 'POST', body: {} }); flash('success', approve ? 'Approved for the next use (within 5 minutes).' : 'Denied.'); }
-    catch (error) { flash('error', error.message); }
+  const decide = async (r, entry, approve) => {
+    try {
+      const answered = await api(`/api/v1/gate-requests/${enc(r.id)}/answer`, { method: 'POST', body: { entry, gate: 'owner', decision: approve ? 'allow' : 'deny' } });
+      flash('success', !approve ? 'Denied.' : answered.status === 'allowed' ? 'Approved for the next use.' : 'Approved; other gates must still answer.');
+    } catch (error) { flash('error', error.message); }
     await load();
   };
+  try { labels = new Map((await api('/api/v1/gates')).items.map(g => [g.id, g.label])); } catch { /* ids are shown instead */ }
   await load();
   pollTimer = setInterval(() => { if (current()) load(); }, 10000);
   return [
     h('h1', {}, 'Approvals'),
-    h('p', { class: 'muted' }, 'Grants with require.step_up ask you to approve each use. Requests expire after 10 minutes; this list refreshes every 10 seconds.'),
+    h('p', { class: 'muted' }, 'Requests waiting for your gates: grants with require.gates or require.step_up, periodic confirmations, and sign-ins with sign-in gates. Approve those that name you; codes and security keys answer on their approval page; devices and services answer on their own. This list refreshes every 10 seconds.'),
     list
   ];
 }

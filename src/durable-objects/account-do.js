@@ -1311,12 +1311,15 @@ export class AccountDO {
    * Gate requests still waiting or approved. `device_id` limits the list to requests one of that
    * device's dba-device gates can answer (what the device itself may see).
    */
-  async op_list_gate_requests({ device_id }, now) {
+  async op_list_gate_requests({ device_id, account }, now) {
     const gates = device_id ? new Set([...(await this.storage.list({ prefix: 'gate:' })).values()].filter(g => g.kind === 'dba-device' && g.device_id === device_id).map(g => g.id)) : null;
     const live = await this.liveRequests(now);
     // A device is also told which of its gates may answer each entry still waiting (answer_as),
     // so a CLI or app can answer without reading the gate registry (which needs gates:read).
-    return { items: live.filter(req => !gates || req.entries.some(e => e.gates.some(g => gates.has(g.id)))).map(req => withAnswerAs(visibleRequest(req, now), gates)) };
+    if (gates) return { items: live.filter(req => req.entries.some(e => e.gates.some(g => gates.has(g.id)))).map(req => withAnswerAs(visibleRequest(req, now), gates)) };
+    // The owner's dashboard links each waiting request that a code or security key answers to its
+    // approval page (the owner's session cannot stand in for the factor, plan §4.3).
+    return { items: await Promise.all(live.map(async req => ({ ...visibleRequest(req, now), ...(account && !req.outcome && hasFactorGates(req) ? { approve_url: await approvalLink(this.env, account, req) } : {}) }))) };
   }
 
   async op_get_gate_request({ id, device_id }, now) {

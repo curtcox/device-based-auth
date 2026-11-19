@@ -539,9 +539,12 @@ STATUS row updated.
   needs a QR encoder, either written here or a vendored MIT one such as qrcode-generator, which is
   the owner's call since it ships third-party code to every visitor); `--wait` on CLI calls that
   hit a gate (sites pass `gate_pending` on in their own way; the SDK has `fetchWithGates()`).
-- Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
-  step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
-  come with G9 (or earlier with G4's approval page).
+- **G9, dashboard approvals (2026-11-19).** The dashboard's Approvals page lists every gate request
+  still waiting or approved (`GET /api/v1/gate-requests`; step-up is its owner gate), whatever its
+  purpose (use, confirmation, sign-in, dashboard, settings), with each entry's gates by label, what
+  happens when nobody answers, and Approve/Deny where the owner gate may answer. For the owner the
+  list carries `approve_url` on waiting requests with code or security-key gates, linked as "Answer
+  with a code or security key" (a session never stands in for a factor).
 
 ## 12. Open questions for later
 

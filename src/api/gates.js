@@ -85,7 +85,7 @@ function answerer(auth) {
 export async function gateRequests(route, request, env, auth) {
   const who = answerer(auth);
   const device_id = who.kind === 'device' ? who.device_id : undefined;
-  if (request.method === 'GET' && !route.params.id) return rpc(env.ACCOUNTS, auth.account, 'list-gate-requests', { device_id });
+  if (request.method === 'GET' && !route.params.id) return rpc(env.ACCOUNTS, auth.account, 'list-gate-requests', { device_id, account: auth.account });
   if (request.method === 'GET') return rpc(env.ACCOUNTS, auth.account, 'get-gate-request', { id: route.params.id, device_id });
   const answer = cleanAnswer(await readJson(request, 32768));
   return rpc(env.ACCOUNTS, auth.account, 'answer-gate-request', { id: route.params.id, ...answer, answerer: who, account: auth.account });

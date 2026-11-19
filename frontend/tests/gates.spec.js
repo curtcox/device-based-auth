@@ -40,7 +40,12 @@ test('an authenticator app gate: set up in the dashboard, approved with a code, 
   const ask = await gated(request, owner, gate);
   const pending = await ask();
   expect(pending.code).toBe('gate_pending');
-  await page.goto(pending.gate_request.approve_url.replace('http://localhost:8787', ''));
+  // The dashboard's Approvals page lists it and links to its approval page (the session cannot
+  // stand in for the code).
+  await page.getByRole('link', { name: 'Approvals', exact: true }).click();
+  await expect(page.locator('#approval-list')).toContainText('Pixel authenticator (Authenticator app (TOTP))');
+  await expect(page.locator('#approval-list').getByRole('button', { name: 'Approve' })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Answer with a code or security key' }).click();
   await expect(page.locator('#gate-summary')).toContainText('Release bot');
   await expect(page.locator('#gate-summary')).toContainText('hashbin:content:delete');
   // The activation spent this step's code; the next step's is accepted (one step of clock drift).
