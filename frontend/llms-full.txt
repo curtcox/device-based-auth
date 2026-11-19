@@ -426,6 +426,12 @@ Status lists follow the IETF OAuth Token Status List draft: 1 bit per credential
 `floor(idx / 8)`, bit `idx mod 8` (least significant first), zlib-compressed and base64url-encoded
 in the `status_list.lst` claim with `bits: 1`. Revocations are published within 60 seconds.
 
+A list carries `exp` (the service signs lists for 24 hours and re-signs them every 12); verifiers
+refuse a list without one, or past it, as `status_unavailable`. The issuer never clears a bit
+(indexes are not reused; a reinstated device gets a new credential and index), so verifiers keep
+every bit they have seen set, OR-ing each newly fetched list into the one they hold: an older copy
+served by a stale cache cannot bring a revoked credential back.
+
 A credential's `idx` is an integer from 0 to 2³¹−1; any other value makes the credential
 `invalid_claims`. Verifiers compute the byte and bit with integer arithmetic, never with 32-bit
 bitwise operators, and read bits past the end of a list as 0.

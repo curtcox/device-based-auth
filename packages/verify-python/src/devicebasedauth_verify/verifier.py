@@ -122,6 +122,15 @@ def credential_from_request(request) -> Optional[dict]:
     return None
 
 
+def _union_bits(a: bytes, b: bytes) -> bytes:
+    """Bitwise OR of two status lists (the longer length)."""
+    longer, shorter = (a, b) if len(a) >= len(b) else (b, a)
+    out = bytearray(longer)
+    for i, byte in enumerate(shorter):
+        out[i] |= byte
+    return bytes(out)
+
+
 def _kid_of(jws: str):
     try:
         return _js.get(unb64u_json(jws.split(".")[0]), "kid")
@@ -216,12 +225,18 @@ class Verifier:
                 or not _js.strict_eq(decoded["payload"].get("sub"), uri) or not _js.strict_eq(decoded["payload"].get("iss"), self.issuer)):
             raise VerificationError("status_unavailable", "Status list did not verify")
         exp = decoded["payload"].get("exp")
-        if _js.is_safe_integer(exp) and exp < now - CLOCK_SKEW:
+        if not _js.is_safe_integer(exp):
+            raise VerificationError("status_unavailable", "Status list has no expiry")
+        if exp < now - CLOCK_SKEW:
             raise VerificationError("status_unavailable", "Status list has expired")
         try:
             data = decode_status_list(decoded["payload"].get("status_list"))
         except (ValueError, TypeError):
             raise VerificationError("status_unavailable", "Status list could not be decoded") from None
+        # The issuer never clears a bit (indexes are not reused), so every bit seen set stays set:
+        # an older copy from a stale cache cannot bring a revoked credential back (spec/credential.md §7).
+        if cached:
+            data = _union_bits(data, cached["bytes"])
         ttl_claim = decoded["payload"].get("ttl")
         ttl = min(self.status_ttl, ttl_claim if _js.is_safe_integer(ttl_claim) else self.status_ttl)
         self._status_cache[uri] = {"bytes": data, "expires": now + ttl}

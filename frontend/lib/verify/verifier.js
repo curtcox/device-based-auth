@@ -9,6 +9,15 @@ import { evaluateGrants } from './grants.js';
 import { decodeStatusList, getBit } from './status-list.js';
 import { verifyEvent } from './events.js';
 
+/** Bitwise OR of two status lists (the longer length). */
+function unionBits(a, b) {
+  const out = new Uint8Array(Math.max(a.length, b.length));
+  out.set(a.length >= b.length ? a : b);
+  const shorter = a.length >= b.length ? b : a;
+  for (let i = 0; i < shorter.length; i++) out[i] |= shorter[i];
+  return out;
+}
+
 /** Read Cloudflare's request.cf (when present) into a network location. */
 export function networkLocation(request) {
   const cf = request.cf || {};
@@ -99,9 +108,13 @@ export function createVerifier(options = {}) {
     const key = keys.keys?.find(k => k.kid === kid);
     if (key) { try { decoded = await verifyJws(jws, key); } catch { decoded = null; } }
     if (!decoded || decoded.header.typ !== STATUS_LIST_TYP || decoded.payload.sub !== uri || decoded.payload.iss !== issuer) throw new VerificationError('status_unavailable', 'Status list did not verify');
-    if (Number.isSafeInteger(decoded.payload.exp) && decoded.payload.exp < now - CLOCK_SKEW) throw new VerificationError('status_unavailable', 'Status list has expired');
+    if (!Number.isSafeInteger(decoded.payload.exp)) throw new VerificationError('status_unavailable', 'Status list has no expiry');
+    if (decoded.payload.exp < now - CLOCK_SKEW) throw new VerificationError('status_unavailable', 'Status list has expired');
     let bytes;
     try { bytes = await decodeStatusList(decoded.payload.status_list); } catch { throw new VerificationError('status_unavailable', 'Status list could not be decoded'); }
+    // The issuer never clears a bit (indexes are not reused), so every bit seen set stays set: an
+    // older copy from a stale cache cannot bring a revoked credential back (spec/credential.md §7).
+    if (cached) bytes = unionBits(bytes, cached.bytes);
     const ttl = Math.min(statusTtl, Number.isSafeInteger(decoded.payload.ttl) ? decoded.payload.ttl : statusTtl);
     statusCache.set(uri, { bytes, expires: now + ttl });
     return bytes;

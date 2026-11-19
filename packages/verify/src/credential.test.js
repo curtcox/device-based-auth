@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateKeyPair, exportPublicJwk, jwkThumbprint, b64u, unb64u, decodeJws } from './jose.js';
+import { generateKeyPair, exportPublicJwk, jwkThumbprint, b64u, unb64u, decodeJws, signJws } from './jose.js';
 import { verifyCredential, createProof, verifyProof, ReplayCache, inspectCredential } from './credential.js';
 import { issuerSigner, jwksFor, signCredential, signStatusList, signAccessToken } from './issuer.js';
 import { getBit, setBit, encodeStatusList, decodeStatusList } from './status-list.js';
@@ -149,6 +149,24 @@ describe('verifier', () => {
     expect(calls).toBe(1);
     expect(await down.verifyRequest(new Request(url, { headers: { Authorization: 'DBA not-a-jws' } }), { action: 'x:y' })).toMatchObject({ code: 'invalid_format' });
     expect(calls).toBe(1);
+  });
+  it('keeps a revocation it has seen when a stale copy of the list comes back, and refuses lists without exp', async () => {
+    const key = await issuerKey(); const signer = await issuerSigner(key); const dev = await device();
+    const credential = await signCredential(payload(dev), signer);
+    const uri = `${ISSUER}/status/v1/lists/0`;
+    const fresh = await signStatusList({ uri, bytes: setBit(new Uint8Array(1), 5), issuer: ISSUER, now: NOW }, signer);
+    const stale = await signStatusList({ uri, bytes: new Uint8Array(1), issuer: ISSUER, now: NOW - 3600 }, signer);
+    let served = fresh; let now = NOW + 1;
+    const fetch = async url => url.endsWith('/.well-known/jwks.json') ? Response.json(jwksFor([key])) : new Response(served);
+    const verifier = createVerifier({ audience: 'hashbin.org', fetch, now: () => now });
+    await expect(verifier.verify(credential)).rejects.toMatchObject({ code: 'revoked' });
+    // A CDN edge that still holds the list from before the revocation cannot undo it.
+    served = stale; now += 301;
+    await expect(verifier.verify(credential)).rejects.toMatchObject({ code: 'revoked' });
+    const noExp = await signJws({ typ: 'statuslist+jwt', kid: signer.kid }, { iss: ISSUER, sub: uri, iat: NOW, ttl: 60, status_list: await encodeStatusList(new Uint8Array(1)) }, signer.key);
+    served = noExp;
+    const other = createVerifier({ audience: 'hashbin.org', fetch, now: () => now });
+    await expect(other.verify(credential)).rejects.toMatchObject({ code: 'status_unavailable' });
   });
   it('refetches the JWKS for an unknown kid at most once per cooldown', async () => {
     const key = await issuerKey(); const newKey = await issuerKey('k2'); const dev = await device();

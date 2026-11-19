@@ -208,6 +208,18 @@ func (v *Verifier) JWKS(ctx context.Context, force bool) (*JWKS, error) {
 	return jwks, nil
 }
 
+// unionBits is the bitwise OR of two status lists (the longer length).
+func unionBits(a, b []byte) []byte {
+	if len(a) < len(b) {
+		a, b = b, a
+	}
+	out := append([]byte(nil), a...)
+	for i, c := range b {
+		out[i] |= c
+	}
+	return out
+}
+
 // statusBits returns the verified, decoded status list at uri.
 func (v *Verifier) statusBits(ctx context.Context, uri string) ([]byte, error) {
 	now := v.clock()
@@ -263,7 +275,11 @@ func (v *Verifier) statusBits(ctx context.Context, uri string) ([]byte, error) {
 	if !strictEqual(typ, StatusListTyp) || !strictEqual(sub, uri) || !strictEqual(iss, v.issuer) {
 		return nil, fail("status_unavailable", "Status list did not verify")
 	}
-	if exp, _ := decoded.Payload.Get("exp"); isSafeInteger(exp) && exp.(float64) < float64(now-ClockSkew) {
+	exp, _ := decoded.Payload.Get("exp")
+	if !isSafeInteger(exp) {
+		return nil, fail("status_unavailable", "Status list has no expiry")
+	}
+	if exp.(float64) < float64(now-ClockSkew) {
 		return nil, fail("status_unavailable", "Status list has expired")
 	}
 	claim, _ := decoded.Payload.Get("status_list")
@@ -271,6 +287,13 @@ func (v *Verifier) statusBits(ctx context.Context, uri string) ([]byte, error) {
 	if err != nil {
 		return nil, fail("status_unavailable", "Status list could not be decoded")
 	}
+	// The issuer never clears a bit (indexes are not reused), so every bit seen set stays set: an
+	// older copy from a stale cache cannot bring a revoked credential back (spec/credential.md §7).
+	v.mu.Lock()
+	if previous, ok := v.statusCache[uri]; ok {
+		bits = unionBits(bits, previous.bits)
+	}
+	v.mu.Unlock()
 	ttl := v.statusTTL
 	if t, _ := decoded.Payload.Get("ttl"); isSafeInteger(t) && int64(t.(float64)) < ttl {
 		ttl = int64(t.(float64))

@@ -314,6 +314,38 @@ func TestStatusListMustMatchURI(t *testing.T) {
 	}
 }
 
+func TestStaleStatusListCannotUndoRevocation(t *testing.T) {
+	env := newTestEnv(t)
+	v := env.verifier(nil)
+	cred := env.credential(writeGrant, 3, CredentialTyp) // index 3 is revoked in the served list
+	decide := func() *Decision {
+		return mustDecide(t, v, deviceRequest(cred, env.proof("POST", testURL, cred, nil)), Check{Action: "hashbin:content:write"})
+	}
+	if d := decide(); d.Code != "revoked" {
+		t.Fatalf("first: %+v", d)
+	}
+	// A CDN edge still serving the list from before the revocation cannot undo it.
+	env.serveStatusList(testStatusURI)
+	env.now += 61
+	if d := decide(); d.Code != "revoked" || env.fetcher.count(testStatusURI) != 2 {
+		t.Fatalf("stale list: %+v (fetches %d)", d, env.fetcher.count(testStatusURI))
+	}
+}
+
+func TestStatusListWithoutExpIsRefused(t *testing.T) {
+	env := newTestEnv(t)
+	payload := NewObject("iss", DefaultIssuer, "sub", testStatusURI, "iat", float64(env.now), "ttl", float64(60), "status_list", EncodeStatusList(nil))
+	jwt, err := SignJWS(NewObject("typ", StatusListTyp, "kid", env.signer.Kid), payload, env.signer.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.fetcher.set(testStatusURI, 200, jwt)
+	cred := env.credential(writeGrant, 4, CredentialTyp)
+	if d := mustDecide(t, env.verifier(nil), deviceRequest(cred, env.proof("POST", testURL, cred, nil)), Check{Action: "hashbin:content:write"}); d.Code != "status_unavailable" {
+		t.Fatalf("decision = %+v", d)
+	}
+}
+
 func TestAccessTokens(t *testing.T) {
 	env := newTestEnv(t)
 	token := env.credential(writeGrant, 4, AccessTyp)

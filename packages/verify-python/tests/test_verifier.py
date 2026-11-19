@@ -119,6 +119,26 @@ class VerifierTest(unittest.TestCase):
         result = verifier.verify_request(self.request(credential=credential), action="hashbin:content:write")
         self.assertEqual((result["status"], result["code"]), (503, "status_unavailable"))
 
+    def test_a_stale_copy_of_the_list_cannot_undo_a_revocation(self):
+        self.issuer.revoked[0] = 1 << 3  # idx 3
+        self.assertEqual(self.verifier.verify_request(self.request(), action="hashbin:content:write")["code"], "revoked")
+        self.issuer.revoked[0] = 0  # a CDN edge still serving the list from before the revocation
+        self.clock.t += 61
+        result = self.verifier.verify_request(self.request(), action="hashbin:content:write")
+        self.assertEqual((self.issuer.count(self.issuer.STATUS_URI), result["code"]), (2, "revoked"))
+
+    def test_status_list_without_exp_is_refused(self):
+        from devicebasedauth_verify import sign_jws, encode_status_list
+
+        def fetch(url, **kw):
+            if url == self.issuer.STATUS_URI:
+                payload = {"iss": self.issuer.ISSUER, "sub": url, "iat": self.clock(), "ttl": 60, "status_list": encode_status_list(bytes(16))}
+                return FetchResponse(200, sign_jws({"typ": "statuslist+jwt", "kid": self.issuer.signer["kid"]}, payload, self.issuer.signer["key"]).encode())
+            return self.issuer.fetch(url, **kw)
+        verifier = create_verifier("hashbin.org", fetch=fetch, now=self.clock)
+        result = verifier.verify_request(self.request(), action="hashbin:content:write")
+        self.assertEqual((result["status"], result["code"]), (503, "status_unavailable"))
+
     def test_issuer_down_fails_closed_with_backoff(self):
         self.issuer.down = True
         first = self.verifier.verify_request(self.request(), action="hashbin:content:write")
