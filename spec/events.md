@@ -142,5 +142,6 @@ A non-2xx status, a timeout or a connection failure marks the gate `failed` for 
 entry then waits for its deadline like an unanswered one (decision D12: an unreachable gate is
 silence). The first answer to an entry settles it; later answers are refused (409), and answers
 after the deadline 410. Webhook gates are charged at their own price per request
-(docs/business/pricing.md). A runnable service is in
-[`docs/samples/gate-webhook.mjs`](../docs/samples/gate-webhook.mjs).
+(docs/business/pricing.md). Runnable services are in
+[`docs/samples/gate-webhook.mjs`](../docs/samples/gate-webhook.mjs) (Node) and
+[`docs/samples/gate_webhook.py`](../docs/samples/gate_webhook.py) (Python).

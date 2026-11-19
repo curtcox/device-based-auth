@@ -508,6 +508,9 @@ STATUS row updated.
   action and for signing in, require gates (optionally of kinds) and refuse allows by timeout;
   saved with `PATCH /api/v1/audiences/{name}` (catalog and `sign_in_gates`, the audience price).
   The catalog table shows each action's policy.
+- **G9, Python webhook sample (2026-11-19).** `docs/samples/gate_webhook.py` (standard library HTTP
+  server, `cryptography`, `requests`) runs in CI through the same checks as the Node service
+  (`checkGateService` in the harness): approved at once, refused, approved by a late signed answer.
 - Not yet: the dashboard's approvals page still lists only owner-answerable requests (the
   step-up view); a gates page, the grant builder's gate fields and the CLI's `dba approvals`
   come with G9 (or earlier with G4's approval page).

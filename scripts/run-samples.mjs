@@ -51,6 +51,11 @@ const SAMPLES = [
   { name: 'worker-middleware.mjs', run: workerMiddleware },
   { name: 'gate-webhook.mjs', run: gateWebhook },
   {
+    name: 'gate_webhook.py', run: gateWebhookPython,
+    needs: () => has('python3', ['-c', 'import cryptography, requests']) || 'python3 with cryptography and requests',
+    expect: [/^\{"url": "http:\/\/localhost:\d+\/dba-gate", "public_jwk": \{"kty": "EC"/m, /^ok {3}approved at once/m, /^ok {3}refused at once/m, /^ok {3}approved by a late, signed answer/m]
+  },
+  {
     // The owner approves the laptop (the second enrollment) with "confirm every hour with Sample phone".
     name: 'approve-from-cli.sh', command: ['bash', 'docs/samples/approve-from-cli.sh'],
     setup: async () => ({ DBA_API_KEY: (await api('POST', '/api/v1/keys', { name: 'cli sample', scopes: ['gates:read', 'gates:write'] })).secret }),
@@ -216,10 +221,37 @@ async function workerMiddleware() {
 async function gateWebhook() {
   const { startApprovalService } = await import('../docs/samples/gate-webhook.mjs');
   const service = await startApprovalService({ origin: ORIGIN, decide: request => request.action === 'hashbin:content:write' ? (request.resource?.startsWith('later:') ? 'later' : 'allow') : 'deny' });
+  return checkGateService(service, 'Sample approval service');
+}
+
+/**
+ * The Python approval service: started as its own process, which prints its URL and key as one
+ * JSON line and answers "later:" resources itself through the callback a second later.
+ */
+async function gateWebhookPython() {
+  const child = spawn('python3', ['docs/samples/gate_webhook.py'], { cwd: ROOT, env: { ...process.env, DBA_ORIGIN: ORIGIN }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  const started = await new Promise(resolve => {
+    const timer = setTimeout(() => resolve(null), 20_000);
+    child.stdout.on('data', data => { output += data; const line = output.split('\n')[0]; if (output.includes('\n')) { clearTimeout(timer); try { resolve(JSON.parse(line)); } catch { resolve(null); } } });
+    child.stderr.on('data', data => { output += data; });
+    child.on('exit', () => { clearTimeout(timer); resolve(null); });
+  });
+  if (!started) { child.kill(); return { code: 1, output: `the service did not start:\n${output}` }; }
+  const result = await checkGateService({ url: started.url, publicJwk: started.public_jwk, pending: [], close: () => child.kill() }, 'Sample Python approval service');
+  return { ...result, output: `${output.split('\n')[0]}\n${result.output}` };
+}
+
+/**
+ * Register an approval service as a webhook gate, enroll a device whose grants need it, and ask
+ * hashbin.org's online check for an action it approves at once, one it refuses, and one it
+ * answers late (the Node service through `answerLater`, the Python one by itself).
+ */
+async function checkGateService(service, label) {
   const lines = []; let ok = true;
   const check = (label, pass, detail) => { ok &&= pass; lines.push(`${pass ? 'ok  ' : 'FAIL'} ${label}: ${detail}`); };
   try {
-    const gate = await api('POST', '/api/v1/gates', { kind: 'webhook', label: 'Sample approval service', url: service.url, public_jwk: service.publicJwk });
+    const gate = await api('POST', '/api/v1/gates', { kind: 'webhook', label, url: service.url, public_jwk: service.publicJwk });
     const device = await enrollDevice({ origin: ORIGIN, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write', 'hashbin:content:delete'], require: { gates: [{ any: [gate.id], timeout_s: 60 }] } }], name: 'gated sample', onApprovalUrl: url => approve(new URL(url).hash.slice(1)) });
     await api('POST', '/api/v1/dev/deposit', { amount_microdollars: 1_000_000 }, 'operator');
     const key = await api('POST', '/api/v1/keys', { name: 'gate sample verifier', scopes: ['authorize'] }, 'operator');
