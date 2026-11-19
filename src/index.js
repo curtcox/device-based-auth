@@ -1,4 +1,4 @@
-import { PUBLIC, SESSION, DEVICE, AUTHENTICATED, canAccess } from './auth/scopes.js';
+import { PUBLIC, SESSION, DEVICE, AUTHENTICATED, canAccess, paysForReads } from './auth/scopes.js';
 import { authenticate } from './auth/middleware.js';
 import { clerkWebhook } from './auth/clerk-webhook.js';
 import { checkout, stripeWebhook } from './api/payments.js';
@@ -224,8 +224,6 @@ function forwardHeaders(request) {
   return headers;
 }
 
-/** True when the caller pays for reads: API keys and non-dashboard devices. */
-const paysForReads = auth => !!auth && (auth.kind === 'key' || (auth.kind === 'device' && !canAccess({ ...auth, session: false }, SESSION)));
 const meteredRead = (request, auth) => request.method === 'GET' && paysForReads(auth);
 
 const worker = {

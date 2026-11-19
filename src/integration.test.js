@@ -380,6 +380,15 @@ describe('public endpoints', () => {
     expect((await call(env, 'GET', '/api/v1/quote?op=issue')).body.quote_microdollars).toBe(85);
     expect((await call(env, 'GET', '/api/v1/audiences?mine=1', { auth: 'operator' })).body.items.map(a => a.name)).toContain('hashbin.org');
     expect((await call(env, 'GET', '/api/v1/audiences?mine=1')).status).toBe(401);
+    // The public route checks the scope itself and meters the read like any other.
+    await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'operator', body: { amount_microdollars: 1_000_000 } });
+    const narrow = await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'n', scopes: ['authorize'] } });
+    expect((await call(env, 'GET', '/api/v1/audiences?mine=1', { auth: `ApiKey ${narrow.body.secret}` })).body.code).toBe('insufficient_scope');
+    const reader = await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'r', scopes: ['audiences:read'] } });
+    const mine = await call(env, 'GET', '/api/v1/audiences?mine=1', { auth: `ApiKey ${reader.body.secret}` });
+    expect(mine.body.items.map(a => a.name)).toContain('hashbin.org');
+    expect(mine.body.cost_microdollars).toBe(5);
+    expect(mine.headers.get('X-DBA-Cost-Microdollars')).toBe('5');
     const list = await call(env, 'GET', '/status/v1/lists/0');
     expect(list.headers.get('Content-Type')).toBe('application/statuslist+jwt');
     expect((await call(env, 'GET', '/status/v1/lists/99')).status).toBe(404);

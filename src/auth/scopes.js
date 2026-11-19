@@ -37,3 +37,9 @@ export function canAccess(auth, access) {
   if (!USER_SCOPES.includes(access)) return false;
   return auth.session === true || !!auth.scopes?.includes(access) || deviceAllows(auth, `dba:${access}`) || deviceAllows(auth, 'dba:session');
 }
+
+/**
+ * True when the caller pays for reads: API keys (and connected apps) and devices not signed in to
+ * the dashboard. Reads from the dashboard are free.
+ */
+export const paysForReads = auth => !!auth && (auth.kind === 'key' || (auth.kind === 'device' && !canAccess({ ...auth, session: false }, SESSION)));
