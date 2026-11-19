@@ -75,4 +75,22 @@ describe('recent sign-in for account-control operations (S8)', () => {
     expect((await patch(stale('alice'), { max_renewals_per_credential_per_month: 4 })).status).toBe(200);
     expect((await patch(fresh('alice'), { max_issues_per_day: 1000, max_renewals_per_credential_per_month: null })).status).toBe(200);
   });
+
+  it('lets an API key grant only the dba:* actions within its own scopes', async () => {
+    const created = await call(env, 'POST', '/api/v1/keys', { auth: fresh('alice'), body: { name: 'ci', scopes: ['credentials:issue', 'credentials:read'] } });
+    const key = `ApiKey ${created.body.secret}`;
+    const issue = async grants => call(env, 'POST', '/api/v1/credentials', { auth: key, body: { public_jwk: (await newDevice()).publicJwk, aud: ['devicebasedauth.org', 'hashbin.org'], grants } });
+    // A key with only credentials:issue once minted a dba:session device with every scope.
+    for (const grants of [[{ actions: ['dba:session'] }], [{ actions: ['dba:*'] }], [{ actions: ['dba:credentials:*'] }], [{ actions: ['dba:credentials:revoke'] }], [{ actions: ['hashbin:content:write'] }, { actions: ['dba:audiences:write'] }]]) {
+      const refused = await issue(grants);
+      expect(refused.status, JSON.stringify(grants)).toBe(403);
+      expect(refused.body.code).toBe('insufficient_scope');
+    }
+    expect((await issue([{ actions: ['dba:credentials:issue', 'dba:credentials:read'] }, { actions: ['hashbin:*'] }])).status).toBe(200);
+    const token = await call(env, 'POST', '/api/v1/enrollment-tokens', { auth: key, body: { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:session'] }] } });
+    expect(token.body.code).toBe('insufficient_scope');
+    expect((await call(env, 'POST', '/api/v1/enrollment-tokens', { auth: key, body: { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:credentials:read'] }] } })).status).toBe(200);
+    // A person signed in recently is not limited this way.
+    expect((await call(env, 'POST', '/api/v1/credentials', { auth: fresh('alice'), body: { public_jwk: (await newDevice()).publicJwk, aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:session'] }] } })).status).toBe(200);
+  });
 });

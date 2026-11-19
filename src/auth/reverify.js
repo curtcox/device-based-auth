@@ -1,4 +1,5 @@
-import { ApiError } from '../utils/errors.js';
+import { ApiError, assert } from '../utils/errors.js';
+import { actionMatches } from '../../packages/verify/src/grants.js';
 
 /** How recent a sign-in must be for account-control operations (master plan §10, STATUS S8). */
 export const REVERIFY_MINUTES = 10;
@@ -17,6 +18,25 @@ export function factorAgeMinutes(claims) {
 /** Does a grant list contain an action on devicebasedauth.org itself (dba:*)? */
 export function hasDbaAction(grants) {
   return Array.isArray(grants) && grants.some(g => Array.isArray(g?.actions) && g.actions.some(a => typeof a === 'string' && (a === '*' || a.startsWith('dba:'))));
+}
+
+/**
+ * An API key (or an app connected over MCP OAuth) acts with its scopes only, so the dba:* actions it
+ * puts in a credential or an enrollment token must be among them: `dba:<scope>` for a scope it
+ * holds. Never dba:session (no key has it: that is a person's dashboard) and no wildcard (`*`,
+ * `dba:*`, `dba:credentials:*`), which would also cover actions added to the catalog later.
+ * Otherwise a key with only credentials:issue could mint a device with every scope.
+ */
+export function requireDbaActionsWithinScopes(auth, grants) {
+  if (auth?.kind !== 'key' || !Array.isArray(grants)) return;
+  const allowed = (auth.scopes || []).map(scope => `dba:${scope}`);
+  for (const [i, grant] of grants.entries()) {
+    for (const action of Array.isArray(grant?.actions) ? grant.actions : []) {
+      if (typeof action !== 'string' || (action !== '*' && !action.startsWith('dba:'))) continue;
+      const covered = !action.endsWith('*') && allowed.some(pattern => actionMatches(pattern, action));
+      assert(covered, 'insufficient_scope', `grants[${i}]: an API key can only grant devicebasedauth.org actions within its own scopes (${allowed.join(', ') || 'none'}), listed one by one; "${action}" is not`, 403);
+    }
+  }
 }
 
 /** Would requireRecentSignIn let this caller through? (it throws when not) */

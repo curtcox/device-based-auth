@@ -3,7 +3,7 @@ import { rpc } from '../utils/rpc.js';
 import { describeGrant } from '../../packages/verify/src/grants.js';
 import { issueCredential, renewCredential, exchangeToken } from '../services/credentials.js';
 import { canAccess, SESSION } from '../auth/scopes.js';
-import { requireRecentSignIn, hasDbaAction, reinstatingIssue } from '../auth/reverify.js';
+import { requireRecentSignIn, hasDbaAction, reinstatingIssue, requireDbaActionsWithinScopes } from '../auth/reverify.js';
 
 /** Issue by API (fleets, CI, agents provisioned by a trusted device). */
 export async function createCredential(request, env, auth) {
@@ -13,6 +13,7 @@ export async function createCredential(request, env, auth) {
   const parent = auth.device && !canAccess({ ...auth, session: false }, SESSION) ? auth.device.payload : null;
   // A delegating device is bounded by its own grants; anyone acting as the owner must have signed in recently.
   if (!parent && hasDbaAction(body.grants)) requireRecentSignIn(auth, 'issue a credential with permissions on devicebasedauth.org itself (dba:*)');
+  requireDbaActionsWithinScopes(auth, body.grants);
   const key = request.headers.get('Idempotency-Key');
   assert(key === null || /^[\x21-\x7e]{1,128}$/.test(key), 'invalid_idempotency_key', 'Idempotency-Key must be 1–128 printable ASCII characters');
   const issued = await reinstatingIssue(auth, reinstate => issueCredential(env, auth.account, body, {

@@ -8,7 +8,7 @@ export const DBA_SCOPES = Object.freeze({
   'account:read': 'Read the account balance and monthly spend.',
   'transactions:read': 'Read the account ledger and audit trail.',
   'credentials:read': 'List and read devices, credentials and decisions.',
-  'credentials:issue': 'Issue credentials (paid from the balance). A device can only issue credentials narrower than its own.',
+  'credentials:issue': 'Issue credentials (paid from the balance). A device can only issue credentials narrower than its own; an API key can grant devicebasedauth.org (dba:) actions only within its own scopes.',
   'credentials:revoke': 'Revoke credentials and devices.',
   'audiences:read': 'Read registered audiences.',
   'audiences:write': 'Register and change audiences you own.',
