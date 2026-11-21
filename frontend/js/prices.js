@@ -9,7 +9,8 @@ export const OPERATIONS = Object.freeze({
   read: { label: 'API read', detail: 'A list or get made with an API key or a non-dashboard device. Dashboard reads are free.' },
   token: { label: 'Access-token exchange', detail: 'Trade a credential for a 10-minute bearer token for scripts.' },
   login: { label: 'Sign in with devicebasedauth.org', detail: 'One OpenID Connect sign-in. Paid by the site.' },
-  audience: { label: 'Register or change an audience', detail: 'Publish your site and its action catalog.' }
+  audience: { label: 'Register or change an audience', detail: 'Publish your site and its action catalog.' },
+  notice: { label: 'Security email', detail: 'One email to the account owner: takeover-sensitive events at once, other issuances in an hourly digest. Charged when queued; the owner can turn them down or off.' }
 });
 
 /** Free things, for the same tables. */

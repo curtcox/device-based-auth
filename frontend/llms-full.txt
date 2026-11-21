@@ -764,7 +764,7 @@ handler adds a Durable Object call or a storage write.
 | Webhook gate request, per webhook gate contacted (**proposed, D13**) | Same | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 13 | 22 | **22** |
 | Duo or Okta Verify gate request, per vendor gate contacted (**proposed, D13**) | Account that owns the gates | As a gate request, plus starting the push (signed subrequest, 1 row) and up to 24 status polls, each an alarm wake-up (24 DO req, ~2 ms each) | 18 | 30 | **30** |
 | Confirmation issued (periodic confirmation, **proposed, D13**) | Account that issued the credential (its gates are charged as gate requests) | 1 Worker req, 2 DO req, 5 rows (credential row, balance and daily aggregate row, an audit row and its later deletion), 5 ms (signing), 0.5 KB × 13 months | 7 | 12 | **12** |
-| Security email (**proposed, D9**) | Account it is sent to, when it is queued | 3 DO req (up to 3 alarm wake-ups, one per attempt), 15 rows (charge: balance, ledger and receipt rows and their later deletion; queue row and alarm; attempts' rewrites or deletion and next alarms; an audit row and its deletion; the digest's last-sent row), 10 ms (SigV4 signing per attempt), 0.5 KB × 13 months, **1 SES email** (100 µ$; retried only when SES answered that it did not take it, so at most one is billed) | 117 | 191 | **200** |
+| Security email (D9) | Account it is sent to, when it is queued | 3 DO req (up to 3 alarm wake-ups, one per attempt), 15 rows (charge: balance, ledger and receipt rows and their later deletion; queue row and alarm; attempts' rewrites or deletion and next alarms; an audit row and its deletion; the digest's last-sent row), 10 ms (SigV4 signing per attempt), 0.5 KB × 13 months, **1 SES email** (100 µ$; retried only when SES answered that it did not take it, so at most one is billed) | 117 | 191 | **200** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 4 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
 | Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
@@ -843,7 +843,7 @@ most once an hour per account (the next notice says how many were held back); cr
 announced. The hourly decision is stored on the balance row the charge writes anyway, so it costs
 no extra row. Subscribing a browser is free (a signed-in owner only, at most 5, one row).
 
-### Security email is charged per email (proposed, D9)
+### Security email is charged per email (D9)
 
 An email costs more than a whole issuance (SES list price $0.10 per 1,000 is 100 µ$; Postmark-class
 providers about 1,500 µ$), so "an email per issuance" would break the price-floor rule. Instead
@@ -856,7 +856,8 @@ the event, and only if the balance covers it: an account that cannot pay, has no
 or turned emails off gets none, and the event itself is never refused or charged more. The owner
 chooses `security_email`: `all` (default), `sensitive` (no digest) or `off`; turning it down needs a
 recent sign-in and sends one last email. 200 µ$ is just above the 191 µ$ floor, leaving room for
-SES's per-GB charge on these few-KB messages. Queueing a digest reads three rows on every
+SES's per-GB charge on these few-KB messages; the owner approved it, with SES as the provider, on
+2026-11-21 (D9). Queueing a digest reads three rows on every
 ordinary issuance (address, setting, queued digest; 0.003 µ$), which the issue price absorbs.
 
 ### Key attestation adds nothing to the issue price
