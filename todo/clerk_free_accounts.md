@@ -1,6 +1,6 @@
 # Paid accounts without Clerk
 
-Status: **not started**; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **A0 done** (2026-11-21), A1 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
@@ -41,8 +41,8 @@ things with no Clerk session:
    revoked device.
 3. **Recovery** after losing every device works only by signing in with Clerk again.
 4. **Security email** goes only to the address Clerk verified (`src/auth/clerk-webhook.js`).
-5. **No tests cover payments at all.** Nothing tests `/payments/checkout` or `/webhooks/stripe`, so
-   even the part in §1.1 is unproven.
+5. **No tests covered payments at all**, so even the part in §1.1 was unproven. Fixed by A0
+   (`src/payments.test.js`).
 
 ## 2. Decisions already made (D14, owner, 2026-11-21)
 
@@ -231,7 +231,7 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 
 | Phase | Work | Done when |
 |-------|------|-----------|
-| **A0** | Tests for today's payments (§4 first bullets) and the `STRIPE_FETCH` hook. | Checkout and webhook covered, with Clerk unset. |
+| **A0** ✅ | Tests for today's payments (§4 first bullets) and the `STRIPE_FETCH` hook. Done: `src/payments.test.js`, `stripeClient` in `src/api/payments.js`. The account is still created by a LocalDev sign-in standing in for Clerk, then the env turns into production with Clerk unset; A1 replaces that with sign-up. | Checkout and webhook covered, with Clerk unset. |
 | **A1** | Account ids (§3.1), `POST /signup`, the webhook's signup kind, `signup/complete`, `dev/signup-paid`, op counts and the price-floor test. | A paid account exists and is used with no Clerk configured. |
 | **A2** | The first ten minutes (§3.3) and re-verification through gates (§3.4), including the 403 body and the dashboard button. | A Clerk-free owner can add a second device and create API keys. |
 | **A3** | Recovery settings, recovery codes onto a new device, the "none" acknowledgement (§3.5). **The journey test.** | The journey test passes. |

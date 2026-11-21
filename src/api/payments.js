@@ -6,6 +6,12 @@ import { MINIMUM_DEPOSIT_CENTS, MAXIMUM_DEPOSIT_CENTS } from '../utils/pricing.j
 
 const PRODUCT = 'devicebasedauth';
 
+/**
+ * A Stripe client. A function in env.STRIPE_FETCH replaces Stripe's HTTP transport in tests only
+ * (a deployed Worker's variables are strings, so it can never be set there).
+ */
+const stripeClient = env => new Stripe(env.STRIPE_SECRET_KEY, { httpClient: Stripe.createFetchHttpClient(typeof env.STRIPE_FETCH === 'function' ? env.STRIPE_FETCH : undefined) });
+
 /** Create an itemized Checkout (ported from cronly). Credit is granted only by the signed webhook. */
 export async function checkout(request, env, auth, dryRun) {
   const body = await readJson(request); const credit = body.credit_cents;
@@ -18,7 +24,7 @@ export async function checkout(request, env, auth, dryRun) {
   assert(env.STRIPE_SECRET_KEY, 'payments_unavailable', 'Payments are not configured', 503);
   const products = [env.STRIPE_CREDIT_PRODUCT_ID, env.STRIPE_CARD_COST_PRODUCT_ID];
   const product = (id, name) => id ? { product: id } : { product_data: { name } };
-  const stripe = new Stripe(env.STRIPE_SECRET_KEY, { httpClient: Stripe.createFetchHttpClient() });
+  const stripe = stripeClient(env);
   const session = await stripe.checkout.sessions.create({
     mode: 'payment', payment_method_types: ['card'], client_reference_id: auth.account,
     metadata: { account: auth.account, credit_cents: String(credit), product: PRODUCT },
@@ -34,7 +40,7 @@ export async function checkout(request, env, auth, dryRun) {
 /** Credit only signed, paid Checkout events, once per Checkout session. */
 export async function stripeWebhook(request, env) {
   assert(env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET, 'payments_unavailable', 'Payments are not configured', 503);
-  const stripe = new Stripe(env.STRIPE_SECRET_KEY, { httpClient: Stripe.createFetchHttpClient() });
+  const stripe = stripeClient(env);
   let event; const payload = await readText(request);
   try { event = await stripe.webhooks.constructEventAsync(payload, request.headers.get('stripe-signature'), env.STRIPE_WEBHOOK_SECRET, undefined, Stripe.createSubtleCryptoProvider()); }
   catch { assert(false, 'invalid_signature', 'Invalid webhook signature', 400); }
