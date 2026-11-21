@@ -31,7 +31,7 @@ src/                 Worker: index.js (API_ROUTES, the only dispatch table), api
                      utils/ (pricing.js = prices, cost-policy.js = rates and op counts)
 packages/verify/     @devicebasedauth/verify: JOSE, grants, DPoP, status lists, verifier, site helpers
 packages/browser-sdk/ Browser SDK source (bundled to frontend/sdk/dba.js by scripts/build-sdk.mjs)
-packages/cli/        dba CLI (lib.js is the testable part)
+packages/cli/        dba CLI: lib.js re-exports the testable modules beside it; commands/ does the I/O
 spec/                Credential format, evaluation rules, conformance vectors
 frontend/            Static site (no build step). frontend/lib/verify/ and frontend/sdk/dba.js
                      are generated; frontend/openapi.json is generated
