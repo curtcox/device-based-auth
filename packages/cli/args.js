@@ -63,7 +63,7 @@ export function configPaths({ env = {}, home, profile = 'default' }) {
   if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(profile)) throw new UsageError('--profile must be 1–64 letters, digits, ".", "_" or "-"');
   const base = env.DBA_HOME || `${env.XDG_CONFIG_HOME || `${home}/.config`}/dba`;
   const dir = `${base.replace(/\/+$/, '')}/${profile}`;
-  return { dir, key: `${dir}/key.json`, credential: `${dir}/credential.jwt`, config: `${dir}/config.json`, confirmation: `${dir}/confirmation.jwt`, certificate: `${dir}/client.crt`, certificateKey: `${dir}/client.key`, ca: `${dir}/ca.crt` };
+  return { dir, key: `${dir}/key.json`, credential: `${dir}/credential.jwt`, config: `${dir}/config.json`, confirmation: `${dir}/confirmation.jwt`, certificate: `${dir}/client.crt`, certificateKey: `${dir}/client.key`, ca: `${dir}/ca.crt`, pending: `${dir}/pending.json` };
 }
 
 /**

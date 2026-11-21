@@ -33,7 +33,11 @@ export async function startSignup(request, env, dryRun) {
   const { jwk, payload, lifetime, attestation } = await readEnrollRequest(body.request, { env, defaults: { aud: [appAudience(env)], grants: DASHBOARD_GRANTS } });
   const account = randomId('acct', 26); const id = randomId('sup');
   const jkt = await jwkThumbprint(jwk);
-  const opened = await openCheckout(env, { account, credit: quote.credit_cents, metadata: { kind: 'signup', signup: id, jkt, terms_accepted: 'true' }, returnPath: '/app.html#signup', idempotencyKey: `dba:signup:${id}` });
+  // A local server without Stripe (npm run dev:local, the browser tests) pays through
+  // POST /api/v1/dev/signup-paid instead of Checkout.
+  const local = env.ENVIRONMENT === 'local' && !env.STRIPE_SECRET_KEY;
+  const opened = local ? { url: `${env.APP_ORIGIN}/signup.html#paid`, local_payment: true, ...quote }
+    : await openCheckout(env, { account, credit: quote.credit_cents, metadata: { kind: 'signup', signup: id, jkt, terms_accepted: 'true' }, returnPath: '/signup.html#paid', idempotencyKey: `dba:signup:${id}` });
   const exp = Math.floor(Date.now() / 1000) + TICKET_DAYS * 86400;
   const ticket = await signToken(TICKET_PREFIX, { id, account, jwk, jkt, device: cleanDevice(payload.device), attestation, lifetime, credit_cents: quote.credit_cents, exp }, env.TOKEN_SIGNING_KEY);
   return { account, signup_id: id, ...opened, ticket, complete_url: `${env.APP_ORIGIN}/api/v1/signup/complete`, interval: POLL_INTERVAL, expires_at: exp };

@@ -110,7 +110,7 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 
 <section id="browser">
 <h2>Quick start: browser SDK</h2>
-<p>The SDK makes a non-extractable P-256 key with WebCrypto and keeps it in IndexedDB: scripts on your origin can sign with it, but nothing can read it out. Enrollment opens the approval page in a popup, so call it from a click handler. Pin a versioned copy with Subresource Integrity in production (<code>/sdk/v1.2.0/dba.js</code>; hashes in <a href="/sdk/integrity.json">/sdk/integrity.json</a>). Do not use v1.0.0: its <code>autoRenew()</code> renews in a loop for credentials living longer than about 37 days.</p>
+<p>The SDK makes a non-extractable P-256 key with WebCrypto and keeps it in IndexedDB: scripts on your origin can sign with it, but nothing can read it out. Enrollment opens the approval page in a popup, so call it from a click handler. Pin a versioned copy with Subresource Integrity in production (<code>/sdk/v1.3.0/dba.js</code>; hashes in <a href="/sdk/integrity.json">/sdk/integrity.json</a>). Do not use v1.0.0: its <code>autoRenew()</code> renews in a loop for credentials living longer than about 37 days.</p>
 <pre class="code"><code>&lt;script type=&quot;module&quot;&gt;
   import { DBA } from &#39;https://devicebasedauth.org/sdk/dba.js&#39;;
 
@@ -140,6 +140,7 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 <tr><td><code>payload</code>, <code>describe()</code>, <code>expiresIn()</code></td><td>The decoded credential, its grants in plain English, seconds left.</td></tr>
 <tr><td><code>renew({ rotate })</code>, <code>autoRenew()</code>, <code>keyWithdrawn()</code></td><td>Renew (or move to a new key) before expiry; <code>autoRenew()</code> also renews at once, free, if the issuer withdrew the key that signed the credential.</td></tr>
 <tr><td><code>token(audience)</code></td><td>A 10-minute bearer access token for code that cannot sign each request.</td></tr>
+<tr><td><code>signUp({ creditCents, acceptTerms })</code>, <code>recover({ account, code } | { account, via: 'gate' } | { email, via: 'email' })</code>, <code>pending</code>, <code>finish({ timeoutMs, onPending })</code></td><td>On devicebasedauth.org itself (v1.3.0): create an account by paying its first deposit with a new key, or get back in after losing every device; <code>finish()</code> waits for the payment or the recovery and keeps the credential. What waits survives page loads (<code>pending</code>).</td></tr>
 <tr><td><code>revoke()</code>, <code>forget()</code></td><td>Revoke this credential everywhere and delete the key; or only delete it locally.</td></tr>
 </tbody></table>
 </section>

@@ -12,9 +12,12 @@ import { out, note, loadProfile } from './commands/profile.js';
 import { enroll, importCredential, renew, revoke } from './commands/enroll.js';
 import { status, inspect, headers, sign, curl, token, certificate, list } from './commands/credential.js';
 import { confirm, gatesCommand, approvals } from './commands/gates.js';
+import { signup, recover } from './commands/account.js';
 
 const COMMANDS = {
   enroll: { values: ['name', 'kind', 'lifetime', 'wait', 'token', 'key-store'], repeatable: ['aud', 'grant', 'action'], booleans: ['print-request', 'force'] },
+  signup: { values: ['deposit', 'name', 'kind', 'wait', 'key-store'], booleans: ['accept-terms', 'force', 'resume', 'no-recovery-codes'] },
+  recover: { values: ['account', 'code', 'email', 'via', 'name', 'kind', 'wait', 'key-store'], booleans: ['force', 'resume'] },
   status: { booleans: ['online', 'json'] },
   whoami: { booleans: ['online', 'json'] },
   inspect: { booleans: ['json'] },
@@ -36,7 +39,7 @@ const GLOBAL = { values: ['profile', 'origin'], booleans: ['help', 'no-renew'] }
 // `dba status | head -2` closes the pipe early; that is the reader's choice, not an error.
 process.stdout.on('error', error => { if (error.code === 'EPIPE') process.exit(process.exitCode ?? 0); else throw error; });
 
-const HANDLERS = { list, confirm, approvals, gates: gatesCommand, enroll, status, whoami: status, inspect, import: importCredential, headers, sign, token, certificate, renew, revoke };
+const HANDLERS = { list, confirm, approvals, gates: gatesCommand, enroll, signup, recover, status, whoami: status, inspect, import: importCredential, headers, sign, token, certificate, renew, revoke };
 
 async function main(argv) {
   const { globals, command, rest } = splitCommand(argv);

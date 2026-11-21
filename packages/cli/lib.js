@@ -14,3 +14,4 @@ export * from './client.js';
 export * from './credentials.js';
 export * from './gates.js';
 export * from './curl.js';
+export * from './account.js';

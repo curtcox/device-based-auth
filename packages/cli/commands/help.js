@@ -25,6 +25,18 @@ Enroll this machine:
       credential is issued at once. The token's audiences and grants apply unless you narrow
       them. Prefer DBA_ENROLLMENT_TOKEN=dbae_… over --token to keep it out of shell history.
 
+Create an account, or get back into one (no password or sign-in provider):
+  dba signup --accept-terms [--deposit 5] [--name …] [--no-recovery-codes] [--wait SECONDS]
+      Makes a new key, prints a Stripe Checkout link for the first deposit ($5–$20 in the first
+      week), and once it is paid saves a dashboard credential (dba:session) for the new account.
+      Prints a recovery sheet (account id and ten one-time codes) unless --no-recovery-codes.
+      Interrupted? \`dba signup --resume\`.
+  dba recover --account acct_… --code XXXX-XXXX-XXXX
+  dba recover --account acct_… [--via gate]       A passkey or another device approves.
+  dba recover --email you@example.com             A link to the verified address, then 72 h.
+      Puts this machine on the account with a new key after losing every device; for ten
+      minutes that counts as a recent sign-in. A wait can be finished with --resume.
+
 Use the credential:
   dba status | whoami [--online] [--json]   What this device may do, in plain English.
   dba headers METHOD URL                    Print Authorization and DPoP headers for one request.

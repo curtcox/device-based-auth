@@ -211,7 +211,7 @@ export function preloadSdk() { sdk().catch(() => {}); }
 export async function renderSignIn(container, { title = 'Sign in', intro = '', onSignedIn }) {
   const config = await getConfig();
   const panel = h('section', { class: 'panel sign-in' }, h('h2', {}, title), intro ? h('p', {}, intro) : null);
-  replace(container, panel);
+  replace(container, panel, h('p', { class: 'muted small', id: 'sign-in-alternatives' }, 'New here? ', h('a', { href: '/signup.html' }, 'Create an account with this browser'), ' (no password). Lost your devices? ', h('a', { href: '/recover.html' }, 'Recover your account'), '.'));
   if (config.local) {
     const form = h('form', { class: 'stack', id: 'local-sign-in' },
       h('label', {}, 'Local account name', h('input', { name: 'user', value: 'developer', required: true, pattern: '[a-zA-Z0-9_\\-]{1,128}', autocomplete: 'username' })),

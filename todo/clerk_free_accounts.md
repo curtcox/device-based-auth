@@ -1,6 +1,6 @@
 # Paid accounts without Clerk
 
-Status: **A0–A6 done** (2026-11-21), A7 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **A0–A7 done** (2026-11-21), A8 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
@@ -251,7 +251,20 @@ docs/ops/deployment.md §3.
 The profile gets `email_source: 'clerk' | 'verified'`. The Clerk webhook overwrites only an
 address that came from Clerk. Everything else about email (STATUS S8) is unchanged.
 
-### 3.8 Clients
+### 3.8 Clients (done in A7)
+
+As built: the sign-up page keeps the new key and its pending sign-up in the dashboard's device slot
+(`dashboard`), so after paying the dashboard opens signed in with it; Checkout returns to
+`/signup.html#paid`. A local server without Stripe skips Checkout (`local_payment`), and the page and
+CLI pay through `POST /api/v1/dev/signup-paid`, so `npm run dev:local`, the browser tests and the
+samples can sign up. After paying, the page offers recovery codes (shown once, with a download),
+links to add a passkey or verify an email, or accepting no way back. The recovery page offers all
+three ways and resumes a waiting recovery on the next visit. `dba signup --accept-terms` prints a
+recovery sheet unless `--no-recovery-codes` (a CLI account has no dashboard to make one later);
+both commands keep the key and a `pending.json` before waiting, so `--resume` finishes later. The
+CLI prints the Checkout link without a QR code. The email link page is not covered by Playwright
+(the local server sends no email).
+
 
 - **Frontend.** A sign-up page (`frontend/signup.html` or a panel in `app.html`): "Create an
   account with this browser", a deposit picker, the terms and privacy tick box, recovery choices,
@@ -302,7 +315,7 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 | **A4** ✅ | Recovery by passkey or second device. Done: `POST /api/v1/recover` with `via: 'gate'` and `POST /api/v1/recover/complete`; tests in `src/recovery.test.js`, cost in `src/cost-counts.test.js`. | Gate recovery tests pass. |
 | **A5** ✅ | Verified email, `email_source`, email recovery with the waiting period (72 hours, O1 approved). Done: `src/durable-objects/account/email-address.js`, `src/api/email-address.js`, `via: 'email'`, `/email-link.html`, the Account page's address and "Getting back in" sections; tests `src/email-recovery.test.js`. | Email tests pass (SES faked as in `src/security-email.test.js`). |
 | **A6** ✅ | Clerk linking both ways (§3.6), plus the ops step for the session token. Done: `POST`/`DELETE /api/v1/account/clerk-link`, `src/durable-objects/account/clerk-link.js`, the webhook's `user.deleted`, the Account page's "Password sign-in" section, docs/ops/deployment.md §3; tests `src/clerk-link.test.js`. | Link and unlink tests pass. |
-| **A7** | Sign-up and recovery pages, CLI `signup`/`recover`, SDK release, Playwright. | `npm run test:e2e` passes. |
+| **A7** ✅ | Sign-up and recovery pages, CLI `signup`/`recover`, SDK release, Playwright. Done: `/signup.html`, `/recover.html`, links from the home page, pricing, the sign-in panel and the site map; `dba signup` and `dba recover` (`packages/cli/account.js`, `commands/account.js`); browser SDK v1.3.0 (`signUp`, `recover`, `pending`, `finish`); tests `packages/browser-sdk/account.test.js`, `packages/cli/account.test.js`, Playwright `signup.spec.js`. | `npm run test:e2e` passes. |
 | **A8** | Docs (§6), CI sample, STATUS (B9 done, S8 note), `git mv` this file to `done/`. | Docs state the claim and link the journey test. |
 
 A minimum Clerk-free launch is A0–A3, the sign-up page and code recovery from A7, and A8.

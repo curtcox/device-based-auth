@@ -14,7 +14,7 @@ import { out, note, readJsonFile, readTextFile, writePrivate, ensureDir, require
  * A new device key, kept as `mode` says: made in the TPM for "tpm", else in software and saved by
  * saveDeviceKey. Returns { key, saved } like saveDeviceKey's result plus the loaded key.
  */
-async function newSavedKey(profile, mode) {
+export async function newSavedKey(profile, mode) {
   if (mode !== 'tpm') {
     const key = await newDeviceKey();
     return { key, saved: await saveDeviceKey(key, { mode, secrets: profile.secrets }) };

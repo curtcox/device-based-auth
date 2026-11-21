@@ -1,19 +1,22 @@
 /**
  * devicebasedauth.org browser SDK.
  *
- *   import { DBA } from 'https://devicebasedauth.org/sdk/v1.2.0/dba.js';
+ *   import { DBA } from 'https://devicebasedauth.org/sdk/v1.3.0/dba.js';
  *   const dba = new DBA();
  *   if (!await dba.ready()) await dba.enroll({ aud: ['example.com'], grants: [{ actions: ['example:read'] }] });
  *   const response = await dba.fetch('https://example.com/api/things');
  *
  * The device key is a non-extractable WebCrypto P-256 key kept in IndexedDB: scripts on this
  * origin can use it to sign, but nothing (including this SDK) can ever read it out.
+ *
+ * On devicebasedauth.org itself, signUp() creates an account by paying its first deposit and
+ * recover() gets back into one after losing every device; finish() waits for either.
  */
 import { generateKeyPair, exportPublicJwk, signJws } from '../verify/src/jose.js';
 import { createProof, inspectCredential } from '../verify/src/credential.js';
 import { describeGrant, evaluateGrants } from '../verify/src/grants.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 const DB = 'devicebasedauth';
 const STORE = 'devices';
 
@@ -106,9 +109,7 @@ export class DBA {
    *   at once without a popup, and aud/grants may be left out to take the token's.
    */
   async enroll(request, { popup = true, onApprovalUrl, timeoutMs = 15 * 60000, enrollmentToken } = {}) {
-    const { privateKey, publicJwk } = await this.key();
-    const device = { name: defaultDeviceName(), kind: 'browser', ...request.device, key_protection: 'webcrypto-nonextractable' };
-    const signed = await signJws({ typ: 'dba-enroll+jwt', jwk: publicJwk }, { iat: Math.floor(Date.now() / 1000), ...(request.aud ? { aud: request.aud } : {}), ...(request.grants ? { grants: request.grants } : {}), device, ...(request.lifetime_seconds ? { lifetime_seconds: request.lifetime_seconds } : {}), return_origin: location.origin }, privateKey);
+    const signed = await this.enrollmentRequest(request);
     if (enrollmentToken) {
       // Pre-approved by the owner (a kiosk or fleet): issued at once, no approval popup.
       const issued = await this.api('/api/v1/enrollments/redeem', { method: 'POST', body: { request: signed, enrollment_token: enrollmentToken } });
@@ -142,6 +143,82 @@ export class DBA {
     });
     this.state.credential = result.credential; await this.save();
     return result.credential;
+  }
+
+  /** An enrollment request (dba-enroll+jwt) signed by this slot's key. */
+  async enrollmentRequest(request = {}) {
+    const { privateKey, publicJwk } = await this.key();
+    const device = { name: defaultDeviceName(), kind: 'browser', ...request.device, key_protection: 'webcrypto-nonextractable' };
+    return signJws({ typ: 'dba-enroll+jwt', jwk: publicJwk }, { iat: Math.floor(Date.now() / 1000), ...(request.aud ? { aud: request.aud } : {}), ...(request.grants ? { grants: request.grants } : {}), device, ...(request.lifetime_seconds ? { lifetime_seconds: request.lifetime_seconds } : {}), return_origin: location.origin }, privateKey);
+  }
+
+  /** A fresh key for a new identity, refusing to drop a credential that still works. */
+  async freshKey(replace) {
+    if (this.credential && this.expiresIn() > 0 && !replace) throw new DBAError('This slot already holds a working credential; pass { replace: true } to start over', 'already_enrolled');
+    clearTimeout(this.renewTimer); this.state = null;
+    await this.key();
+  }
+
+  /**
+   * Create a devicebasedauth.org account by paying its first deposit; no sign-in provider needed.
+   * The new key's sign-up waits in this slot (across page loads) until finish(). Resolves with the
+   * server's answer: send the person to `url` (Stripe Checkout), or with `local_payment` (a local
+   * development server) pay through POST /api/v1/dev/signup-paid; then call finish().
+   * @param {{ creditCents: number, acceptTerms: boolean, device?: object, replace?: boolean }} options
+   */
+  async signUp({ creditCents, acceptTerms, device, replace = false } = {}) {
+    await this.freshKey(replace);
+    const request = await this.enrollmentRequest({ device });
+    const started = await this.api('/api/v1/signup', { method: 'POST', body: { request, credit_cents: creditCents, accept_terms: acceptTerms === true } });
+    this.state.pending = { kind: 'signup', ticket: started.ticket, account: started.account, path: '/api/v1/signup/complete', interval: started.interval, local_payment: !!started.local_payment };
+    await this.save();
+    return started;
+  }
+
+  /**
+   * Get back into an account after losing every device, with a new key in this slot:
+   * { account, code } (a recovery code: done at once), { account, via: 'gate' } (a passkey or
+   * another device approves, typing the `number` shown), or { email, via: 'email' } (a link to
+   * the verified address, then a wait any signed-in device can cancel). Unless recovered at once,
+   * the recovery waits in this slot until finish().
+   */
+  async recover({ account, code, email, via = code ? 'code' : email ? 'email' : 'gate', device, replace = false } = {}) {
+    await this.freshKey(replace);
+    const request = await this.enrollmentRequest({ device });
+    const result = await this.api('/api/v1/recover', { method: 'POST', body: { via, request, ...(account ? { account } : {}), ...(code ? { code } : {}), ...(email ? { email } : {}) } });
+    if (result.status === 'recovered') { this.state.credential = result.credential; await this.save(); return result; }
+    this.state.pending = { kind: `recover-${via}`, ticket: result.ticket, account: result.account ?? null, path: '/api/v1/recover/complete', interval: result.interval, number: result.number ?? null, approve_url: result.approve_url ?? null };
+    await this.save();
+    return result;
+  }
+
+  /** The sign-up or recovery this slot is waiting for ({ kind, account, number, … }), or null. */
+  get pending() { return this.state?.pending ?? null; }
+
+  /**
+   * Wait for the pending sign-up or recovery and keep its credential. onPending(answer) hears each
+   * "not yet" (a recovery by email says { stage, ready_at }). Rejects with code `pending` when
+   * timeoutMs passes (call again later), or the server's code when it was refused.
+   */
+  async finish({ timeoutMs = 15 * 60000, onPending } = {}) {
+    const pending = this.pending;
+    if (!pending) throw new DBAError('No sign-up or recovery is waiting in this slot', 'nothing_pending');
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const url = `${this.origin}${pending.path}`;
+      const proof = await createProof({ privateKey: this.state.privateKey, publicJwk: this.state.publicJwk, method: 'POST', url, credential: pending.ticket });
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', DPoP: proof }, body: JSON.stringify({ ticket: pending.ticket }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        // Refused for good: forget it, so the page can start over.
+        if (['recovery_denied', 'invalid_signup', 'invalid_recovery'].includes(data.code)) { delete this.state.pending; await this.save(); }
+        throw new DBAError(data.error || `HTTP ${response.status}`, data.code || 'http_error', { status: response.status, details: data });
+      }
+      if (data.credential) { this.state.credential = data.credential; delete this.state.pending; await this.save(); return data.credential; }
+      onPending?.(data);
+      if (Date.now() >= deadline) throw new DBAError('Still waiting; call finish() again later', 'pending', { pending: data });
+      await new Promise(resolve => setTimeout(resolve, Math.min((data.interval || pending.interval || 3) * 1000, Math.max(0, deadline - Date.now()))));
+    }
   }
 
   /**
