@@ -55,6 +55,29 @@ credentials, and raising budget limits need `fva` within 10 minutes (STATUS S8);
 those operations are refused. Check after deploying: sign in, wait 11 minutes, try to create an API
 key (expect "Please confirm it is you"), sign in again, and it succeeds.
 
+The `user.created`/`user.updated` webhook also carries the user's primary email address; once
+Clerk has verified it, it is where security emails go (next section).
+
+## 3a. Security email (Amazon SES, optional; STATUS S8, D9)
+
+Takeover-sensitive events (credentials that can act on the account, API keys and connected apps,
+enrollment tokens, gates, sign-in gates and recovery codes, raised limits, reinstated devices)
+are emailed at once, other issuances in at most one digest an hour; each email costs the account
+the `notice` price when it is queued. Without this section nothing is emailed or charged, and the
+Web Push notices still work.
+
+1. In Amazon SES (any region; `us-east-1` is fine), verify the domain `devicebasedauth.org` with
+   Easy DKIM (add the three CNAME records in Cloudflare DNS), set a custom MAIL FROM domain, and
+   publish a DMARC record. Request production access (leave the sandbox), stating that the mail is
+   transactional security notices to verified account owners.
+2. Create an IAM user allowed only `ses:SendEmail` on that identity. Store its access key as the
+   GitHub secrets `DBA_SES_ACCESS_KEY_ID` and `DBA_SES_SECRET_ACCESS_KEY`.
+3. Set the GitHub variables `DBA_EMAIL_PROVIDER=ses`, `DBA_SES_REGION` (for example `us-east-1`) and
+   `DBA_EMAIL_FROM` (for example `devicebasedauth.org <security@devicebasedauth.org>`). The deploy
+   check refuses a partial set.
+4. Check after deploying: with a funded account, create an API key and expect an email within a
+   minute; the ledger shows a `notice` charge and the audit trail `email.sent`.
+
 ## 4. Stripe
 
 Reuse the shared Stripe account. Create two products ("devicebasedauth.org prepaid credit" and

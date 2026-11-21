@@ -13,6 +13,7 @@ import { accountSettings } from './api/settings.js';
 import { gates, gateRequests, gateLinks } from './api/gates.js';
 import { signInGates, dashboardSession, recoveryCodes } from './api/sign-in-gates.js';
 import { pushSubscriptions, pushPublicKey } from './api/push.js';
+import { emailConfigured } from './services/email.js';
 import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
 import { inspect } from './api/inspect.js';
 import { oidcConfiguration, oidcAuthorize, oidcToken, oidcUserinfo } from './api/oidc.js';
@@ -167,7 +168,7 @@ async function handle(route, request, env, auth) {
     case 'health': return { status: 'ok', environment: env.ENVIRONMENT, git_sha: env.GIT_SHA || 'local' };
     case 'jwks': return new Response(JSON.stringify(jwks(env)), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600', ...CORS } });
     case 'status-list': return statusList(route, env);
-    case 'public-config': return { local: env.ENVIRONMENT === 'local', environment: env.ENVIRONMENT, issuer: issuerName(env), audience: appAudience(env), app_origin: env.APP_ORIGIN, status_origin: env.STATUS_ORIGIN, clerk_publishable_key: env.CLERK_PUBLISHABLE_KEY || null, prices: PRICES, price_table: priceTable(), minimum_deposit_cents: MINIMUM_DEPOSIT_CENTS, push_public_key: await pushPublicKey(env) };
+    case 'public-config': return { local: env.ENVIRONMENT === 'local', environment: env.ENVIRONMENT, issuer: issuerName(env), audience: appAudience(env), app_origin: env.APP_ORIGIN, status_origin: env.STATUS_ORIGIN, clerk_publishable_key: env.CLERK_PUBLISHABLE_KEY || null, prices: PRICES, price_table: priceTable(), minimum_deposit_cents: MINIMUM_DEPOSIT_CENTS, push_public_key: await pushPublicKey(env), security_email: emailConfigured(env) };
     case 'quote': {
       const op = url.searchParams.get('op');
       assert(Object.hasOwn(PRICES, op || ''), 'invalid_operation', `op must be one of ${Object.keys(PRICES).join(', ')}`);

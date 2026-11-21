@@ -11,6 +11,8 @@ import { AccountGates } from './account/gates.js';
 import { AccountGateDelivery } from './account/gate-delivery.js';
 import { AccountSignIn } from './account/sign-in.js';
 import { AccountCompaction } from './account/compaction.js';
+import { AccountEmail, SECURITY_EMAIL_LEVELS } from './account/email.js';
+import { cleanEmailAddress } from '../services/email.js';
 
 export { RECORD_RETENTION_MS, EXPIRED_VISIBLE_MS, COMPACTION_INTERVAL_MS, enrollmentTokenState } from './account/shared.js';
 export { credentialState } from './account/credentials.js';
@@ -21,9 +23,11 @@ const DECISION_RETENTION_MS = 90 * 86400000;
 /**
  * Budget guards the owner can change in the dashboard (master plan §5.4, §10). A stolen session or
  * a runaway script can issue at most max_issues_per_day credentials; a device stuck in a renewal
- * loop stops after max_renewals_per_credential_per_month (null: no cap).
+ * loop stops after max_renewals_per_credential_per_month (null: no cap). security_email chooses
+ * which security emails the owner gets (account/email.js): all, sensitive events only, or none.
  */
-export const SETTINGS_DEFAULTS = Object.freeze({ max_issues_per_day: 500, max_renewals_per_credential_per_month: null });
+export const SETTINGS_DEFAULTS = Object.freeze({ max_issues_per_day: 500, max_renewals_per_credential_per_month: null, security_email: 'all' });
+export const SETTINGS_CHOICES = Object.freeze({ security_email: SECURITY_EMAIL_LEVELS });
 export const SETTINGS_LIMITS = Object.freeze({ max_issues_per_day: [1, 100000], max_renewals_per_credential_per_month: [1, 100000] });
 
 /**
@@ -74,26 +78,47 @@ export class AccountDO {
 
   async op_get_settings() { return this.tx(tx => this.settings(tx)); }
 
-  /** Change settings (validated by the caller); audited, because raising a cap matters. */
+  /**
+   * Change settings (validated by the caller); audited, because raising a cap matters. Raising a
+   * limit is emailed like other takeover-sensitive changes, and turning security emails down
+   * sends one last email even when they are now off.
+   */
   async op_update_settings({ changes }, now) {
-    return this.tx(async tx => {
+    const { before, next } = await this.tx(async tx => {
       const before = await this.settings(tx);
       const next = { ...before, ...changes };
       await tx.put('settings', next);
       await this.audit(tx, now, 'settings.changed', { before, after: next });
-      return next;
+      return { before, next };
     });
+    const raised = Object.keys(SETTINGS_LIMITS).filter(name => before[name] !== null && (next[name] === null || next[name] > before[name]));
+    if (raised.length) await this.alert({ title: 'Budget limit raised', body: `Raised: ${raised.map(name => `${name.replaceAll('_', ' ')} ${before[name]} → ${next[name] ?? 'no cap'}`).join('; ')}.`, path: '#account', tag: `settings-${now}` }, now);
+    const levels = SECURITY_EMAIL_LEVELS;
+    if (levels.indexOf(next.security_email) < levels.indexOf(before.security_email)) {
+      await this.emailNow({ title: next.security_email === 'off' ? 'Security emails turned off' : 'Security emails reduced', body: next.security_email === 'off' ? 'Security emails for your account were turned off; this is the last one.' : 'From now on only takeover-sensitive events (credentials that can act on your account, API keys, enrollment tokens, gates, raised limits) are emailed; other issuances are not.', path: '#account' }, now, { always: true });
+    }
+    return next;
   }
 
-  async op_init({ account, rate, session }, now) {
+  /**
+   * Create the account on first sight. `email` (the primary address Clerk verified, from its
+   * user.created/user.updated webhook) is where security emails go; a change is audited.
+   */
+  async op_init({ account, rate, session, email }, now) {
     if (rate) await this.op_rate_limit(rate, now);
+    const address = email === undefined ? undefined : cleanEmailAddress(email);
     return this.tx(async tx => {
-      const profile = await tx.get('profile');
+      let profile = await tx.get('profile');
       const dashboard = session ? await dashboardState(tx, session, now) : undefined;
-      if (profile) return { ...profile, dashboard };
-      const created = { account, created_at: now };
-      await tx.put('profile', created);
-      return { ...created, dashboard };
+      if (!profile) { profile = { account, created_at: now }; await tx.put('profile', profile); }
+      if (address !== undefined && (profile.email ?? null) !== address) {
+        const had = !!profile.email;
+        profile = { ...profile, email: address };
+        if (!address) delete profile.email;
+        await tx.put('profile', profile);
+        await this.audit(tx, now, 'account.email_changed', { had_address: had, has_address: !!address });
+      }
+      return { ...profile, dashboard };
     });
   }
 
@@ -102,7 +127,7 @@ export class AccountDO {
     return this.tx(async tx => {
       const profile = (await tx.get('profile')) || {};
       const state = await readBalance(tx, now, funds_check ? { flush: false } : undefined);
-      return { account: profile.account, created_at: profile.created_at, balance_microdollars: state.balance_microdollars, month: state.month, today: state.day };
+      return { account: profile.account, created_at: profile.created_at, security_email_address: profile.email ?? null, balance_microdollars: state.balance_microdollars, month: state.month, today: state.day };
     });
   }
 
@@ -167,6 +192,7 @@ export class AccountDO {
     const pollAt = await this.pollPushes(now);
     const compactAt = await this.compact(now);
     const { next_at: outboxAt } = await this.deliverOutbox(now);
+    const mailAt = await this.deliverEmail(now);
     let more = false;
     // Prune expired decisions, usage windows, step-ups and authorization codes.
     for (const [key, value] of await this.storage.list({ prefix: 'decision:', limit: 500 })) {
@@ -190,7 +216,7 @@ export class AccountDO {
     more = usage.size === 1000;
     const hasWork = (await this.storage.list({ prefix: 'decision:', limit: 1 })).size || (await this.storage.list({ prefix: 'outbox:', limit: 1 })).size;
     // The outbox's retry time wins over the daily pruning pass.
-    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt, shortLived === null ? null : Math.max(shortLived, now + 60000), pollAt].filter(t => t !== null);
+    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt, mailAt, shortLived === null ? null : Math.max(shortLived, now + 60000), pollAt].filter(t => t !== null);
     if (next.length) await this.storage.setAlarm(Math.min(...next));
   }
 }
@@ -200,7 +226,7 @@ export class AccountDO {
  * `this` bound to the AccountDO, as when they were written in one class: they are copied onto its
  * prototype so op_* dispatch, the alarm and tests find them on the object itself.
  */
-const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountCompaction];
+const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountCompaction, AccountEmail];
 for (const group of OPERATION_GROUPS) {
   for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(group.prototype))) {
     if (name === 'constructor') continue;

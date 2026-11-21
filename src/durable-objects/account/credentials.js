@@ -64,15 +64,16 @@ export class AccountCredentials {
       await scheduleCompaction(tx, now);
       return { cid: record.cid, charged: price, balance_microdollars: paid.balance_microdollars };
     });
-    if (announce || (reinstated && (await this.storage.get('push:subs'))?.length)) {
-      const what = `${noticeText(device.name) || 'a device'} for ${noticeText(record.aud.join(', '), 120)}`;
-      const more = announce > 1 ? ` (and ${announce - 1} more since the last notice)` : '';
-      this.notify({
-        title: reinstated ? 'Revoked device reinstated' : urgent ? 'Credential with account access issued' : 'Credential issued',
-        body: reinstated ? `A revoked device, ${what}, was issued a credential again.` : urgent ? `${what} can now act on your devicebasedauth.org account.` : `${what}${more}.`,
-        path: `#credential/${encodeURIComponent(record.cid)}`, tag: urgent || reinstated ? `cred-${record.cid}` : 'issued'
-      }, now);
-    }
+    const what = `${noticeText(device.name) || 'a device'} for ${noticeText(record.aud.join(', '), 120)}`;
+    const notice = {
+      title: reinstated ? 'Revoked device reinstated' : urgent ? 'Credential with account access issued' : 'Credential issued',
+      body: reinstated ? `A revoked device, ${what}, was issued a credential again.` : urgent ? `${what} can now act on your devicebasedauth.org account.` : `${what}${announce > 1 ? ` (and ${announce - 1} more since the last notice)` : ''}.`,
+      path: `#credential/${encodeURIComponent(record.cid)}`, tag: urgent || reinstated ? `cred-${record.cid}` : 'issued'
+    };
+    if (announce || (reinstated && (await this.storage.get('push:subs'))?.length)) this.notify(notice, now);
+    // Security email: at once for these, in the hourly digest for the rest (account/email.js).
+    if (urgent || reinstated) await this.emailNow(notice, now);
+    else await this.emailDigest(now);
     return stored;
   }
 
@@ -297,9 +298,12 @@ export class AccountCredentials {
       await this.audit(tx, now, `credential.${type}`, { cid, jti: update.jti });
       return { cid, jti: update.jti, charged: free ? 0 : price, ...(paid ? { balance_microdollars: paid.balance_microdollars } : {}) };
     });
-    if (announce) {
+    if (rotated) {
       const more = announce > 1 ? ` (and ${announce - 1} more issuances since the last notice)` : '';
-      this.notify({ title: 'Credential moved to a new key', body: `${noticeText(rotated.device?.name) || 'A device'} rotated its credential for ${noticeText(rotated.aud.join(', '), 120)} to a new key${more}.`, path: `#credential/${encodeURIComponent(cid)}`, tag: hasDbaAction(rotated.grants) ? `cred-${cid}` : 'issued' }, now);
+      const notice = { title: 'Credential moved to a new key', body: `${noticeText(rotated.device?.name) || 'A device'} rotated its credential for ${noticeText(rotated.aud.join(', '), 120)} to a new key${more}.`, path: `#credential/${encodeURIComponent(cid)}`, tag: hasDbaAction(rotated.grants) ? `cred-${cid}` : 'issued' };
+      if (announce) this.notify(notice, now);
+      if (hasDbaAction(rotated.grants)) await this.emailNow(notice, now);
+      else await this.emailDigest(now);
     }
     if (rotation) await this.deliverOutbox(now);
     return result;

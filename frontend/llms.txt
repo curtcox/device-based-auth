@@ -71,7 +71,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - `POST /api/v1/authorize {credential, proof, request:{method,url}, audience, action, resource, context:{network}}` — online decision for an audience you own.
 - `POST /api/v1/inspect {credential, check?}` — decode, verify, check revocation, evaluate. Free.
 - `GET|POST /api/v1/audiences` — relying parties and their action catalogs (`GET /api/v1/audiences/{name}/usage`: your audience's online decisions, sign-ins and spend per month); register your domain (prove it with `https://<domain>/.well-known/devicebasedauth.json` = `{"account":"<your account>"}`).
-- `GET /api/v1/account`, `GET /api/v1/transactions`, `GET /api/v1/audit`, `GET|PATCH /api/v1/account/settings` (dashboard only: `max_issues_per_day`, default 500; `max_renewals_per_credential_per_month`, default no cap; beyond them the API answers 429 `issuance_limit` / `renewal_limit` and charges nothing).
+- `GET /api/v1/account`, `GET /api/v1/transactions`, `GET /api/v1/audit`, `GET|PATCH /api/v1/account/settings` (dashboard only: `max_issues_per_day`, default 500; `max_renewals_per_credential_per_month`, default no cap; beyond them the API answers 429 `issuance_limit` / `renewal_limit` and charges nothing; `security_email`: `all` (default), `sensitive` or `off` — takeover-sensitive events are emailed at once, other issuances in at most one digest an hour, each email charged the `notice` price when queued; raising a limit or turning emails down needs a recent sign-in).
 - OpenID Connect: `/.well-known/openid-configuration` (authorization code + PKCE S256; client_id = audience name).
 
 ## API keys and scopes

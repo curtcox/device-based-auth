@@ -513,6 +513,8 @@ package, conformance vectors and the integration checklists (`todo/integrate_has
 - **Account takeover = control of every device.** Require a passkey or recent re-authentication
   to issue credentials with `dba:*` actions, raise spend caps, or remove revocations; email
   (and push to registered DBA devices) on every issuance; per-account issuance rate limits.
+  Since an email costs more than an issuance (D9), takeover-sensitive events are emailed at once
+  and other issuances in at most one digest an hour, each email charged when queued.
 - **Issuer key compromise**: rotation runbook, short default lifetimes, `kid` pinning, mass
   force-renew.
 - **Gates** (§6.4): push-fatigue limits (one waiting request per subject, number matching at

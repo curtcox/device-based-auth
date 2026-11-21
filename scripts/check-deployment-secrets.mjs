@@ -17,6 +17,12 @@ if (process.env.GATE_SEALING_KEYS) {
     if (keys.some(k => k.kid?.startsWith('local-'))) problems.push('GATE_SEALING_KEYS contains the local development key');
   } catch { problems.push('GATE_SEALING_KEYS is not JSON'); }
 }
+// Security email (STATUS S8, D9) is optional, but half a configuration would silently send nothing.
+const email = ['EMAIL_PROVIDER', 'SES_REGION', 'EMAIL_FROM', 'SES_ACCESS_KEY_ID', 'SES_SECRET_ACCESS_KEY'];
+if (email.some(name => process.env[name])) {
+  for (const name of email) if (!process.env[name]) problems.push(`${name} is not set (security email needs all of ${email.join(', ')})`);
+  if (process.env.EMAIL_PROVIDER && process.env.EMAIL_PROVIDER !== 'ses') problems.push('EMAIL_PROVIDER must be "ses"');
+}
 if ((process.env.TOKEN_SIGNING_KEY || '').length < 32) problems.push('TOKEN_SIGNING_KEY must be at least 32 characters');
 if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
 console.log('deployment secrets present');

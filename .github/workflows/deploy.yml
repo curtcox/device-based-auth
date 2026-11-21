@@ -32,6 +32,11 @@ jobs:
       ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
       PUSH_VAPID_KEY: ${{ secrets.DBA_PUSH_VAPID_KEY }}
       GATE_SEALING_KEYS: ${{ secrets.DBA_GATE_SEALING_KEYS }}
+      EMAIL_PROVIDER: ${{ vars.DBA_EMAIL_PROVIDER }}
+      SES_REGION: ${{ vars.DBA_SES_REGION }}
+      EMAIL_FROM: ${{ vars.DBA_EMAIL_FROM }}
+      SES_ACCESS_KEY_ID: ${{ secrets.DBA_SES_ACCESS_KEY_ID }}
+      SES_SECRET_ACCESS_KEY: ${{ secrets.DBA_SES_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -66,7 +66,7 @@ export class AccountSignIn {
     }
     this.announceTimeouts(byTimeout, now);
     if (next.status) return next;
-    this.notify({ title: 'Sign-in gates changed', body: 'The gates that confirm sign-ins to your account were changed. If that was not you, sign in and check your account.', path: '#gates', tag: 'sign-in-gates' }, now);
+    await this.alert({ title: 'Sign-in gates changed', body: 'The gates that confirm sign-ins to your account were changed. If that was not you, sign in and check your account.', path: '#gates', tag: 'sign-in-gates' }, now);
     return next;
   }
 
@@ -242,7 +242,7 @@ export class AccountSignIn {
       await tx.put('recovery', { hashes: await Promise.all(codes.map(recoveryHash)), created_at: now });
       await this.audit(tx, now, 'recovery_codes.created', {});
     });
-    this.notify({ title: 'New recovery codes', body: 'New recovery codes were made for your account; the old ones no longer work. If that was not you, sign in and check your account.', path: '#gates', tag: 'recovery-codes' }, now);
+    await this.alert({ title: 'New recovery codes', body: 'New recovery codes were made for your account; the old ones no longer work. If that was not you, sign in and check your account.', path: '#gates', tag: 'recovery-codes' }, now);
     return { codes, created_at: now };
   }
 
@@ -260,7 +260,7 @@ export class AccountSignIn {
       await this.scheduleWake(tx, now + CONFIRMED_SESSION_MS);
       return recovery.hashes.length;
     });
-    this.notify({ title: 'A recovery code was used', body: `Someone opened your dashboard with a recovery code (${left} left). If that was not you, revoke everything and change your sign-in.`, path: '#gates', tag: `recovery-used-${now}` }, now);
+    await this.alert({ title: 'A recovery code was used', body: `Someone opened your dashboard with a recovery code (${left} left). If that was not you, revoke everything and change your sign-in.`, path: '#gates', tag: `recovery-used-${now}` }, now);
     return { status: 'confirmed', recovery_codes_left: left };
   }
 

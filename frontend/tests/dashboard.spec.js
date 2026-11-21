@@ -28,6 +28,23 @@ test('local sign-in, development deposit, and the account page', async ({ page }
   await expect(page.locator('#view table')).toContainText('development credit');
 });
 
+test('security emails: the address and the level picker', async ({ page }) => {
+  const owner = uniqueName('mail');
+  // The local server sends no email and its accounts have no address, so pretend both here; the
+  // setting itself is saved by the real API.
+  await page.route('**/api/public/config', async route => { const r = await route.fetch(); await route.fulfill({ response: r, json: { ...(await r.json()), security_email: true } }); });
+  await page.route('**/api/v1/account', async route => { const r = await route.fetch(); await route.fulfill({ response: r, json: { ...(await r.json()), security_email_address: 'owner@example.com' } }); });
+  await signIn(page, owner);
+  await page.getByRole('link', { name: 'Account', exact: true }).click();
+  await expect(page.locator('#security-email-address')).toHaveText('owner@example.com');
+  await expect(page.getByLabel('Security emails')).toHaveValue('all');
+  await page.getByLabel('Security emails').selectOption('sensitive');
+  await page.locator('#email-form').getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('#view')).toContainText('Saved.');
+  const settings = await (await page.request.get('/api/v1/account/settings', { headers: { Authorization: `LocalDev ${owner}` } })).json();
+  expect(settings.security_email).toBe('sensitive');
+});
+
 test('devices, API keys, audiences and the panic button', async ({ page, request }) => {
   const owner = uniqueName('panel');
   await fund(request, owner);

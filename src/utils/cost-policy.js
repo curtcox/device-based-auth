@@ -3,7 +3,9 @@
 // handlers change (docs/business/pricing.md).
 export const RATES = Object.freeze({
   workerRequest: 0.30, workerCpuMs: 0.02, doRequest: 0.15, rowWritten: 1, rowRead: 0.001,
-  storageKBMonth: 0.2, r2ClassA: 4.5, r2ClassB: 0.36
+  storageKBMonth: 0.2, r2ClassA: 4.5, r2ClassB: 0.36,
+  // Amazon SES outbound email, $0.10 per 1,000 messages (AWS list price; D9).
+  emailMessage: 100
 });
 
 export const COST_POLICY = Object.freeze({
@@ -79,6 +81,16 @@ export const OPERATIONS = Object.freeze({
   // confirmed_until, the charge on the balance row and the day's aggregate, an audit row (and its
   // deletion after 13 months), and signing the confirmation JWS.
   confirm: { workerRequests: 1, doRequests: 2, rowWrites: 5, cpuMs: 5, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
+  // One security email (STATUS S8, D9), charged to the account when it is queued, so it is
+  // prepaid before anything is sent. Queueing rides on the request that caused it (an issuance,
+  // an API key...): the charge (balance row, ledger and receipt rows, both deleted by compaction
+  // after 13 months: 5 rows) and the queue row with its alarm (2 rows). Sending: up to 3 alarm
+  // wake-ups (one per attempt; SES is retried only when it answered that it did not take the
+  // message, so at most one message is billed), each signing the request (SigV4, ~3 ms) and
+  // rewriting or deleting the queue row (3 rows) and setting the next alarm (2 rows), then an
+  // audit row and its later deletion (2 rows) and, for the hourly digest, its last-sent row
+  // (1 row; building it reads up to 40 rows of the audit trail and devices).
+  notice: { workerRequests: 0, doRequests: 3, rowWrites: 15, cpuMs: 10, storageKBMonths: 0.5 * 13, r2ClassA: 0, emails: 1 },
   // Authentication (with the rate limit), registry read, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
   // the charge's ledger and receipt rows and the audit row.
   audience: { workerRequests: 1, doRequests: 4, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }
@@ -89,7 +101,7 @@ export function worstCaseCost(op) {
   const o = OPERATIONS[op];
   if (!o) throw new Error(`unknown operation ${op}`);
   const r = RATES;
-  return o.workerRequests * r.workerRequest + o.doRequests * r.doRequest + o.rowWrites * r.rowWritten + o.cpuMs * r.workerCpuMs + o.storageKBMonths * r.storageKBMonth + o.r2ClassA * r.r2ClassA;
+  return o.workerRequests * r.workerRequest + o.doRequests * r.doRequest + o.rowWrites * r.rowWritten + o.cpuMs * r.workerCpuMs + o.storageKBMonths * r.storageKBMonth + o.r2ClassA * r.r2ClassA + (o.emails || 0) * r.emailMessage;
 }
 
 /** Gross up the credit to itemize card payment costs (hashbin/cronly). */

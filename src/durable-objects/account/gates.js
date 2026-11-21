@@ -139,7 +139,7 @@ export class AccountGates {
       await this.audit(tx, now, 'gate.created', { id: created.gate.id, kind: created.gate.kind, ...(created.gate.device_id ? { device_id: created.gate.device_id } : {}), ...(created.gate.url ? { url: created.gate.url } : {}) });
       return created;
     });
-    if (gate.state === 'active') this.announceGate(gate, now);
+    if (gate.state === 'active') await this.announceGate(gate, now);
     return { ...visibleGate(gate), ...(setup ? { setup } : {}) };
   }
 
@@ -150,13 +150,13 @@ export class AccountGates {
       await this.audit(tx, now, 'gate.activated', { id, kind: done.kind });
       return done;
     });
-    this.announceGate(gate, now);
+    await this.announceGate(gate, now);
     return visibleGate(gate);
   }
 
   /** Gate changes are announced at once, like dba:* issuance (plan §8). */
-  announceGate(gate, now) {
-    this.notify({ title: 'Gate added', body: `“${noticeText(gate.label)}” (${gate.kind}) can now approve or refuse requests for your account.`, path: '#gates', tag: `gate-added-${gate.id}` }, now);
+  async announceGate(gate, now) {
+    await this.alert({ title: 'Gate added', body: `“${noticeText(gate.label)}” (${gate.kind}) can now approve or refuse requests for your account.`, path: '#gates', tag: `gate-added-${gate.id}` }, now);
   }
 
   /** A request as the approval page shows it, with what it needs to offer factors. */
@@ -182,7 +182,7 @@ export class AccountGates {
       await this.audit(tx, now, 'gate.deleted', { id, kind: found.kind });
       return found;
     });
-    this.notify({ title: 'Gate removed', body: `“${noticeText(gate.label)}” no longer approves requests. Grants that named only this gate now deny.`, path: '#gates', tag: `gate-removed-${id}` }, now);
+    await this.alert({ title: 'Gate removed', body: `“${noticeText(gate.label)}” no longer approves requests. Grants that named only this gate now deny.`, path: '#gates', tag: `gate-removed-${id}` }, now);
     return { ...visibleGate(gate), deleted: true };
   }
 

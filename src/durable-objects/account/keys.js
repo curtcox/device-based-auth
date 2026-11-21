@@ -22,7 +22,7 @@ export class AccountKeys {
       await tx.put(`key:${id}`, key); await this.audit(tx, now, oauth ? 'app.connected' : 'key.created', { key_id: id, name, scopes });
       return visibleKey(key);
     }).then(async key => {
-      this.notify({ title: oauth ? 'App connected to your account' : 'API key created', body: `${oauth ? 'An app' : 'An API key'} “${noticeText(name)}” can now act for your devicebasedauth.org account (${scopes.join(', ')}).`, path: '#keys', tag: `key-${id}` }, now);
+      await this.alert({ title: oauth ? 'App connected to your account' : 'API key created', body: `${oauth ? 'An app' : 'An API key'} “${noticeText(name)}” can now act for your devicebasedauth.org account (${scopes.join(', ')}).`, path: '#keys', tag: `key-${id}` }, now);
       return key;
     });
   }
@@ -102,8 +102,8 @@ export class AccountKeys {
       await this.audit(tx, now, 'enrollment_token.created', { token_id: id, name, aud: template.aud, max_uses });
       await scheduleCompaction(tx, now);
       return visibleToken(token, now);
-    }).then(token => {
-      this.notify({ title: 'Enrollment token created', body: `“${noticeText(name)}” lets up to ${max_uses} devices enroll for ${noticeText(template.aud.join(', '), 120)} without approval.`, path: '#tokens', tag: `etok-${id}` }, now);
+    }).then(async token => {
+      await this.alert({ title: 'Enrollment token created', body: `“${noticeText(name)}” lets up to ${max_uses} devices enroll for ${noticeText(template.aud.join(', '), 120)} without approval.`, path: '#tokens', tag: `etok-${id}` }, now);
       return token;
     });
   }

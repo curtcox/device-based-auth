@@ -35,6 +35,8 @@ WORKER_NAME = "dba-worker-prod"
 # PUSH_VAPID_KEY         private P-256 JWK signing security notices (Web Push); without it they are off
 # GATE_SEALING_KEYS      JSON [{ "kid", "key" (32 random bytes, base64) }]; seals TOTP seeds (first seals,
 #                        all open); without it TOTP gates cannot be added
+# EMAIL_PROVIDER=ses, SES_REGION, EMAIL_FROM, SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY
+#                        security email through Amazon SES (STATUS S8, D9); without them none is sent
 # Optional: ALERT_WEBHOOK_URL, COST_SAFETY_BRAKE_CENTS, COST_SAFETY_HARD_STOP=true, LAUNCH_APPROVED=true, GIT_SHA
 
 [[durable_objects.bindings]]

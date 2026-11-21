@@ -71,7 +71,7 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 - `POST /api/v1/authorize {credential, proof, request:{method,url}, audience, action, resource, context:{network}}` — online decision for an audience you own.
 - `POST /api/v1/inspect {credential, check?}` — decode, verify, check revocation, evaluate. Free.
 - `GET|POST /api/v1/audiences` — relying parties and their action catalogs (`GET /api/v1/audiences/{name}/usage`: your audience's online decisions, sign-ins and spend per month); register your domain (prove it with `https://<domain>/.well-known/devicebasedauth.json` = `{"account":"<your account>"}`).
-- `GET /api/v1/account`, `GET /api/v1/transactions`, `GET /api/v1/audit`, `GET|PATCH /api/v1/account/settings` (dashboard only: `max_issues_per_day`, default 500; `max_renewals_per_credential_per_month`, default no cap; beyond them the API answers 429 `issuance_limit` / `renewal_limit` and charges nothing).
+- `GET /api/v1/account`, `GET /api/v1/transactions`, `GET /api/v1/audit`, `GET|PATCH /api/v1/account/settings` (dashboard only: `max_issues_per_day`, default 500; `max_renewals_per_credential_per_month`, default no cap; beyond them the API answers 429 `issuance_limit` / `renewal_limit` and charges nothing; `security_email`: `all` (default), `sensitive` or `off` — takeover-sensitive events are emailed at once, other issuances in at most one digest an hour, each email charged the `notice` price when queued; raising a limit or turning emails down needs a recent sign-in).
 - OpenID Connect: `/.well-known/openid-configuration` (authorization code + PKCE S256; client_id = audience name).
 
 ## API keys and scopes
@@ -109,8 +109,8 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `DELETE /api/v1/enrollment-tokens/{id}` (credentials:issue): Enrollment tokens (dbae_…): a pre-approved template (aud, grants, lifetime_seconds) for up to max_uses devices (1–10000) until expires_in_days (default 7, ≤ 90). The secret is shown once. Not available to delegating devices.
 - `GET /api/v1/whoami` (authenticated): Who is calling: account, credential kind and (for devices) the grants in plain English.
 - `GET /api/v1/account` (account:read): Balance, this month's spend and today's aggregated charges.
-- `GET /api/v1/account/settings` (session): Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap). PATCH changes the members given; dashboard only.
-- `PATCH /api/v1/account/settings` (session): Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap). PATCH changes the members given; dashboard only.
+- `GET /api/v1/account/settings` (session): Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap); security_email: all (default), sensitive (takeover-sensitive events only, no hourly digest of other issuances) or off, each email charged the notice price when queued (only when the server sends email: security_email in /api/public/config, and the account has a verified address: security_email_address in /api/v1/account). PATCH changes the members given; raising a limit or turning security_email down needs a recent sign-in. Dashboard only.
+- `PATCH /api/v1/account/settings` (session): Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap); security_email: all (default), sensitive (takeover-sensitive events only, no hourly digest of other issuances) or off, each email charged the notice price when queued (only when the server sends email: security_email in /api/public/config, and the account has a verified address: security_email_address in /api/v1/account). PATCH changes the members given; raising a limit or turning security_email down needs a recent sign-in. Dashboard only.
 - `GET /api/v1/push-subscriptions` (session): Browsers that get security notices (Web Push) when credentials, API keys or enrollment tokens are issued; at most 5, free, dashboard only. POST takes a PushSubscription made with push_public_key from /api/public/config and sends it a first notice; DELETE tells every subscribed browser.
 - `POST /api/v1/push-subscriptions` (session): Browsers that get security notices (Web Push) when credentials, API keys or enrollment tokens are issued; at most 5, free, dashboard only. POST takes a PushSubscription made with push_public_key from /api/public/config and sends it a first notice; DELETE tells every subscribed browser.
 - `DELETE /api/v1/push-subscriptions/{id}` (session): Browsers that get security notices (Web Push) when credentials, API keys or enrollment tokens are issued; at most 5, free, dashboard only. POST takes a PushSubscription made with push_public_key from /api/public/config and sends it a first notice; DELETE tells every subscribed browser.
@@ -750,6 +750,7 @@ handler adds a Durable Object call or a storage write.
 | DO storage, per KB-month | 0.20 |
 | R2 class A (write) | 4.50 |
 | R2 class B (read, cache miss) | 0.36 |
+| Amazon SES email sent | 100 |
 
 ## Prices and worst-case costs
 
@@ -763,6 +764,7 @@ handler adds a Durable Object call or a storage write.
 | Webhook gate request, per webhook gate contacted (**proposed, D13**) | Same | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 13 | 22 | **22** |
 | Duo or Okta Verify gate request, per vendor gate contacted (**proposed, D13**) | Account that owns the gates | As a gate request, plus starting the push (signed subrequest, 1 row) and up to 24 status polls, each an alarm wake-up (24 DO req, ~2 ms each) | 18 | 30 | **30** |
 | Confirmation issued (periodic confirmation, **proposed, D13**) | Account that issued the credential (its gates are charged as gate requests) | 1 Worker req, 2 DO req, 5 rows (credential row, balance and daily aggregate row, an audit row and its later deletion), 5 ms (signing), 0.5 KB × 13 months | 7 | 12 | **12** |
+| Security email (**proposed, D9**) | Account it is sent to, when it is queued | 3 DO req (up to 3 alarm wake-ups, one per attempt), 15 rows (charge: balance, ledger and receipt rows and their later deletion; queue row and alarm; attempts' rewrites or deletion and next alarms; an audit row and its deletion; the digest's last-sent row), 10 ms (SigV4 signing per attempt), 0.5 KB × 13 months, **1 SES email** (100 µ$; retried only when SES answered that it did not take it, so at most one is billed) | 117 | 191 | **200** |
 | Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 4 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
 | Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
 | OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
@@ -840,6 +842,22 @@ most once an hour per account (the next notice says how many were held back); cr
 `dba:*` actions, rotations of them, reinstated devices, API keys and enrollment tokens are always
 announced. The hourly decision is stored on the balance row the charge writes anyway, so it costs
 no extra row. Subscribing a browser is free (a signed-in owner only, at most 5, one row).
+
+### Security email is charged per email (proposed, D9)
+
+An email costs more than a whole issuance (SES list price $0.10 per 1,000 is 100 µ$; Postmark-class
+providers about 1,500 µ$), so "an email per issuance" would break the price-floor rule. Instead
+(STATUS S8, D9): takeover-sensitive events are emailed at once (credentials with `dba:*` actions
+and their rotations, reinstated devices, API keys and app connections, enrollment tokens, gates
+added or removed, sign-in gate changes, new or used recovery codes, raised limits), and other
+issuances and rotations at most once an hour, in one digest read from the audit trail when it is
+sent. Each email is charged the `notice` price when it is queued, in its own transaction after
+the event, and only if the balance covers it: an account that cannot pay, has no verified address
+or turned emails off gets none, and the event itself is never refused or charged more. The owner
+chooses `security_email`: `all` (default), `sensitive` (no digest) or `off`; turning it down needs a
+recent sign-in and sends one last email. 200 µ$ is just above the 191 µ$ floor, leaving room for
+SES's per-GB charge on these few-KB messages. Queueing a digest reads three rows on every
+ordinary issuance (address, setting, queued digest; 0.003 µ$), which the issue price absorbs.
 
 ### Key attestation adds nothing to the issue price
 

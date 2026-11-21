@@ -1623,7 +1623,7 @@
     "/api/v1/account/settings": {
       "get": {
         "operationId": "get_api_v1_account_settings",
-        "summary": "Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap). PATCH changes the members given; dashboard only.",
+        "summary": "Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap); security_email: all (default), sensitive (takeover-sensitive events only, no hourly digest of other issuances) or off, each email charged the notice price when queued (only when the server sends email: security_email in /api/public/config, and the account has a verified address: security_email_address in /api/v1/account). PATCH changes the members given; raising a limit or turning security_email down needs a recent sign-in. Dashboard only.",
         "x-access": "session",
         "security": [
           {
@@ -1687,7 +1687,7 @@
       },
       "patch": {
         "operationId": "patch_api_v1_account_settings",
-        "summary": "Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap). PATCH changes the members given; dashboard only.",
+        "summary": "Budget guards: max_issues_per_day (default 500) and max_renewals_per_credential_per_month (default null, no cap); security_email: all (default), sensitive (takeover-sensitive events only, no hourly digest of other issuances) or off, each email charged the notice price when queued (only when the server sends email: security_email in /api/public/config, and the account has a verified address: security_email_address in /api/v1/account). PATCH changes the members given; raising a limit or turning security_email down needs a recent sign-in. Dashboard only.",
         "x-access": "session",
         "security": [
           {
@@ -1767,6 +1767,14 @@
                     ],
                     "minimum": 1,
                     "maximum": 100000
+                  },
+                  "security_email": {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "sensitive",
+                      "all"
+                    ]
                   }
                 }
               }
