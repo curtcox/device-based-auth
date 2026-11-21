@@ -284,7 +284,8 @@ export class AccountSignIn {
 }
 
 /** Hash a recovery code as typed (case and dashes ignored). */
-async function recoveryHash(code) {
+/** The stored form of a recovery code (any case, with or without dashes). */
+export async function recoveryHash(code) {
   const normalized = String(code ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '');
   return b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`dba-recovery\n${normalized}`))));
 }

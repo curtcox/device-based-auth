@@ -144,7 +144,7 @@ export async function requireFunds(env, account, amount) {
  * Issue a credential: validate, check funds, allocate a status index, sign, then charge and store
  * atomically in the account. Returns { credential, cid, payload, charged }.
  */
-export async function issueCredential(env, account, request, { source, chargeId, parentGrants, parentAud, maxExp, parentCid, enrollmentToken, attestation, reinstate = false, now = Date.now() }) {
+export async function issueCredential(env, account, request, { source, chargeId, parentGrants, parentAud, maxExp, parentCid, enrollmentToken, attestation, reinstate = false, free = false, now = Date.now() }) {
   const jwk = cleanJwk(request.public_jwk);
   // `attestation` comes only from a verified key attestation (services/attestation.js), never
   // from a request body: cleanDevice drops anything else the caller put in device.
@@ -158,8 +158,9 @@ export async function issueCredential(env, account, request, { source, chargeId,
   // to identify the account, so a delegate cannot name a site its delegator could not.
   if (parentAud) assert(aud.every(a => parentAud.includes(a)), 'not_narrower', `aud must be within the delegating credential's audiences (${parentAud.join(', ')})`, 403);
   if (parentGrants) assert(grantsNarrow(grants, parentGrants), 'not_narrower', 'A device can only issue credentials whose grants are narrower than its own (same constraints, covered actions and resources)', 403);
-  const amount = price('issue');
-  await requireFunds(env, account, amount);
+  // `free`: a recovery onto a new device (api/recovery.js), so an empty balance never locks anyone out.
+  const amount = free ? 0 : price('issue');
+  if (amount) await requireFunds(env, account, amount);
   const status = await allocate(env);
   const jkt = await jwkThumbprint(jwk);
   const cid = randomId('crd'); const deviceId = await derivedId('dev', account, jkt);

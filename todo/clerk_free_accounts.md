@@ -1,12 +1,13 @@
 # Paid accounts without Clerk
 
-Status: **A0–A2 done** (2026-11-21), A3 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **A0–A3 done** (2026-11-21), A4 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
 
 The question: can someone create and use a paid devicebasedauth.org account without ever signing
-in with Clerk? **Not today.** They can *use* one, but only after a Clerk sign-in created it, and
+in with Clerk? **Not on 2026-11-21, when this plan was written; yes since A3** (sign-up, recent
+sign-in through gates and recovery codes; `src/clerk-free-accounts.test.js`). They can *use* one, but only after a Clerk sign-in created it, and
 several account-control steps still need Clerk.
 
 ### 1.1 Already works without Clerk
@@ -142,7 +143,23 @@ code.
   needs a recent sign-in, so §3.3's ten minutes, or a recovery, is how the first one gets added.
   The sign-up flow offers it straight away.
 
-### 3.5 Recovery
+### 3.5 Recovery (codes done in A3)
+
+As built in A3 (`src/api/recovery.js`, `src/durable-objects/account/recovery.js`): the owner's
+choice is **read from what exists** rather than kept as separate booleans that could disagree with
+it. `GET /api/v1/account/recovery` reports the recovery codes left and
+`no_recovery_acknowledged_at`, with `at_risk` while there are neither; `POST` with
+`{ acknowledge_no_recovery: true }` records the acceptance (A4 and A5 add gates and email to the
+report). `POST /api/v1/recover` takes `{ account, via: 'code', code, request }`; the enrollment
+request, signed by the new key within 10 minutes, proves the key (a used code cannot be replayed),
+so no DPoP proof is needed. It is not `free: true`, so the cost brake never blocks getting back in;
+the per-IP limiter and 5 wrong codes per account per 15 minutes bound it. The credential is
+**issued free** (`issueCredential(…, { free: true })`), so an empty balance cannot lock the owner
+out (each recovery uses one of 10 codes, and a sheet needs a recent sign-in); it may reinstate a
+revoked device. Making codes returns the account id with them for the recovery sheet. An unknown
+account answers like a wrong code and stores nothing.
+
+The original design, for A4 and A5:
 
 The owner's choice is kept in account settings as
 `recovery: { codes: bool, gates: bool, email: bool, none_acknowledged_at }`. It is set at sign-up
@@ -242,7 +259,7 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 | **A0** ✅ | Tests for today's payments (§4 first bullets) and the `STRIPE_FETCH` hook. Done: `src/payments.test.js`, `stripeClient` in `src/api/payments.js`. The account is still created by a LocalDev sign-in standing in for Clerk, then the env turns into production with Clerk unset; A1 replaces that with sign-up. | Checkout and webhook covered, with Clerk unset. |
 | **A1** ✅ | Account ids (§3.1), `POST /signup`, the webhook's signup kind, `signup/complete`, `dev/signup-paid`, the cost count. Done: `src/api/signup.js`, `src/signup.test.js` (production, Clerk unset). | A paid account exists and is used with no Clerk configured. |
 | **A2** ✅ | The first ten minutes (§3.3) and re-verification through gates (§3.4), including the 403 body and the dashboard panel. Done: `src/durable-objects/account/reverify.js`, `POST /api/v1/session/reverify`, `frontend/js/dashboard-reverify.js`; tests `src/session-reverify.test.js`, Playwright `reverify.spec.js`. | A Clerk-free owner can add a second device and create API keys. |
-| **A3** | Recovery settings, recovery codes onto a new device, the "none" acknowledgement (§3.5). **The journey test.** | The journey test passes. |
+| **A3** ✅ | Recovery status, recovery codes onto a new device, accepting no recovery (§3.5). **The journey test.** Done: `POST /api/v1/recover`, `/api/v1/account/recovery`; tests `src/recovery.test.js` and the journey `src/clerk-free-accounts.test.js` (production, Clerk unset, every `CLERK_*` read recorded, every route checked open to a device or key). | The journey test passes. |
 | **A4** | Recovery by passkey or second device. | Gate recovery tests pass. |
 | **A5** | Verified email, `email_source`, email recovery with the waiting period. | Email tests pass (SES faked as in `src/security-email.test.js`). |
 | **A6** | Clerk linking both ways (§3.6), plus the ops step for the session token. | Link and unlink tests pass. |

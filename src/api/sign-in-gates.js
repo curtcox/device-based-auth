@@ -92,5 +92,6 @@ export async function sessionReverify(request, env, auth) {
 /** POST /api/v1/settings/recovery-codes: 10 new one-time codes, shown once (recent sign-in). */
 export async function recoveryCodes(request, env, auth) {
   requireRecentSignIn(auth, 'make recovery codes');
-  return rpc(env.ACCOUNTS, auth.account, 'recovery-codes', {});
+  // The account id goes on the recovery sheet: recovering onto a new device needs both.
+  return { account: auth.account, ...await rpc(env.ACCOUNTS, auth.account, 'recovery-codes', {}) };
 }

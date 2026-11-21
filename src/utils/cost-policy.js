@@ -34,6 +34,8 @@ export const OPERATIONS = Object.freeze({
   // the account's DO after it answers; whether to send rides on the balance row (no extra write).
   // Completing a paid sign-up (B9) reads the account's sign-up instead of the enrollment get/put;
   // the sign-up's own writes (the profile and the deposit) are a deposit's, which are free.
+  // Recovering onto a new device with a recovery code is an issue given free (an empty balance must
+  // not lock the owner out); each costs one code, ten per sheet, and a sheet needs a recent sign-in.
   issue: { workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 },
   // Credential status (auth, with the rate limit), credential status (renew), funds check, renew; later
   // compaction deletes its ledger, receipt and audit rows.

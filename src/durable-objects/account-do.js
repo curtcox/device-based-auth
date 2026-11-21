@@ -11,6 +11,7 @@ import { AccountGates } from './account/gates.js';
 import { AccountGateDelivery } from './account/gate-delivery.js';
 import { AccountSignIn } from './account/sign-in.js';
 import { AccountReverify } from './account/reverify.js';
+import { AccountRecovery } from './account/recovery.js';
 import { AccountCompaction } from './account/compaction.js';
 import { AccountEmail, SECURITY_EMAIL_LEVELS } from './account/email.js';
 import { cleanEmailAddress } from '../services/email.js';
@@ -238,7 +239,7 @@ export class AccountDO {
  * `this` bound to the AccountDO, as when they were written in one class: they are copied onto its
  * prototype so op_* dispatch, the alarm and tests find them on the object itself.
  */
-const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountReverify, AccountCompaction, AccountEmail];
+const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountReverify, AccountRecovery, AccountCompaction, AccountEmail];
 for (const group of OPERATION_GROUPS) {
   for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(group.prototype))) {
     if (name === 'constructor') continue;

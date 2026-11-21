@@ -123,6 +123,13 @@ describe('cost policy matches the code', () => {
     within('gate', { doRequests: answered.doRequests, rowWrites: opened.rowWrites + answered.rowWrites, ops: [...opened.ops, ...answered.ops] }, later(0, 1));
   });
 
+  it('recovery onto a new device: an issue, given free and bounded by the codes (B9)', async () => {
+    const { codes } = (await call(env, 'POST', '/api/v1/settings/recovery-codes', { auth: 'alice' })).body;
+    await enroll(env, 'alice', await newDevice()); // the registry seeds itself once per deployment
+    const recover = async code => { const d = await newDevice(); return call(env, 'POST', '/api/v1/recover', { body: { account: 'alice', code, request: await d.enrollRequest({ device: { name: 'p' } }) } }); };
+    within('issue', await measured(async () => { const r = await recover(codes.shift()); expect(r.body.status).toBe('recovered'); return r; }), later(11, 16));
+  });
+
   it('decision', async () => {
     const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'v', scopes: ['authorize'] } })).body.secret;
     const device = await newDevice();

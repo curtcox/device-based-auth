@@ -18,7 +18,7 @@ const TICKET_PREFIX = 'sup_';
 const TICKET_DAYS = 30;
 const POLL_INTERVAL = 3;
 /** A sign-up always makes a dashboard device, whatever audience and grants the request named. */
-const DASHBOARD_GRANTS = Object.freeze([{ actions: ['dba:session'] }]);
+export const DASHBOARD_GRANTS = Object.freeze([{ actions: ['dba:session'] }]);
 
 /**
  * Start a sign-up: body { request (a dba-enroll+jwt signed by the new key; aud and grants may be
