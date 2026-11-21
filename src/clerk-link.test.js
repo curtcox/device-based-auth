@@ -3,7 +3,7 @@ import { call, newDevice, enroll } from '../test-utils/env.js';
 import { clerkFreeEnv, signUp, asDevice } from '../test-utils/signup.js';
 import { rpc } from './utils/rpc.js';
 
-// Paid accounts without Clerk, phase A6 (todo/clerk_free_accounts.md §3.6, STATUS B9): an account
+// Paid accounts without Clerk, phase A6 (done/clerk_free_accounts.md §3.6, STATUS B9): an account
 // made without Clerk adds a password (Clerk) sign-in and can drop it again; a Clerk account keeps
 // working with only its devices after its Clerk user is deleted.
 

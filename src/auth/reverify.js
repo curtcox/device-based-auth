@@ -42,7 +42,7 @@ export function requireDbaActionsWithinScopes(auth, grants) {
 /**
  * Would requireRecentSignIn let this caller through? (it throws when not) A dashboard device
  * counts when it re-verified through one of the owner's gates, or was issued by a paid sign-up,
- * within REVERIFY_MINUTES (todo/clerk_free_accounts.md §3.3, §3.4).
+ * within REVERIFY_MINUTES (done/clerk_free_accounts.md §3.3, §3.4).
  */
 export function recentlySignedIn(auth, now = Date.now()) {
   if (!auth || auth.kind === 'local' || auth.kind === 'key') return true;

@@ -4,7 +4,7 @@ import { digest, verifyToken } from '../auth/tokens.js';
 import { requireRecentSignIn } from '../auth/reverify.js';
 
 // An address devicebasedauth.org verifies itself, for security email and recovery by email
-// (todo/clerk_free_accounts.md §3.5, §3.7, STATUS B9). The registry maps each verified address
+// (done/clerk_free_accounts.md §3.5, §3.7, STATUS B9). The registry maps each verified address
 // (hashed) to the one account it recovers.
 
 /** How the registry knows an address: SHA-256 of it lower-cased, so it never stores the address. */

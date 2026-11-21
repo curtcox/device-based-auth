@@ -6,7 +6,7 @@ import { rpc } from './utils/rpc.js';
 import { price } from './utils/pricing.js';
 import { EMAIL_RECOVERY_WAIT_MS } from './durable-objects/account/email-address.js';
 
-// Paid accounts without Clerk, phase A5 (todo/clerk_free_accounts.md §3.5, §3.7, STATUS B9): an
+// Paid accounts without Clerk, phase A5 (done/clerk_free_accounts.md §3.5, §3.7, STATUS B9): an
 // address devicebasedauth.org verifies itself gets security email and can recover the account,
 // after a wait any signed-in device can cancel. Production, every CLERK_* unset, SES faked.
 

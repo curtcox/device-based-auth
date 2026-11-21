@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accounts without a password — devicebasedauth.org</title>
+<meta name="description" content="Create, fund, use and recover a devicebasedauth.org account with only a device and a card: no password and no sign-in provider.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/docs.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/" aria-current="page">Docs</a><a href="/tools/">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<h1>Accounts without a password</h1>
+<p class="lead">You can create, fund, use and recover a devicebasedauth.org account with only a device and a card. No password, and no sign-in provider: signing in with Clerk (Google, GitHub or email) is optional.</p>
+<div class="docs-layout">
+<nav class="docs-toc" aria-label="On this page"><ol>
+<li><a href="#claim">What this means, and how we know</a></li>
+<li><a href="#create">Create an account</a></li>
+<li><a href="#same">The same account either way</a></li>
+<li><a href="#confirm">Confirming it is you</a></li>
+<li><a href="#recover">Getting back in</a></li>
+<li><a href="#password">Adding a password sign-in</a></li>
+<li><a href="#cli-sample">From the command line</a></li>
+<li><a href="#api-routes">API</a></li>
+</ol></nav>
+<div class="docs-body">
+<section id="claim">
+<h2>What this means, and how we know</h2>
+<p>Your first deposit creates the account, and the device that paid becomes its first way in: its key never leaves it, and the account's id (<code>acct_…</code>) is not tied to any email address or third-party login. Everything an account can do, an account made this way can do.</p>
+<p>This is tested on every change. <a href="https://github.com/curtcox/device-based-auth/blob/main/src/clerk-free-accounts.test.js"><code>src/clerk-free-accounts.test.js</code></a> runs one account's whole life (sign up, use, deposit again, confirm with a passkey, create an API key and a second device, lose every device, recover) on a server with no Clerk configured, and fails if any step so much as reads a Clerk setting or uses a route only a Clerk session can reach. The <a href="#cli-sample">command-line sample</a> below runs in CI too.</p>
+</section>
+<section id="create">
+<h2>Create an account</h2>
+<ul>
+<li><strong>In a browser:</strong> <a href="/signup.html">Create an account</a>. Choose a first deposit, name the browser, accept the terms, and pay on Stripe Checkout. You come back signed in.</li>
+<li><strong>From a terminal:</strong> <code>dba signup --accept-terms</code> prints the Checkout link, waits, and saves the credential (see <a href="#cli-sample">below</a>).</li>
+<li><strong>From your own page:</strong> the <a href="/docs/#browser">browser SDK</a> (v1.3.0+) has <code>signUp({ creditCents, acceptTerms })</code>, then <code>finish()</code> after Checkout.</li>
+</ul>
+<p>The first deposit is $5 to $20 (new accounts may deposit at most $20 per payment in their first week); the card fee is itemized on top, and the credit never expires. Nothing is stored until the payment arrives: Stripe's signed notice creates the account. The device's credential (<code>dba:session</code>, the dashboard) costs the usual issue price from the new balance.</p>
+<p>For ten minutes after paying, the new device counts as recently signed in, so you can set up a way back in straight away: recovery codes, a passkey, another device, or an email address.</p>
+</section>
+<section id="same">
+<h2>The same account either way</h2>
+<table><thead><tr><th></th><th>Made by paying (no password)</th><th>Made by signing in with Clerk</th></tr></thead><tbody>
+<tr><td>Balance, credentials, devices, audiences, gates, API keys, Sign in with devicebasedauth.org</td><td colspan="2">The same. The account's id is opaque either way.</td></tr>
+<tr><td>Everyday sign-in</td><td>This device's credential</td><td>Clerk, or a device made from the dashboard</td></tr>
+<tr><td>Confirming it is you (API keys, devices that can act on the account, gates, recovery codes, raised limits)</td><td>One of your gates, or the ten minutes after paying or recovering</td><td>Signing in to Clerk again, or one of your gates from a dashboard device</td></tr>
+<tr><td>Security email</td><td>An address you verify here</td><td>Clerk's verified address, unless you verify another here</td></tr>
+<tr><td>Getting back in</td><td colspan="2">Recovery codes, a passkey or another device, or an email address verified here; a Clerk account can also sign in to Clerk</td></tr>
+</tbody></table>
+</section>
+<section id="confirm">
+<h2>Confirming it is you</h2>
+<p>Some operations hand someone else control of your account if a device is stolen while unlocked, so they need a confirmation from the last ten minutes. A device asks one of your gates: a passkey or security key, an authenticator app, or another of your devices typing the two-digit number shown. On the dashboard that is the <strong>Confirm it is you</strong> button; in the API, <code>POST /api/v1/session/reverify</code>. An account with no such gate cannot do these operations until it adds one, which the ten minutes after paying are for.</p>
+</section>
+<section id="recover">
+<h2>Getting back in</h2>
+<p>If you lose every signed-in device, <a href="/recover.html">recover your account</a> onto a new one. Recovering is free (an empty balance never locks you out), and for ten minutes afterwards you can revoke the lost devices and make new codes. Every recovery is announced to your browsers and by email.</p>
+<table><thead><tr><th>Way back in</th><th>How</th><th>Trade-off</th></tr></thead><tbody>
+<tr><td>Recovery codes</td><td>Ten one-time codes and your account id, on a sheet you keep.</td><td>Immediate. Whoever finds the sheet can get in, so keep it away from your devices.</td></tr>
+<tr><td>A passkey or another device</td><td>A passkey, security key or another device you added as a gate approves the new device, typing the number it shows.</td><td>Needs that key or device, not just knowledge. Anyone who knows your account id can ask (three times an hour); only your gate can say yes.</td></tr>
+<tr><td>An email address verified here</td><td>We email a link; once it is used, the new device gets in after <strong>72 hours</strong>, unless any signed-in device cancels it.</td><td>The weakest: whoever controls the mailbox can start it, so the wait gives you time to notice and cancel.</td></tr>
+<tr><td>None</td><td>You accept, on the Account page, that losing every device loses the account.</td><td>Nothing to steal, and nothing to fall back on: the account and its balance are gone with your last device.</td></tr>
+</tbody></table>
+<p>Authenticator-app codes confirm it is you but do not recover an account: the app usually lives on the phone that was lost. The Account page shows which ways you have and warns while there are none.</p>
+</section>
+<section id="password">
+<h2>Adding a password sign-in</h2>
+<p>An account made by paying can add a Clerk sign-in as another way in (Account page, <strong>Add a password sign-in</strong>; <code>POST /api/v1/account/clerk-link</code>), and unlink it later if you keep another way in. A Clerk account can likewise stop using Clerk: daily use already works from its devices, and deleting the Clerk user never closes the account.</p>
+</section>
+<section id="cli-sample">
+<h2>From the command line</h2>
+<pre class="code" data-sample="signup-and-recover.sh"><code># 1. Sign up: a new key, a link to pay the first deposit by card (a local server takes no
+#    card), then a dashboard credential and a recovery sheet. Keep the sheet somewhere safe.
+dba signup --accept-terms --deposit 5 --name &quot;Sample laptop&quot; | tee &quot;$DBA_HOME/sheet.txt&quot;
+
+# 3. The laptop is lost. On another machine (here another profile), a recovery code puts a new
+#    key on the account; for ten minutes that counts as a recent sign-in.
+dba --profile spare recover --account &quot;$account&quot; --code &quot;$code&quot; --name &quot;Sample spare&quot;</code></pre>
+<p class="small muted">From <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/signup-and-recover.sh"><code>docs/samples/signup-and-recover.sh</code></a>, which runs in CI against a local server. <code>dba recover --account acct_… --via gate</code> asks your passkey or another device; <code>dba recover --email you@example.com</code> starts an email recovery; either finishes later with <code>--resume</code>.</p>
+</section>
+<section id="api-routes">
+<h2>API</h2>
+<table><thead><tr><th>Route</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>POST /api/v1/signup</code></td><td>Opens Checkout for a new account bound to the key that signed the request; returns a ticket. Public; stores nothing.</td></tr>
+<tr><td><code>POST /api/v1/signup/complete</code></td><td>With a DPoP proof by that key: <code>pending</code> until paid, then the credential.</td></tr>
+<tr><td><code>POST /api/v1/session/reverify</code></td><td>A dashboard device asks your gates to confirm it is you.</td></tr>
+<tr><td><code>POST /api/v1/recover</code>, <code>POST /api/v1/recover/complete</code></td><td>Recover by <code>code</code>, <code>gate</code> or <code>email</code>; finish a waiting one.</td></tr>
+<tr><td><code>GET</code>/<code>POST /api/v1/account/recovery</code></td><td>Your ways back in; accept having none; cancel an email recovery.</td></tr>
+<tr><td><code>POST</code>/<code>DELETE /api/v1/account/email</code></td><td>Verify an address here for security email and recovery; remove it.</td></tr>
+<tr><td><code>POST</code>/<code>DELETE /api/v1/account/clerk-link</code></td><td>Add or remove a password (Clerk) sign-in.</td></tr>
+</tbody></table>
+<p>Schemas and every other route: <a href="/openapi.json">/openapi.json</a>.</p>
+</section>
+</div>
+</div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>

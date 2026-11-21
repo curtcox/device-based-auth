@@ -202,5 +202,6 @@ measurements are missing for 36 hours. Paid operations keep working: they are pr
 
 1. ~~Approve these prices (D6)~~ Approved 2026-11-18. Renew could still go towards its floor (20).
 2. Clerk monthly retained users are the one per-user cost not tied to an operation. Mitigations in
-   place: dashboard sign-in with a DBA browser credential (no Clerk session). Proposed (D8, not
+   place: dashboard sign-in with a DBA browser credential (no Clerk session), and accounts created
+   by paying with a device, which never become Clerk users at all (STATUS B9). Proposed (D8, not
    built): close zero-balance accounts with no live credentials after 12 idle months.

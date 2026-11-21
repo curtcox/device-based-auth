@@ -9,7 +9,7 @@ import { appAudience } from '../services/issuer.js';
 import { readEnrollRequest } from './enrollments.js';
 import { quoteDeposit, openCheckout, creditSignup } from './payments.js';
 
-// Paid accounts without Clerk (todo/clerk_free_accounts.md §3.2, STATUS B9): a device pays the
+// Paid accounts without Clerk (done/clerk_free_accounts.md §3.2, STATUS B9): a device pays the
 // first deposit and the signed Stripe webhook creates the account, bound to that device's key.
 // Starting writes nothing (the request travels in a signed ticket, as anonymous enrollment
 // starts do); storage is written only when money arrives.

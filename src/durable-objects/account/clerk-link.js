@@ -4,7 +4,7 @@ import { RECOVERY_KINDS } from './recovery.js';
 
 /**
  * A Clerk sign-in linked to an account made without Clerk, and an account that stops using Clerk
- * (todo/clerk_free_accounts.md §3.6, STATUS B9). `clerk_sub` in the profile is the Clerk user
+ * (done/clerk_free_accounts.md §3.6, STATUS B9). `clerk_sub` in the profile is the Clerk user
  * whose sessions may act as this account; the middleware checks it on every such session, so a
  * stale or forged `dba_account` claim is refused. A Clerk user's own (empty) account remembers
  * `linked_to`, so deleting the Clerk user reaches the account it was linked to. Mixed into

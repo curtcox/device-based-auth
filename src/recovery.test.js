@@ -5,7 +5,7 @@ import { softAuthenticator } from '../test-utils/authenticator.js';
 import { createProof, inspectCredential } from '../packages/verify/src/index.js';
 import { answerChallenge } from './services/webauthn.js';
 
-// Paid accounts without Clerk, phases A3 and A4 (todo/clerk_free_accounts.md §3.5, STATUS B9):
+// Paid accounts without Clerk, phases A3 and A4 (done/clerk_free_accounts.md §3.5, STATUS B9):
 // after losing every device, the owner puts a new device on the account with a recovery code, or
 // with a passkey or another of their devices approving.
 

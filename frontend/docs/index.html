@@ -18,6 +18,7 @@
 <div class="docs-layout">
 <nav class="docs-toc" aria-label="On this page"><ol>
 <li><a href="#concepts">Concepts</a></li>
+<li><a href="/docs/accounts.html">Accounts without a password</a></li>
 <li><a href="#format">The credential format</a></li>
 <li><a href="#browser">Quick start: browser SDK</a></li>
 <li><a href="#cli">Quick start: CLI</a></li>
@@ -40,7 +41,7 @@
 <h2>Concepts</h2>
 <p>devicebasedauth.org issues <strong>device credentials</strong>: signed, readable statements of what one device may do, for which sites, when and where. The device holds the private key; we only ever see the public key.</p>
 <table><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody>
-<tr><td>Account</td><td>A devicebasedauth.org customer with a prepaid balance in micro-dollars. Its id appears in credentials as <code>acct</code>.</td></tr>
+<tr><td>Account</td><td>A devicebasedauth.org customer with a prepaid balance in micro-dollars. Its id appears in credentials as <code>acct</code>. Made by paying with a device, no password needed (<a href="accounts.html">accounts</a>), or by signing in.</td></tr>
 <tr><td>Device</td><td>Anything that can hold a private key: a browser profile, phone, laptop, server, CLI, CI job or AI agent. Identified by <code>dev_…</code> and its key thumbprint.</td></tr>
 <tr><td>Audience</td><td>A site or API that accepts credentials (a domain such as <code>hashbin.org</code>). It owns an action namespace and publishes an action catalog.</td></tr>
 <tr><td>Action</td><td>A namespaced verb from a catalog: <code>hashbin:content:write</code>, <code>cronly:run</code>, <code>dba:session</code>. <code>ns:*</code> matches every action in a namespace.</td></tr>

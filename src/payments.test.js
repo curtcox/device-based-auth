@@ -3,7 +3,7 @@ import Stripe from 'stripe';
 import { testEnv, call, newDevice, enroll } from '../test-utils/env.js';
 import { grossUp } from './utils/cost-policy.js';
 
-// Payments as they work today (todo/clerk_free_accounts.md, phase A0): a dashboard device
+// Payments as they work today (done/clerk_free_accounts.md, phase A0): a dashboard device
 // deposits through Stripe and is credited by the signed webhook, with Clerk not configured.
 // Creating the account still needs a sign-in (STATUS B9), so LocalDev stands in for that one
 // Clerk sign-in; then the environment turns into production with every CLERK_* variable unset.

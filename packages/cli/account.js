@@ -1,6 +1,6 @@
 /**
  * Creating an account by paying, and getting back into one after losing every device, from the
- * command line (STATUS B9, todo/clerk_free_accounts.md §3.8). These functions do the network part
+ * command line (STATUS B9, done/clerk_free_accounts.md §3.8). These functions do the network part
  * and take the client, the key and a clock, so they are tested against the real Worker in memory;
  * commands/account.js does the files and the printing.
  */

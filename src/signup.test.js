@@ -5,7 +5,7 @@ import { createProof, inspectCredential } from '../packages/verify/src/index.js'
 import { grossUp } from './utils/cost-policy.js';
 import { price } from './utils/pricing.js';
 
-// Paid accounts without Clerk, phase A1 (todo/clerk_free_accounts.md §3.2, STATUS B9): a device
+// Paid accounts without Clerk, phase A1 (done/clerk_free_accounts.md §3.2, STATUS B9): a device
 // pays the first deposit, the signed Stripe webhook creates the account, and the device completes
 // its sign-up to get a dashboard credential. Everything here runs as production with every
 // CLERK_* variable unset; Stripe's API is faked through env.STRIPE_FETCH and its webhooks are

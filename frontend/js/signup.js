@@ -1,5 +1,5 @@
 /**
- * Create an account with this browser and a card (STATUS B9, todo/clerk_free_accounts.md §3.2):
+ * Create an account with this browser and a card (STATUS B9, done/clerk_free_accounts.md §3.2):
  * the SDK makes a non-extractable key in the dashboard's device slot, the person pays the first
  * deposit on Stripe Checkout, and the signed payment creates the account bound to that key. The
  * page then offers a way back in while the payment still counts as a recent sign-in (ten minutes).

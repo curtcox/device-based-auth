@@ -1,5 +1,5 @@
 // Creating an account with only this browser and a card, then getting back in with a recovery
-// code after losing the browser (STATUS B9, todo/clerk_free_accounts.md §3.2, §3.5). The local
+// code after losing the browser (STATUS B9, done/clerk_free_accounts.md §3.2, §3.5). The local
 // server has no Stripe, so the page pays through the local-only development route.
 import { test, expect } from '@playwright/test';
 import { separateVisitors } from './helpers.js';

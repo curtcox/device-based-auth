@@ -7,7 +7,7 @@ import { answerChallenge } from './services/webauthn.js';
 import { API_ROUTES } from './index.js';
 import { canAccess, SESSION } from './auth/scopes.js';
 
-// The claim in the docs (todo/clerk_free_accounts.md, STATUS B9): a paid account can be created,
+// The claim in the docs (done/clerk_free_accounts.md, STATUS B9): a paid account can be created,
 // funded, used, administered and recovered with only a device and a card, never Clerk. This test
 // is the whole life of one such account, run as production with every CLERK_* variable unset,
 // through an env that records any read of a CLERK_* variable: if any step comes to depend on

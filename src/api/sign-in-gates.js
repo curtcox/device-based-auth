@@ -77,7 +77,7 @@ function factorAnswer(body) {
 
 /**
  * POST /api/v1/session/reverify: a dashboard device confirms it is the owner through one of the
- * owner's gates (todo/clerk_free_accounts.md §3.4), which then counts as a recent sign-in for
+ * owner's gates (done/clerk_free_accounts.md §3.4), which then counts as a recent sign-in for
  * REVERIFY_MINUTES. Send it again (with this device's own TOTP or security-key answer, or after
  * another device approved, typing the number shown) until it answers `reverified`. Browser
  * sessions sign in again with their sign-in provider instead.

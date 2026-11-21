@@ -101,6 +101,16 @@ Reuse the shared Stripe account. Create two products ("devicebasedauth.org prepa
 `checkout.session.async_payment_succeeded`; store its secret as `DBA_STRIPE_WEBHOOK_SECRET`.
 `STRIPE_SECRET_KEY` is the shared secret. Payments stay closed until `DBA_LAUNCH_APPROVED=true`.
 
+Sign-up by payment (STATUS B9) uses the same products and webhook: the Checkout session's metadata
+has `kind: signup`, and the webhook creates the account. Check after deploying: on
+`/signup.html`, pay $5 with a Stripe test card in test mode, come back signed in, and see the
+deposit and the account id on the Account page.
+
+**Refunding a sign-up that was paid but never completed** (the person closed the page and lost the
+browser's key, so nobody holds the account): find the Checkout session in Stripe (metadata `kind:
+signup`; `client_reference_id` is the account id, which has a balance and no credentials), refund
+it there per the terms, and leave the account empty; it is closed with other dormant accounts (D8).
+
 ## 5. Deploy
 
 Set the GitHub variable `DBA_DEPLOY_ENABLED=true` (or run the workflow by hand). The workflow lints,

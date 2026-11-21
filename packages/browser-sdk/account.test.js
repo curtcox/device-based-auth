@@ -3,7 +3,7 @@ import { DBA } from './dba.js';
 import { testEnv, call, ORIGIN, worker } from '../../test-utils/env.js';
 import { inspectCredential } from '../verify/src/index.js';
 
-// The SDK's sign-up and recovery (STATUS B9, todo/clerk_free_accounts.md §3.8), against the real
+// The SDK's sign-up and recovery (STATUS B9, done/clerk_free_accounts.md §3.8), against the real
 // Worker in memory. A local server without Stripe pays through the development route.
 
 let env;

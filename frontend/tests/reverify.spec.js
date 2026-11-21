@@ -1,5 +1,5 @@
 // A dashboard signed in with this browser's own device confirms it is the owner through a gate
-// before an operation that needs a recent sign-in (STATUS B9, todo/clerk_free_accounts.md §3.4).
+// before an operation that needs a recent sign-in (STATUS B9, done/clerk_free_accounts.md §3.4).
 import { test, expect } from '@playwright/test';
 import { uniqueName, fund, signIn, asLocal, separateVisitors } from './helpers.js';
 import { hotp } from '../../src/services/totp.js';

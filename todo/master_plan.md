@@ -49,7 +49,7 @@ cost policy, route table) rather than rewriting it.
 
 | Term | Meaning |
 |------|---------|
-| **Account** | A DBA customer, signed in with Clerk, holding a prepaid balance (µ$). |
+| **Account** | A DBA customer holding a prepaid balance (µ$): created by paying with a device (no password; STATUS B9, [done/clerk_free_accounts.md](../done/clerk_free_accounts.md)), or by signing in with Clerk. |
 | **Device** | Anything that can hold a private key: browser profile, phone, desktop, server, CLI, CI job, AI agent. Identified by `dev_…` and its public-key thumbprint. |
 | **Audience (relying party)** | A site or API that accepts DBA credentials, e.g. `hashbin.org`. Registers an **action catalog** (its vocabulary of actions). |
 | **Action** | A namespaced verb from an audience's catalog: `hashbin:content:write`, `cronly:jobs:run`, `dba:credentials:issue`. |
@@ -437,7 +437,8 @@ only. Prices and the cost derivation are in
   devices, deposits and daily/monthly summaries are kept).
 - **Clerk monthly retained users** are the one per-user cost not tied to an operation (free up to
   50,000 MRU). Mitigations: after first sign-in, users can sign into the DBA dashboard with their
-  own DBA browser credential (no Clerk session, so no MRU); accounts with zero balance and no live
+  own DBA browser credential (no Clerk session, so no MRU); accounts created by paying with a device
+  never become Clerk users (STATUS B9); accounts with zero balance and no live
   credentials for 12 months are closed after notice (decision D8).
 - Port hashbin/cronly's cost-safety brake: hourly cost measurement from Cloudflare analytics;
   alert at a projected month-end variable cost, then latch a brake that stops new free-tier work.

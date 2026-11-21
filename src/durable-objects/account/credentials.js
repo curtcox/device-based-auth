@@ -141,7 +141,7 @@ export class AccountCredentials {
       this.proofs.set(proof_key, proof_exp);
     }
     // When this credential's holder last proved it is the owner: re-verified through a gate, or
-    // issued by paying for a sign-up or by a recovery (todo/clerk_free_accounts.md §3.3–§3.5).
+    // issued by paying for a sign-up or by a recovery (done/clerk_free_accounts.md §3.3–§3.5).
     const signedInAt = Math.max(cred.reverified_at ?? 0, FRESH_SOURCES.includes(cred.source) ? cred.created_at ?? 0 : 0) || null;
     return { exists: true, signed_in_at: signedInAt, ...(dashboard ? { dashboard } : {}), ...(cred.confirm ? { confirm: cred.confirm, confirmed_until: cred.confirmed_until ?? 0 } : {}), ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
   }

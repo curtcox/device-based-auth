@@ -9,7 +9,7 @@ export const REVERIFY_KINDS = Object.freeze(['webauthn', 'totp', 'dba-device']);
 const REVERIFY_TIMEOUT_S = 300;
 
 /**
- * Re-verifying a dashboard device through the owner's gates (todo/clerk_free_accounts.md §3.4,
+ * Re-verifying a dashboard device through the owner's gates (done/clerk_free_accounts.md §3.4,
  * STATUS B9): what a recent Clerk sign-in does for a browser session. Mixed into AccountDO
  * (account-do.js): `this` is the account's Durable Object.
  */

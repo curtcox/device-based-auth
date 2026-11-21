@@ -1,6 +1,8 @@
 # Paid accounts without Clerk
 
-Status: **A0–A7 done** (2026-11-21), A8 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **done** (A0–A8, 2026-11-21); STATUS **B9**, **D14** (owner's choices, 2026-11-21). Owner steps
+left: legal review of the privacy and terms wording, open questions O2–O6, and the live checks after
+L9 (docs/ops/deployment.md §3, §4).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
@@ -316,11 +318,16 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 | **A5** ✅ | Verified email, `email_source`, email recovery with the waiting period (72 hours, O1 approved). Done: `src/durable-objects/account/email-address.js`, `src/api/email-address.js`, `via: 'email'`, `/email-link.html`, the Account page's address and "Getting back in" sections; tests `src/email-recovery.test.js`. | Email tests pass (SES faked as in `src/security-email.test.js`). |
 | **A6** ✅ | Clerk linking both ways (§3.6), plus the ops step for the session token. Done: `POST`/`DELETE /api/v1/account/clerk-link`, `src/durable-objects/account/clerk-link.js`, the webhook's `user.deleted`, the Account page's "Password sign-in" section, docs/ops/deployment.md §3; tests `src/clerk-link.test.js`. | Link and unlink tests pass. |
 | **A7** ✅ | Sign-up and recovery pages, CLI `signup`/`recover`, SDK release, Playwright. Done: `/signup.html`, `/recover.html`, links from the home page, pricing, the sign-in panel and the site map; `dba signup` and `dba recover` (`packages/cli/account.js`, `commands/account.js`); browser SDK v1.3.0 (`signUp`, `recover`, `pending`, `finish`); tests `packages/browser-sdk/account.test.js`, `packages/cli/account.test.js`, Playwright `signup.spec.js`. | `npm run test:e2e` passes. |
-| **A8** | Docs (§6), CI sample, STATUS (B9 done, S8 note), `git mv` this file to `done/`. | Docs state the claim and link the journey test. |
+| **A8** ✅ | Docs (§6), CI sample, STATUS (B9, S8 note), `git mv` this file to `done/`. Done: `frontend/docs/accounts.html` (linked from the docs, the site map and llms.txt), sample `docs/samples/signup-and-recover.sh` in `npm run test:samples` and embedded in the docs page (checked by Playwright `site.spec.js`), privacy and terms wording marked [LEGAL REVIEW], pricing.md, master plan, README, the refund runbook in docs/ops/deployment.md §4. | Docs state the claim and link the journey test. |
 
 A minimum Clerk-free launch is A0–A3, the sign-up page and code recovery from A7, and A8.
 
-## 6. Documentation to write (phase A8)
+## 6. Documentation to write (phase A8, done)
+
+As built: the docs page `frontend/docs/index.html` was within 120 bytes of its 64 KiB limit, so the
+Accounts section is its own page, `frontend/docs/accounts.html`, linked from the table of contents
+and the Account row of Concepts.
+
 
 - `frontend/docs/index.html`, a new **Accounts** section: an account can be created, funded and
   used with only a device and a card, without Clerk; what is the same either way; each recovery

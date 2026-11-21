@@ -66,9 +66,12 @@ test('pages fit a phone screen without horizontal scrolling', async ({ page }) =
 });
 
 test('docs code taken from docs/samples matches the tested samples', async ({ page }) => {
-  await page.goto('/docs/');
-  const blocks = await page.locator('pre[data-sample]').evaluateAll(pres => pres.map(pre => ({ sample: pre.dataset.sample, text: pre.textContent })));
-  expect(blocks.length).toBeGreaterThan(0);
+  const blocks = [];
+  for (const path of ['/docs/accounts.html', '/docs/']) {
+    await page.goto(path);
+    blocks.push(...await page.locator('pre[data-sample]').evaluateAll(pres => pres.map(pre => ({ sample: pre.dataset.sample, text: pre.textContent }))));
+  }
+  expect(blocks.map(b => b.sample)).toContain('signup-and-recover.sh');
   for (const { sample, text } of blocks) {
     const source = await readFile(new URL(`../../docs/samples/${sample}`, import.meta.url), 'utf8');
     const lines = source.split('\n').map(line => line.trimEnd());

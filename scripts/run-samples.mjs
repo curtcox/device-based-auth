@@ -45,6 +45,11 @@ const SAMPLES = [
     expect: [/^Approved\. Saved the credential\./m, /^Authorization: DBA ey[\w-]+\.[\w-]+\.[\w-]+$/m, /^DPoP: ey[\w-]+\.[\w-]+\.[\w-]+$/m, /"kind":"device"/, /^Type: +dba-access\+jwt$/m, /^Verdict: +valid$/m]
   },
   {
+    // An account made by paying, with no sign-in provider (STATUS B9); the local server takes no card.
+    name: 'signup-and-recover.sh', command: ['bash', 'docs/samples/signup-and-recover.sh'],
+    expect: [/^Account acct_[0-9A-Z]{26} created; this machine is its first device\./m, /^Recovery sheet for account acct_[0-9A-Z]{26}/m, /"account":"acct_[0-9A-Z]{26}"/, /"balance_microdollars":\d+/, /^Recovered account acct_[0-9A-Z]{26} onto this machine \(9 recovery codes left\)/m, /"kind":"device"/]
+  },
+  {
     name: 'verify-request.mjs', command: ['node', 'docs/samples/verify-request.mjs'],
     expect: [/^ALLOW publish: hashbin:content:write by account sample-owner/m, /^DENY {2}replayed request: 401 replayed_proof/m, /^DENY {2}delete: 403 forbidden \[\["action_not_granted"\]\]/m, /^DENY {2}anonymous: 401 credential_required/m]
   },

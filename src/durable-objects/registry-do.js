@@ -62,7 +62,7 @@ export class RegistryDO {
             return next;
           }
           // Verified email addresses (by SHA-256 of the lower-cased address) to the one account that
-          // may be recovered by email there (todo/clerk_free_accounts.md §3.5).
+          // may be recovered by email there (done/clerk_free_accounts.md §3.5).
           case 'email-get': return { account: (await tx.get(`email:${args.hash}`)) ?? null };
           case 'email-claim': {
             const holder = await tx.get(`email:${args.hash}`);

@@ -1,6 +1,6 @@
 /**
  * The page links in devicebasedauth.org's own emails open (STATUS B9,
- * todo/clerk_free_accounts.md §3.5): confirming a security email address (emv_… links) and
+ * done/clerk_free_accounts.md §3.5): confirming a security email address (emv_… links) and
  * recovering an account by email (erl_… links). The signed link is the URL fragment, so it never
  * reaches server logs or Referer headers. Nothing happens until the reader presses the button, so
  * mail scanners that open links change nothing.

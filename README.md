@@ -6,11 +6,13 @@ Enroll a device — a browser, phone, laptop, server, script or AI agent. It gen
 own private key; devicebasedauth.org issues it a signed, human-readable credential listing exactly
 what it may do, on which site, at which times and in which places. Servers verify credentials
 offline for free, or online (metered) for instant revocation, usage limits and owner approval.
-Owners see every credential they issued and can revoke any of them at any time.
+Owners see every credential they issued and can revoke any of them at any time. An account can be
+created with nothing but a device and a card: no password, and no sign-in provider
+([docs](frontend/docs/accounts.html)).
 
 Sibling of [hashbin.org](https://github.com/curtcox/hashbin.org) and
-[cronly.org](https://github.com/curtcox/cronly): Cloudflare Workers, Durable Objects and R2, Clerk,
-Stripe, a prepaid balance and no subscription.
+[cronly.org](https://github.com/curtcox/cronly): Cloudflare Workers, Durable Objects and R2, Clerk
+(optional), Stripe, a prepaid balance and no subscription.
 
 **Status:** implemented and tested locally; not yet deployed. See [STATUS.md](STATUS.md).
 
@@ -21,7 +23,7 @@ Stripe, a prepaid balance and no subscription.
 | Credential format and evaluation rules, with conformance vectors | [spec/](spec/) |
 | The service (Cloudflare Worker + Durable Objects) | [src/](src/) |
 | `@devicebasedauth/verify` — zero-dependency verifier and site helpers | [packages/verify/](packages/verify/) |
-| Browser SDK (`/sdk/v1.2.0/dba.js`, SRI-pinnable) | [packages/browser-sdk/](packages/browser-sdk/) |
+| Browser SDK (`/sdk/v1.3.0/dba.js`, SRI-pinnable) | [packages/browser-sdk/](packages/browser-sdk/) |
 | `dba` command-line tool | [packages/cli/](packages/cli/) |
 | Website: dashboard, approval page, developer tools, docs, pricing | [frontend/](frontend/) |
 | Samples run in CI (shell, Node, Worker, Python, Go) | [docs/samples/](docs/samples/) |

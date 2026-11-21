@@ -1,5 +1,5 @@
 /**
- * Get back into an account after losing every device (STATUS B9, todo/clerk_free_accounts.md
+ * Get back into an account after losing every device (STATUS B9, done/clerk_free_accounts.md
  * §3.5): this browser gets a new key in the dashboard's device slot, and a recovery code, a
  * passkey or another of the owner's devices, or the verified email address lets it in. A waiting
  * recovery (a gate's answer, or the email's wait) is kept with the key, so this page picks it up

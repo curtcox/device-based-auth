@@ -2,7 +2,7 @@ import { assert } from '../utils/errors.js';
 
 /**
  * Name (or with null, forget) the devicebasedauth.org account a Clerk user signs in to, in the
- * user's public metadata (todo/clerk_free_accounts.md §3.6, STATUS B9). Clerk puts it in the
+ * user's public metadata (done/clerk_free_accounts.md §3.6, STATUS B9). Clerk puts it in the
  * session token as `dba_account` once the session token is customized (docs/ops/deployment.md §3).
  * Only this backend can write public metadata. env.CLERK_FETCH replaces fetch in tests only.
  */

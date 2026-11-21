@@ -5,7 +5,7 @@ import { inspectCredential } from '../packages/verify/src/index.js';
 import { hotp } from './services/totp.js';
 import { call } from '../test-utils/env.js';
 
-// Paid accounts without Clerk, phase A2 (todo/clerk_free_accounts.md §3.3, §3.4, STATUS B9):
+// Paid accounts without Clerk, phase A2 (done/clerk_free_accounts.md §3.3, §3.4, STATUS B9):
 // what a recent Clerk sign-in allows, a Clerk-free owner gets from paying for the sign-up (for
 // ten minutes) and afterwards from one of their own gates. Production, every CLERK_* unset.
 

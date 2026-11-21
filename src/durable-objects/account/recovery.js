@@ -16,7 +16,7 @@ const RECOVERY_TIMEOUT_S = 600;
 const recoveryGates = gates => [...gates.values()].filter(g => gateActive(g) && RECOVERY_KINDS.includes(g.kind));
 
 /**
- * Getting back into an account after losing every device (todo/clerk_free_accounts.md §3.5,
+ * Getting back into an account after losing every device (done/clerk_free_accounts.md §3.5,
  * STATUS B9): a recovery code puts a new dashboard device on the account, and the owner can see
  * how they could recover, or say they accept that they cannot. Mixed into AccountDO
  * (account-do.js): `this` is the account's Durable Object.

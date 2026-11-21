@@ -6,7 +6,7 @@ import { setClerkAccountLink } from '../auth/clerk-api.js';
 
 /**
  * POST /api/v1/account/clerk-link { session_token }: let the Clerk user who holds that session sign
- * in to this account (todo/clerk_free_accounts.md §3.6, STATUS B9). Refused when that user already
+ * in to this account (done/clerk_free_accounts.md §3.6, STATUS B9). Refused when that user already
  * opens another account, or has its own account with money or credentials. DELETE: stop it; needs
  * another way in (a dashboard device, recovery codes, a passkey, a verified address). Both need a
  * recent sign-in: a sign-in is a way into the account.

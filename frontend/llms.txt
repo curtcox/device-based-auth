@@ -6,7 +6,7 @@ Machine-readable API: https://devicebasedauth.org/openapi.json
 Credential format: https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md
 Grant evaluation rules and test vectors: https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md
 Revocation webhook events: https://github.com/curtcox/device-based-auth/blob/main/spec/events.md
-Docs: https://devicebasedauth.org/docs/
+Docs: https://devicebasedauth.org/docs/ (accounts without a password: https://devicebasedauth.org/docs/accounts.html)
 Everything in one file (this summary, every route, the credential spec, evaluation rules and pricing): https://devicebasedauth.org/llms-full.txt
 MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_…, a device credential, or an OAuth access token: MCP clients discover /.well-known/oauth-protected-resource/mcp, register at /oauth/register, and the owner approves the scopes)
 
@@ -39,6 +39,13 @@ if (!result.allow) return new Response(result.code, { status: result.status });
 Offline verification fetches `https://devicebasedauth.org/.well-known/jwks.json` and status lists (`https://status.devicebasedauth.org/v1/lists/<n>`, signed JWT, bit idx set = revoked), caching both.
 
 Instant offline revocation: set `revocation_webhook` (https on your audience's domain) with `PATCH /api/v1/audiences/{name}`. Revocations of credentials naming your audience arrive as a POSTed JWS (`typ: dba-event+jwt`, signed with the issuer key); `await dba.handleEvent(await request.text())` verifies it and makes the verifier deny those credentials at once. Retried after 1 min, 10 min, 1 h; free for audiences; the status list stays authoritative. `POST /api/v1/audiences/{name}/webhook-test` sends a test event (read price).
+
+## Accounts (no password or sign-in provider needed)
+
+- An account is created by paying its first deposit ($5–$20 in the first week) with a new device key; Clerk sign-in is optional. Browser: https://devicebasedauth.org/signup.html, or SDK v1.3.0 `await dba.signUp({ creditCents: 500, acceptTerms: true })` → send the person to `url` (Stripe Checkout) → `await dba.finish()`. CLI: `dba signup --accept-terms` (prints a recovery sheet). HTTP: `POST /api/v1/signup {request (dba-enroll+jwt, aud/grants optional), credit_cents, accept_terms: true}` → `{url, account, ticket}`; after payment `POST /api/v1/signup/complete {ticket}` with a DPoP proof by the key (ath = hash of the ticket) returns `pending`, then the `dba:session` credential. Stores nothing until Stripe's signed webhook arrives.
+- For 10 minutes after sign-up or recovery the device counts as recently signed in. Later, operations that need a recent sign-in (API keys, `dba:*` credentials, gates, recovery codes, raised limits) need `POST /api/v1/session/reverify`: one of the owner's passkey, security-key, authenticator-app or other-device gates approves (403 `reverification_required` says so).
+- Getting back in after losing every device (free): `POST /api/v1/recover {account, via: "code", code, request}` (at once), `{account, via: "gate", request}` (a passkey or another device approves, typing the returned `number`), or `{email, via: "email", request}` (link to an address verified with `POST /api/v1/account/email`; then a 72-hour wait any signed-in device can cancel). Finish gate and email recoveries with `POST /api/v1/recover/complete {ticket}` + DPoP. CLI: `dba recover --account acct_… --code …` / `--via gate` / `--email …`, `--resume`. `GET /api/v1/account/recovery` lists the ways back in.
+- A password (Clerk) sign-in can be linked to such an account and removed: `POST`/`DELETE /api/v1/account/clerk-link`.
 
 ## Enroll a device
 

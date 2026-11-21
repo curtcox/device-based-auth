@@ -1,6 +1,6 @@
 /**
  * The Account page's security email and recovery sections (STATUS S8, B9;
- * todo/clerk_free_accounts.md §3.5, §3.7): the address security email goes to (from the sign-in
+ * done/clerk_free_accounts.md §3.5, §3.7): the address security email goes to (from the sign-in
  * provider, or verified here), how the owner could get back in after losing every device, and
  * email recoveries waiting, which any signed-in browser or device may cancel.
  */
@@ -79,7 +79,7 @@ export function recoverySection(r) {
 
 /**
  * A password (Clerk) sign-in for an account made without one, or unlinking it (STATUS B9,
- * todo/clerk_free_accounts.md §3.6). An account Clerk made opens with its own sign-in already.
+ * done/clerk_free_accounts.md §3.6). An account Clerk made opens with its own sign-in already.
  */
 export function signInSection(a) {
   const out = h('div', {});

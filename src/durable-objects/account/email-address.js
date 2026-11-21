@@ -6,7 +6,7 @@ import { readBalance } from '../ledger.js';
 import { cleanEmailAddress, emailConfigured, emailLine } from '../../services/email.js';
 
 // How long an email recovery waits after its link is used, so the owner's devices and browsers
-// can cancel it (todo/clerk_free_accounts.md O1, approved by the owner 2026-11-21).
+// can cancel it (done/clerk_free_accounts.md O1, approved by the owner 2026-11-21).
 export const EMAIL_RECOVERY_WAIT_MS = 72 * 3600000;
 // How long a verification or recovery link works.
 export const EMAIL_LINK_MS = 3600000;
@@ -22,7 +22,7 @@ const linkUrl = (env, token) => `${env.APP_ORIGIN || ''}/email-link.html#${token
 const emailKey = id => `emailrec:${id}`;
 
 /**
- * An address devicebasedauth.org verified itself (todo/clerk_free_accounts.md §3.5, §3.7, STATUS
+ * An address devicebasedauth.org verified itself (done/clerk_free_accounts.md §3.5, §3.7, STATUS
  * B9), for security email and for recovery by email; and recovery by email, which waits
  * EMAIL_RECOVERY_WAIT_MS after its link is used so any of the owner's devices can cancel it. An
  * address Clerk verified stays Clerk's (email_source 'clerk'); a verified one is not overwritten by

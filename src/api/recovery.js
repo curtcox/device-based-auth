@@ -12,7 +12,7 @@ import { appAudience } from '../services/issuer.js';
 import { readEnrollRequest } from './enrollments.js';
 import { DASHBOARD_GRANTS } from './signup.js';
 
-// Getting back in after losing every device (todo/clerk_free_accounts.md §3.5, STATUS B9). Works
+// Getting back in after losing every device (done/clerk_free_accounts.md §3.5, STATUS B9). Works
 // the same for Clerk accounts and accounts made by paying; nobody needs to be signed in.
 
 const TICKET_PREFIX = 'rcv_';

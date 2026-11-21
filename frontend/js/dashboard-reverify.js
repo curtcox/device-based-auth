@@ -1,6 +1,6 @@
 /**
  * "Confirm it is you" for a dashboard signed in with this browser's own device credential
- * (STATUS B9, todo/clerk_free_accounts.md §3.4). Operations that need a recent sign-in (API keys,
+ * (STATUS B9, done/clerk_free_accounts.md §3.4). Operations that need a recent sign-in (API keys,
  * devices with dba:* permissions, gates, recovery codes, raised limits) ask one of the owner's
  * gates instead of a password: a code from an authenticator app typed here, a passkey or security
  * key on the approval page, or another of the owner's devices typing the number shown here.
