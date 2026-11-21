@@ -12,7 +12,7 @@ import { authorize } from './api/authorize.js';
 import { audiences, audienceUsage, audienceWebhookTest } from './api/audiences.js';
 import { accountSettings } from './api/settings.js';
 import { gates, gateRequests, gateLinks } from './api/gates.js';
-import { signInGates, dashboardSession, recoveryCodes } from './api/sign-in-gates.js';
+import { signInGates, dashboardSession, recoveryCodes, sessionReverify } from './api/sign-in-gates.js';
 import { pushSubscriptions, pushPublicKey } from './api/push.js';
 import { emailConfigured } from './services/email.js';
 import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
@@ -97,6 +97,7 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/session`, access: SESSION, handler: 'dashboard-session' },
   { method: 'POST', path: `${V1}/session/confirm`, access: SESSION, handler: 'dashboard-session' },
   { method: 'POST', path: `${V1}/session/recover`, access: SESSION, handler: 'dashboard-session' },
+  { method: 'POST', path: `${V1}/session/reverify`, access: SESSION, handler: 'session-reverify' },
   { method: 'POST', path: `${V1}/settings/recovery-codes`, access: SESSION, handler: 'recovery-codes' },
   { method: 'GET', path: `${V1}/settings/sign-in-gates`, access: 'gates:read', handler: 'sign-in-gates' },
   { method: 'PUT', path: `${V1}/settings/sign-in-gates`, access: 'gates:write', handler: 'sign-in-gates' },
@@ -215,6 +216,7 @@ async function handle(route, request, env, auth) {
     case 'sign-in-gates': return signInGates(route, request, env, auth);
     case 'dashboard-session': return dashboardSession(route, request, env, auth);
     case 'recovery-codes': return recoveryCodes(request, env, auth);
+    case 'session-reverify': return sessionReverify(request, env, auth);
     case 'audiences': return audiences(route, request, env, auth);
     case 'audience-usage': return audienceUsage(route, request, env, auth);
     case 'audience-webhook-test': return audienceWebhookTest(route, request, env, auth);

@@ -66,7 +66,9 @@ export const OPERATIONS = Object.freeze({
   // (+ its later delete) the same way. A TOTP or security-key answer also rewrites the gate row
   // (the last step used, the key's signature counter): 1 row, ~3 ms (HMAC, AES-GCM, ECDSA).
   // Notices: Web Push to up to 5 browsers (10 ms), and the announcement of an allow by timeout
-  // (10 ms more).
+  // (10 ms more). Re-verifying a dashboard device (B9) is one such gate request: asking is a free
+  // dashboard request, its answer deletes the row and records the re-verification on the
+  // credential's row (instead of the decision's delete) with one audit row.
   gate: { workerRequests: 1, doRequests: 3, rowWrites: 9, cpuMs: 25, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
   // A webhook gate contacted: as a gate, plus the signed POST to the service after the decision
   // (signing ~2 ms; the subrequest itself is not billed) and the transaction that records its

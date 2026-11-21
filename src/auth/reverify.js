@@ -39,9 +39,14 @@ export function requireDbaActionsWithinScopes(auth, grants) {
   }
 }
 
-/** Would requireRecentSignIn let this caller through? (it throws when not) */
-export function recentlySignedIn(auth) {
+/**
+ * Would requireRecentSignIn let this caller through? (it throws when not) A dashboard device
+ * counts when it re-verified through one of the owner's gates, or was issued by a paid sign-up,
+ * within REVERIFY_MINUTES (todo/clerk_free_accounts.md §3.3, §3.4).
+ */
+export function recentlySignedIn(auth, now = Date.now()) {
   if (!auth || auth.kind === 'local' || auth.kind === 'key') return true;
+  if (auth.kind === 'device') return !!auth.device?.dba && Number.isFinite(auth.device.signed_in_at) && now - auth.device.signed_in_at <= REVERIFY_MINUTES * 60000;
   return auth.kind === 'clerk' && auth.factor_age_minutes !== null && auth.factor_age_minutes !== undefined && auth.factor_age_minutes <= REVERIFY_MINUTES;
 }
 
@@ -65,16 +70,20 @@ export async function reinstatingIssue(auth, issue, { person = true } = {}) {
  * last REVERIFY_MINUTES: issuing dba:* credentials, creating API keys and enrollment tokens with
  * dba:* grants, and raising budget limits. A Clerk session must carry a recent `fva`; local
  * development sessions pass; API keys pass (creating one needed this check); a dashboard device
- * (dba:session) cannot re-verify and is refused. `what` finishes "To …, sign in again".
- * The 403 body includes Clerk's reverification hint so Clerk's client helpers can react.
+ * (dba:session) must have re-verified through one of the owner's gates (POST
+ * /api/v1/session/reverify) or have just signed up. `what` finishes "To …, sign in again".
+ * The 403 body includes Clerk's reverification hint so Clerk's client helpers can react, and for
+ * a device where to re-verify.
  */
 export function requireRecentSignIn(auth, what) {
   if (recentlySignedIn(auth)) return;
-  const message = auth.kind === 'device'
-    ? `To ${what}, sign in to the dashboard with your password or passkey; a signed-in device cannot do this`
+  const device = auth.kind === 'device';
+  const message = device
+    ? `To ${what}, confirm it is you first: POST /api/v1/session/reverify asks one of your gates (a passkey or security key, an authenticator app, or another of your devices); this needs a confirmation from the last ${REVERIFY_MINUTES} minutes`
     : `To ${what}, sign in again: this needs a sign-in from the last ${REVERIFY_MINUTES} minutes`;
   throw new ApiError(403, 'reverification_required', message, {
     max_age_minutes: REVERIFY_MINUTES,
+    ...(device ? { reverify: { url: '/api/v1/session/reverify', method: 'POST' } } : {}),
     clerk_error: { type: 'forbidden', reason: 'reverification-error', metadata: { reverification: { level: 'first_factor', afterMinutes: REVERIFY_MINUTES } } }
   });
 }

@@ -4731,6 +4731,102 @@
         }
       }
     },
+    "/api/v1/session/reverify": {
+      "post": {
+        "operationId": "post_api_v1_session_reverify",
+        "summary": "A dashboard device confirms it is the owner through one of the owner's passkey, security-key, authenticator-app or other-device gates, which then counts as a recent sign-in for 10 minutes. Answers pending (with the gate request and the number another device types) until a gate approves; this device may answer with its own code or security key. Body {gate?, entry?, totp?:{code}, webauthn?}.",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "gate": {
+                    "type": "string"
+                  },
+                  "entry": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "totp": {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "webauthn": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settings/recovery-codes": {
       "post": {
         "operationId": "post_api_v1_settings_recovery_codes",

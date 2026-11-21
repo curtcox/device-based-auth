@@ -1,6 +1,6 @@
 # Paid accounts without Clerk
 
-Status: **A0, A1 done** (2026-11-21), A2 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **A0–A2 done** (2026-11-21), A3 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
@@ -104,7 +104,7 @@ account's compaction schedule, which every account's first issue writes). No new
 Abuse: creating a Checkout session costs us nothing and Stripe nothing until paid; card testing is
 Stripe Radar's job, and $5 is the minimum. The per-IP limiter and the brake bound Worker requests.
 
-### 3.3 The first ten minutes count as a recent sign-in
+### 3.3 The first ten minutes count as a recent sign-in (done in A2)
 
 Paying is a fresh authentication. A credential issued by `signup/complete`, or by any recovery in
 §3.5, counts as **recently signed in for `REVERIFY_MINUTES` after it was issued**. That breaks the
@@ -113,7 +113,15 @@ straight away. The account Durable Object already answers `credential-status` on
 request; add the credential's `issued_via` and `iat` to that answer, so this costs no extra
 request.
 
-### 3.4 Recent sign-in through the owner's gates
+### 3.4 Recent sign-in through the owner's gates (done in A2)
+
+As built: `credential-status` returns `signed_in_at` (the later of the credential's
+`reverified_at` and, for a `signup` credential, its issuance), so the middleware gets it in the call
+it already makes; the re-verification is recorded on the credential's own row rather than a
+`dashsess:` row, so it adds no rows, and it lasts per device, not per account. The request
+(purpose `reverify`) is one entry any such gate may approve, denying after 5 minutes; it is
+treated like a sign-in for number matching. It is charged as one gate request (D13).
+
 
 `recentlySignedIn` in `src/auth/reverify.js` also accepts a dashboard device whose session was
 **re-verified within `REVERIFY_MINUTES` by one of the owner's gates** of kind `webauthn`, `totp`
@@ -233,7 +241,7 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 |-------|------|-----------|
 | **A0** ✅ | Tests for today's payments (§4 first bullets) and the `STRIPE_FETCH` hook. Done: `src/payments.test.js`, `stripeClient` in `src/api/payments.js`. The account is still created by a LocalDev sign-in standing in for Clerk, then the env turns into production with Clerk unset; A1 replaces that with sign-up. | Checkout and webhook covered, with Clerk unset. |
 | **A1** ✅ | Account ids (§3.1), `POST /signup`, the webhook's signup kind, `signup/complete`, `dev/signup-paid`, the cost count. Done: `src/api/signup.js`, `src/signup.test.js` (production, Clerk unset). | A paid account exists and is used with no Clerk configured. |
-| **A2** | The first ten minutes (§3.3) and re-verification through gates (§3.4), including the 403 body and the dashboard button. | A Clerk-free owner can add a second device and create API keys. |
+| **A2** ✅ | The first ten minutes (§3.3) and re-verification through gates (§3.4), including the 403 body and the dashboard panel. Done: `src/durable-objects/account/reverify.js`, `POST /api/v1/session/reverify`, `frontend/js/dashboard-reverify.js`; tests `src/session-reverify.test.js`, Playwright `reverify.spec.js`. | A Clerk-free owner can add a second device and create API keys. |
 | **A3** | Recovery settings, recovery codes onto a new device, the "none" acknowledgement (§3.5). **The journey test.** | The journey test passes. |
 | **A4** | Recovery by passkey or second device. | Gate recovery tests pass. |
 | **A5** | Verified email, `email_source`, email recovery with the waiting period. | Email tests pass (SES faked as in `src/security-email.test.js`). |

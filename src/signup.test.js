@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import Stripe from 'stripe';
 import { testEnv, call, newDevice, ORIGIN } from '../test-utils/env.js';
+import { fakeStripe, clerkFreeEnv, paidEvent, sendWebhook, startSignup, completeSignup, asDevice as asDeviceIn } from '../test-utils/signup.js';
 import { createProof, inspectCredential } from '../packages/verify/src/index.js';
 import { grossUp } from './utils/cost-policy.js';
 import { price } from './utils/pricing.js';
@@ -11,53 +11,12 @@ import { price } from './utils/pricing.js';
 // CLERK_* variable unset; Stripe's API is faked through env.STRIPE_FETCH and its webhooks are
 // really signed.
 
-const WEBHOOK_SECRET = 'whsec_test_dba';
-const signer = new Stripe('sk_test_signer');
-
-function fakeStripe() {
-  const sessions = [];
-  const fetch = async (url, init) => {
-    const form = new URLSearchParams(init.body);
-    const id = `cs_test_${sessions.length + 1}`;
-    sessions.push({ id, url: String(url), form, idempotencyKey: Object.entries(init.headers || {}).find(([k]) => k.toLowerCase() === 'idempotency-key')?.[1] });
-    return new Response(JSON.stringify({ id, object: 'checkout.session', url: `https://checkout.stripe.com/c/pay/${id}` }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-  };
-  return { sessions, fetch };
-}
-
-/** What Stripe sends when the Checkout session `opened` (as the fake recorded it) is paid. */
-function paidEvent(opened, overrides = {}) {
-  const metadata = {};
-  for (const [key, value] of opened.form) { const m = key.match(/^metadata\[(.+)\]$/); if (m) metadata[m[1]] = value; }
-  const credit = Number(metadata.credit_cents);
-  return { id: `evt_${opened.id}`, object: 'event', type: 'checkout.session.completed', data: { object: { id: opened.id, object: 'checkout.session', mode: 'payment', currency: 'usd', payment_status: 'paid', client_reference_id: opened.form.get('client_reference_id'), amount_total: grossUp(credit), metadata, ...overrides } } };
-}
-
-function sendWebhook(env, event) {
-  const payload = JSON.stringify(event);
-  return call(env, 'POST', '/webhooks/stripe', { body: payload, headers: { 'stripe-signature': signer.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET }) } });
-}
-
 let env; let stripe;
-beforeEach(async () => {
-  stripe = fakeStripe();
-  env = await testEnv({ ENVIRONMENT: 'production', COST_SAFETY_FAIL_OPEN: 'true', LAUNCH_APPROVED: 'true', STRIPE_SECRET_KEY: 'sk_test_dba', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, STRIPE_FETCH: stripe.fetch });
-  expect(Object.keys(env).filter(name => name.startsWith('CLERK_'))).toEqual([]);
-});
+beforeEach(async () => { ({ env, stripe } = await clerkFreeEnv()); });
 
-/** A device starts a sign-up. */
-async function start(device, { credit = 2000, payload = {}, accept = true } = {}) {
-  return call(env, 'POST', '/api/v1/signup', { body: { request: await device.enrollRequest({ device: { name: 'Laptop browser', kind: 'browser' }, ...payload }), credit_cents: credit, accept_terms: accept } });
-}
-
-/** The device asks to complete, proving its key with a DPoP proof bound to the ticket. */
-async function complete(device, ticket, { key = device } = {}) {
-  const path = '/api/v1/signup/complete';
-  const proof = await createProof({ privateKey: key.privateKey, publicJwk: key.publicJwk, method: 'POST', url: `${ORIGIN}${path}`, credential: ticket });
-  return call(env, 'POST', path, { body: { ticket }, headers: { DPoP: proof } });
-}
-
-const asDevice = (device, credential) => async (method, path, options = {}) => call(env, method, path, { ...options, headers: { ...(options.headers || {}), ...(await device.headers(method, path, credential)) } });
+const start = (device, options) => startSignup(env, device, options);
+const complete = (device, ticket, { key = device } = {}) => completeSignup(env, key, ticket);
+const asDevice = (device, credential) => asDeviceIn(env, device, credential);
 
 describe('sign-up by paying, without Clerk (B9, phase A1)', () => {
   it('creates, funds and signs in an account with only a device and a card', async () => {

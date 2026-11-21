@@ -11,6 +11,9 @@ const EVENTS_KEPT = 50;
 const OUTBOX_RETRY_MS = 60000;
 const monthOf = now => new Date(now).toISOString().slice(0, 7);
 
+/** Credentials whose issuance was itself a fresh proof of ownership (a paid sign-up). */
+const FRESH_SOURCES = Object.freeze(['signup']);
+
 /**
  * Credentials and devices: issuing, reading, renewing and rotating, revoking, and delivering
  * revocations (status lists and audiences' webhooks) from the outbox. Mixed into AccountDO
@@ -137,7 +140,10 @@ export class AccountCredentials {
       if (this.proofs.has(proof_key)) return { exists: true, replayed: true };
       this.proofs.set(proof_key, proof_exp);
     }
-    return { exists: true, ...(dashboard ? { dashboard } : {}), ...(cred.confirm ? { confirm: cred.confirm, confirmed_until: cred.confirmed_until ?? 0 } : {}), ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
+    // When this credential's holder last proved it is the owner: re-verified through a gate, or
+    // issued by paying for a sign-up (todo/clerk_free_accounts.md §3.3, §3.4).
+    const signedInAt = Math.max(cred.reverified_at ?? 0, FRESH_SOURCES.includes(cred.source) ? cred.created_at ?? 0 : 0) || null;
+    return { exists: true, signed_in_at: signedInAt, ...(dashboard ? { dashboard } : {}), ...(cred.confirm ? { confirm: cred.confirm, confirmed_until: cred.confirmed_until ?? 0 } : {}), ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
   }
 
   async revokeOne(tx, cred, now, reason) {

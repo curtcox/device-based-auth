@@ -54,14 +54,15 @@ describe('recent sign-in for account-control operations (S8)', () => {
     expect((await call(env, 'POST', '/api/v1/credentials', { auth: fresh('alice'), body: { public_jwk: jwk, aud: ['devicebasedauth.org'], grants: DBA_GRANTS } })).status).toBe(200);
   });
 
-  it('refuses a dashboard device, which cannot re-verify, but lets it issue other grants', async () => {
+  it('refuses a dashboard device that has not re-verified through a gate, but lets it issue other grants', async () => {
     const device = await newDevice();
     const credential = (await enroll(env, 'alice', device, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:session'] }] })).approve.body.credential;
     const path = '/api/v1/credentials';
     const jwk = (await newDevice()).publicJwk;
     const refused = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: { public_jwk: jwk, aud: ['devicebasedauth.org'], grants: DBA_GRANTS } });
     expect(refused.status).toBe(403);
-    expect(refused.body.error).toContain('password or passkey');
+    expect(refused.body.error).toContain('/api/v1/session/reverify');
+    expect(refused.body.reverify).toEqual({ url: '/api/v1/session/reverify', method: 'POST' });
     const ok = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: { public_jwk: jwk, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }] } });
     expect(ok.status).toBe(200);
   });

@@ -62,15 +62,31 @@ export async function dashboardSession(route, request, env, auth) {
     assert(typeof body.code === 'string' && body.code.length <= 40, 'invalid_recovery_code', 'code is required');
     return rpc(env.ACCOUNTS, auth.account, 'dashboard-recover', { session: auth.session_key, code: body.code });
   }
-  let answer = null;
-  if (body.gate !== undefined) {
-    assert(typeof body.gate === 'string' && (body.entry === undefined || (Number.isSafeInteger(body.entry) && body.entry >= 0 && body.entry < 3)), 'invalid_answer', 'gate (and optionally entry) name the gate this page answers for');
-    const proof = {};
-    if (body.totp) proof.totp = { code: String(body.totp.code ?? '').slice(0, 12) };
-    if (body.webauthn) proof.webauthn = Object.fromEntries(['credential_id', 'clientDataJSON', 'authenticatorData', 'signature'].map(k => [k, String(body.webauthn[k] ?? '').slice(0, 8192)]));
-    answer = { entry: body.entry, gate: body.gate, proof };
-  }
-  return rpc(env.ACCOUNTS, auth.account, 'dashboard-confirm', { account: auth.account, session: auth.session_key, device_id: auth.device?.payload.sub ?? null, device_name: auth.device?.payload.device?.name ?? null, answer });
+  return rpc(env.ACCOUNTS, auth.account, 'dashboard-confirm', { account: auth.account, session: auth.session_key, device_id: auth.device?.payload.sub ?? null, device_name: auth.device?.payload.device?.name ?? null, answer: factorAnswer(body) });
+}
+
+/** A page's own factor answer ({ entry?, gate, totp | webauthn }) from a request body, or null. */
+function factorAnswer(body) {
+  if (body.gate === undefined) return null;
+  assert(typeof body.gate === 'string' && (body.entry === undefined || (Number.isSafeInteger(body.entry) && body.entry >= 0 && body.entry < 3)), 'invalid_answer', 'gate (and optionally entry) name the gate this page answers for');
+  const proof = {};
+  if (body.totp) proof.totp = { code: String(body.totp.code ?? '').slice(0, 12) };
+  if (body.webauthn) proof.webauthn = Object.fromEntries(['credential_id', 'clientDataJSON', 'authenticatorData', 'signature'].map(k => [k, String(body.webauthn[k] ?? '').slice(0, 8192)]));
+  return { entry: body.entry, gate: body.gate, proof };
+}
+
+/**
+ * POST /api/v1/session/reverify: a dashboard device confirms it is the owner through one of the
+ * owner's gates (todo/clerk_free_accounts.md §3.4), which then counts as a recent sign-in for
+ * REVERIFY_MINUTES. Send it again (with this device's own TOTP or security-key answer, or after
+ * another device approved, typing the number shown) until it answers `reverified`. Browser
+ * sessions sign in again with their sign-in provider instead.
+ */
+export async function sessionReverify(request, env, auth) {
+  assert(auth.kind === 'device' && auth.device?.dba, 'device_only', 'Only a dashboard device re-verifies through gates; a browser session signs in again', 400);
+  const body = await readJson(request, 32768);
+  const { payload } = auth.device;
+  return rpc(env.ACCOUNTS, auth.account, 'session-reverify', { account: auth.account, cid: payload.cid, device_id: payload.sub, device_name: payload.device?.name ?? null, answer: factorAnswer(body) });
 }
 
 /** POST /api/v1/settings/recovery-codes: 10 new one-time codes, shown once (recent sign-in). */

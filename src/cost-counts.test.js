@@ -102,6 +102,27 @@ describe('cost policy matches the code', () => {
     within('issue', m.read(), later(11, 16));
   });
 
+  it('re-verifying a dashboard device through a gate is one gate (B9)', async () => {
+    const device = await newDevice();
+    const credential = (await enroll(env, 'alice', device, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:session'] }] })).approve.body.credential;
+    const created = (await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'totp', label: 'App' } })).body;
+    const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = 0; let value = 0; const secret = [];
+    for (const c of created.setup.secret) { value = (value << 5) | A.indexOf(c); bits += 5; if (bits >= 8) { secret.push((value >>> (bits - 8)) & 255); bits -= 8; } }
+    const code = () => hotp(new Uint8Array(secret), Math.floor(t / 30000));
+    await call(env, 'POST', `/api/v1/gates/${created.id}/activate`, { auth: 'alice', body: { code: await code() } });
+    t += 60000;
+    const path = '/api/v1/session/reverify';
+    const reverify = async body => call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body });
+    // Asking is a free dashboard request (like confirming the dashboard sign-in gate); what it
+    // writes (the charge and the request row) and the answer are the gate's.
+    m.reset();
+    expect((await reverify({})).body.status).toBe('pending');
+    const opened = m.read(); m.reset();
+    expect((await reverify({ gate: created.id, totp: { code: await code() } })).body.status).toBe('reverified');
+    const answered = m.read();
+    within('gate', { doRequests: answered.doRequests, rowWrites: opened.rowWrites + answered.rowWrites, ops: [...opened.ops, ...answered.ops] }, later(0, 1));
+  });
+
   it('decision', async () => {
     const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'v', scopes: ['authorize'] } })).body.secret;
     const device = await newDevice();

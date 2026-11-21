@@ -97,7 +97,7 @@ async function authenticateDevice(request, env, credential, { anyAudience, recov
     // The account's own record is authoritative and instant; a rotated credential has a new entry.
     assert(status.exists && !status.revoked && sameStatusEntry(status.status, payload.status.status_list), 'revoked', 'Credential has been revoked', 401);
     assert(dba || anyAudience, 'wrong_audience', `Credential is not valid for ${appAudience(env)}`, 401);
-    return { account: payload.acct, session: false, kind: 'device', rated: true, ...(dba ? { session_key: `cid:${payload.cid}`, dashboard: status.dashboard } : {}), device: { payload, credential, proof: verifiedProof, dba, confirmation: { required: !!status.confirm, until: status.confirmed_until ?? 0 }, ...(recovered ? { recovery: true } : {}), ...(status.parent_cid ? { delegated_by: status.parent_cid } : {}), location: { network: networkLocation(request), device: verifiedProof.loc } } };
+    return { account: payload.acct, session: false, kind: 'device', rated: true, ...(dba ? { session_key: `cid:${payload.cid}`, dashboard: status.dashboard } : {}), device: { payload, credential, proof: verifiedProof, dba, confirmation: { required: !!status.confirm, until: status.confirmed_until ?? 0 }, ...(recovered ? { recovery: true } : {}), ...(status.parent_cid ? { delegated_by: status.parent_cid } : {}), location: { network: networkLocation(request), device: verifiedProof.loc }, signed_in_at: status.signed_in_at ?? null } };
   } catch (error) {
     if (error instanceof VerificationError) assert(false, error.code, error.message, 401);
     throw error;

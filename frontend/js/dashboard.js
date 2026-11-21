@@ -46,8 +46,11 @@ export function errorBox(error) {
     return notice('error', h('strong', {}, 'Insufficient balance. '), needed ? `This needs ${money(needed)} more. ` : '', h('a', { href: '#account' }, 'Add credit on the Account page'), '.');
   }
   if (error.code === 'reverification_required') {
-    return notice('warn', h('strong', {}, 'Please confirm it is you. '), `${error.message}. `,
-      authMode() === 'clerk' ? h('button', { type: 'button', class: 'link', onclick: () => reauthenticate() }, 'Sign in again') : null);
+    // A browser session signs in again; this browser's own device asks one of the owner's gates.
+    const box = notice('warn', h('strong', {}, 'Please confirm it is you. '), `${error.message}. `,
+      authMode() === 'clerk' ? h('button', { type: 'button', class: 'link', onclick: () => reauthenticate() }, 'Sign in again')
+        : authMode() === 'device' ? h('button', { type: 'button', class: 'link', onclick: async () => { const { reverifyPanel } = await import('./dashboard-reverify.js'); replace(box, await reverifyPanel()); } }, 'Confirm it is you') : null);
+    return box;
   }
   if (error.status === 401) return notice('error', `${error.message}. `, h('button', { type: 'button', class: 'link', onclick: () => location.reload() }, 'Sign in again'));
   return notice('error', error.message || String(error), error.code ? h('span', { class: 'muted small' }, ` (${error.code})`) : null);
