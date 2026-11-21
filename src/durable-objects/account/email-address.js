@@ -5,8 +5,8 @@ import { signToken } from '../../auth/tokens.js';
 import { readBalance } from '../ledger.js';
 import { cleanEmailAddress, emailConfigured, emailLine } from '../../services/email.js';
 
-// Pending, operator-proposed (todo/clerk_free_accounts.md O1): how long an email recovery waits
-// after its link is used, so the owner's devices and browsers can cancel it.
+// How long an email recovery waits after its link is used, so the owner's devices and browsers
+// can cancel it (todo/clerk_free_accounts.md O1, approved by the owner 2026-11-21).
 export const EMAIL_RECOVERY_WAIT_MS = 72 * 3600000;
 // How long a verification or recovery link works.
 export const EMAIL_LINK_MS = 3600000;
