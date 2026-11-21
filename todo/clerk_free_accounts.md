@@ -1,6 +1,6 @@
 # Paid accounts without Clerk
 
-Status: **A0 done** (2026-11-21), A1 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **A0, A1 done** (2026-11-21), A2 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
@@ -62,44 +62,44 @@ Clerk-free accounts get `acct_` plus 26 random base32 characters, made with
 strings everywhere (the credential's `acct` claim, Durable Object names), so nothing else
 changes. The profile row records how the account began: `{ created_via: 'clerk' | 'signup' }`.
 
-### 3.2 Sign-up: pay to create
+### 3.2 Sign-up: pay to create (done in A1: `src/api/signup.js`)
 
 1. The device makes its key (browser SDK slot `dashboard`, or the CLI) and signs a normal
-   `dba-enroll+jwt` enrollment request (`readEnrollRequest` in `src/api/enrollments.js`). The
-   server ignores the requested audience and grants: a sign-up always issues the dashboard grant
-   set (our audience, `dba:session`), the same set as "Make this browser a device" in
-   `frontend/js/dashboard-account.js`.
+   `dba-enroll+jwt` enrollment request (`readEnrollRequest` in `src/api/enrollments.js`); `aud`
+   and `grants` may be left out. The server ignores any it names: a sign-up always issues the
+   dashboard grant set (our audience, `dba:session`), the same set as "Make this browser a device"
+   in `frontend/js/dashboard-account.js`.
 2. `POST /api/v1/signup` is `PUBLIC`, `free: true` (stopped by the cost brake) and behind
-   `PUBLIC_LIMITER` per IP. Its body is `{ request, credit_cents, terms_version }`. It checks the
-   request and the deposit (the usual $5 minimum and the first-week $20 cap), mints the account id
-   and a signup id (`sup_…`), and creates a Stripe Checkout session like `checkout` does, with
-   `client_reference_id = account` and metadata
-   `{ product, kind: 'signup', account, credit_cents, signup, jkt, terms_version }`. It returns
-   the Checkout `url`, a signed `signup_ticket` (`signToken('sup_', …)`: id, account, jwk, jkt,
-   device, exp) and a poll token. **It writes nothing**, like anonymous enrollment starts
-   (master plan §5.1). `?dry_run=1` quotes the total. Respect `LAUNCH_APPROVED` exactly as
-   `checkout` does.
-3. The person pays on Stripe. `success_url` goes to the sign-up page, which kept the ticket
-   (IndexedDB, beside the SDK key). The CLI polls instead.
+   `PUBLIC_LIMITER` per IP. Its body is `{ request, credit_cents, accept_terms: true }` (the terms
+   are still a draft with no version; O6). It checks the deposit (the $5 minimum and the
+   first-week $20 cap, `quoteDeposit` in `src/api/payments.js`) and the request, mints the account
+   id and a sign-up id (`sup_…`), and opens a Stripe Checkout through `openCheckout` (shared with
+   `checkout`) with `client_reference_id = account` and metadata
+   `{ kind: 'signup', signup, jkt, terms_accepted, account, credit_cents, product }`. It returns
+   the Checkout `url`, a signed `ticket` (`sup_…`: id, account, jwk, jkt, device, attestation,
+   lifetime, credit_cents; 30 days) and `interval`. **It writes nothing**, like anonymous
+   enrollment starts (master plan §5.1). `?dry_run=1` quotes without a request. `LAUNCH_APPROVED`
+   and missing Stripe configuration refuse as for `checkout`.
+3. The person pays on Stripe. `success_url` is `/app.html#signup` (A7 builds that page, which
+   keeps the ticket beside the SDK key). The CLI polls instead.
 4. **Webhook.** `stripeWebhook` keeps every existing check and, for `kind: 'signup'`, also
-   requires `metadata.signup` and `metadata.jkt`. It calls `init` with
-   `{ account, created_via: 'signup', terms_version }`, then `deposit` (already idempotent by
-   Checkout session id), then records `{ status: 'paid', account, jkt }` in `ENROLLMENTS` under
-   the signup id. A replayed event changes nothing.
+   requires a sign-up account id (`acct_` + 26), `metadata.signup` and `metadata.jkt`; any other
+   `kind` is refused. `creditSignup` calls `init` with `signup: { id, jkt }`, which creates the
+   profile `{ created_via: 'signup', signup, terms_accepted_at }` and **never attaches a sign-up to
+   an account that already exists**, then `deposit` (idempotent by Checkout session id).
 5. `POST /api/v1/signup/complete` is `PUBLIC`, `billable: 'issue'`. Its body is `{ ticket }`, with
-   a DPoP proof made by the ticket's key (`verifyProof` with the ticket's `jkt`). It requires the
-   `ENROLLMENTS` row to say `paid` for the same jkt and account, then issues the dashboard
-   credential, charging the issue price to the new balance. A repeat call returns the same
-   credential, stored in the `ENROLLMENTS` row as `approveEnrollment` does. Tickets last 30 days,
-   so a closed tab can come back later.
-6. **Local mode.** `POST /api/v1/dev/signup-paid` (local only, refused elsewhere like
-   `dev/deposit`) does what the webhook does without Stripe, so samples, Playwright and
-   `npm run dev:local` can sign up end to end.
+   a DPoP proof by the ticket's key whose `ath` is the ticket's hash. It reads the account's
+   sign-up (`op_signup_status`, which writes nothing, so polling before payment creates nothing)
+   and answers `{ status: 'pending' }` until it matches; this is also the poll. Then it issues the
+   dashboard credential with charge id `signup-<id>`, so a repeat call returns the same
+   credential, charged once.
+6. **Local mode.** `POST /api/v1/dev/signup-paid` (local only) does what the webhook does for a
+   ticket, so samples, Playwright and `npm run dev:local` can sign up end to end.
 
-Cost and price: the webhook's writes are a deposit's writes (deposits are free) plus one
-`ENROLLMENTS` row; completion is an ordinary issue. Add the op counts to
-`src/utils/cost-policy.js` and extend the price-floor test. If the floor test says sign-up needs a
-price of its own, propose one under D14 rather than hiding it in the deposit.
+Cost and price: the webhook's writes are a deposit's plus the profile row (deposits are free);
+completion is an ordinary issue that reads the sign-up instead of an enrollment's get and put.
+`src/cost-counts.test.js` measures it within `issue` (one more row than a later issue: the
+account's compaction schedule, which every account's first issue writes). No new price.
 
 Abuse: creating a Checkout session costs us nothing and Stripe nothing until paid; card testing is
 Stripe Radar's job, and $5 is the minimum. The per-IP limiter and the brake bound Worker requests.
@@ -232,7 +232,7 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 | Phase | Work | Done when |
 |-------|------|-----------|
 | **A0** ✅ | Tests for today's payments (§4 first bullets) and the `STRIPE_FETCH` hook. Done: `src/payments.test.js`, `stripeClient` in `src/api/payments.js`. The account is still created by a LocalDev sign-in standing in for Clerk, then the env turns into production with Clerk unset; A1 replaces that with sign-up. | Checkout and webhook covered, with Clerk unset. |
-| **A1** | Account ids (§3.1), `POST /signup`, the webhook's signup kind, `signup/complete`, `dev/signup-paid`, op counts and the price-floor test. | A paid account exists and is used with no Clerk configured. |
+| **A1** ✅ | Account ids (§3.1), `POST /signup`, the webhook's signup kind, `signup/complete`, `dev/signup-paid`, the cost count. Done: `src/api/signup.js`, `src/signup.test.js` (production, Clerk unset). | A paid account exists and is used with no Clerk configured. |
 | **A2** | The first ten minutes (§3.3) and re-verification through gates (§3.4), including the 403 body and the dashboard button. | A Clerk-free owner can add a second device and create API keys. |
 | **A3** | Recovery settings, recovery codes onto a new device, the "none" acknowledgement (§3.5). **The journey test.** | The journey test passes. |
 | **A4** | Recovery by passkey or second device. | Gate recovery tests pass. |
@@ -268,6 +268,7 @@ A minimum Clerk-free launch is A0–A3, the sign-up page and code recovery from 
 | O3 | A balance nobody can reach (sign-up paid and never completed, or every device lost with no recovery) | Refund to the original card on request within 90 days, by Stripe payment id; legal to confirm |
 | O4 | Dormant-account notices (D8) for an account with no email | Push to its browsers; with nothing to reach, close after 12 months as D8 says |
 | O5 | A price for sign-up itself | None beyond the issue price, unless the floor test says otherwise |
+| O6 | Which terms version a sign-up accepts | Add a version to `terms.html` at legal review; sign-up then records it (today it records `terms_accepted_at` only) |
 
 ## 8. Things that must stay true
 

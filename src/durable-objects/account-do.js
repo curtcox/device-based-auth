@@ -103,14 +103,16 @@ export class AccountDO {
   /**
    * Create the account on first sight. `email` (the primary address Clerk verified, from its
    * user.created/user.updated webhook) is where security emails go; a change is audited.
+   * `signup` ({ id, jkt }, from a paid sign-up: api/signup.js) binds a new account to the key that
+   * signed up; it never attaches to an account that already exists.
    */
-  async op_init({ account, rate, session, email }, now) {
+  async op_init({ account, rate, session, email, signup }, now) {
     if (rate) await this.op_rate_limit(rate, now);
     const address = email === undefined ? undefined : cleanEmailAddress(email);
     return this.tx(async tx => {
       let profile = await tx.get('profile');
       const dashboard = session ? await dashboardState(tx, session, now) : undefined;
-      if (!profile) { profile = { account, created_at: now }; await tx.put('profile', profile); }
+      if (!profile) { profile = { account, created_at: now, ...(signup ? { created_via: 'signup', signup: { id: signup.id, jkt: signup.jkt }, terms_accepted_at: now } : {}) }; await tx.put('profile', profile); }
       if (address !== undefined && (profile.email ?? null) !== address) {
         const had = !!profile.email;
         profile = { ...profile, email: address };
@@ -120,6 +122,15 @@ export class AccountDO {
       }
       return { ...profile, dashboard };
     });
+  }
+
+  /**
+   * Has this sign-up been paid (the webhook created the account bound to this key)? Reads only:
+   * a device polling before the payment arrives must not create the account.
+   */
+  async op_signup_status({ id, jkt }) {
+    const signup = (await this.storage.get('profile'))?.signup;
+    return { paid: !!signup && signup.id === id && signup.jkt === jkt };
   }
 
   /** The account summary. `funds_check: true` (a pre-check before a charge) writes nothing. */

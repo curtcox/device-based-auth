@@ -2,6 +2,7 @@ import { PUBLIC, SESSION, DEVICE, AUTHENTICATED, canAccess, paysForReads, isDash
 import { authenticate } from './auth/middleware.js';
 import { clerkWebhook } from './auth/clerk-webhook.js';
 import { checkout, stripeWebhook } from './api/payments.js';
+import { startSignup, completeSignup, devSignupPaid } from './api/signup.js';
 import { keys } from './api/keys.js';
 import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment, attestationChallenge, tpmActivation } from './api/enrollments.js';
 import { enrollmentTokens, redeemEnrollmentToken } from './api/enrollment-tokens.js';
@@ -113,6 +114,9 @@ export const API_ROUTES = [
   { method: 'DELETE', path: `${V1}/keys/:id`, access: SESSION, handler: 'keys' },
   { method: 'POST', path: `${V1}/payments/checkout`, access: SESSION, handler: 'checkout', idempotent: true },
   { method: 'POST', path: `${V1}/dev/deposit`, access: SESSION, handler: 'dev-deposit' },
+  { method: 'POST', path: `${V1}/signup`, access: PUBLIC, handler: 'signup', free: true },
+  { method: 'POST', path: `${V1}/signup/complete`, access: PUBLIC, handler: 'signup-complete', billable: 'issue' },
+  { method: 'POST', path: `${V1}/dev/signup-paid`, access: PUBLIC, handler: 'dev-signup-paid' },
   { method: 'GET', path: '/.well-known/oauth-authorization-server', access: PUBLIC, handler: 'oidc-configuration' },
   { method: 'GET', path: '/.well-known/oauth-protected-resource', access: PUBLIC, handler: 'oauth-resource' },
   { method: 'GET', path: '/.well-known/oauth-protected-resource/mcp', access: PUBLIC, handler: 'oauth-resource' },
@@ -218,6 +222,9 @@ async function handle(route, request, env, auth) {
     case 'push-subscriptions': return pushSubscriptions(route, request, env, auth);
     case 'keys': return keys(route, request, env, auth);
     case 'checkout': return checkout(request, env, auth, dryRun);
+    case 'signup': return startSignup(request, env, dryRun);
+    case 'signup-complete': return completeSignup(request, env);
+    case 'dev-signup-paid': return devSignupPaid(request, env);
     case 'dev-deposit': {
       assert(env.ENVIRONMENT === 'local', 'not_found', 'Not found', 404);
       const body = await readJson(request); money(body.amount_microdollars);

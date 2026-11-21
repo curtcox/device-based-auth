@@ -6040,6 +6040,280 @@
         }
       }
     },
+    "/api/v1/signup": {
+      "post": {
+        "operationId": "post_api_v1_signup",
+        "summary": "Create an account by paying its first deposit, without a sign-in provider: opens a Stripe Checkout for a new account bound to the signing-up key and returns a ticket to complete with. Writes nothing until the payment arrives. ?dry_run=1 quotes the card fee.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request",
+                  "credit_cents",
+                  "accept_terms"
+                ],
+                "properties": {
+                  "request": {
+                    "type": "string",
+                    "description": "A dba-enroll+jwt signed by the new key (as for POST /api/v1/enrollments); aud and grants may be left out and are ignored: a sign-up always makes a dashboard device (dba:session)."
+                  },
+                  "credit_cents": {
+                    "type": "integer",
+                    "minimum": 500,
+                    "maximum": 2000,
+                    "description": "First deposit in cents ($5–$20 in an account's first week)."
+                  },
+                  "accept_terms": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/signup/complete": {
+      "post": {
+        "operationId": "post_api_v1_signup_complete",
+        "summary": "Finish a paid sign-up: with a DPoP proof by the signing-up key (ath = hash of the ticket), returns {status:\"pending\"} until the payment arrives, then the dashboard credential (dba:session), charged the issue price to the new balance. Repeating returns the same credential.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "1: only quote the price (op issue) and, for callers with account:read, the balance and whether it suffices. Nothing else happens."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-DBA-Cost-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                }
+              },
+              "X-DBA-Balance-Microdollars": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                },
+                "description": "Remaining balance; only for callers with account:read."
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ticket"
+                ],
+                "properties": {
+                  "ticket": {
+                    "type": "string",
+                    "description": "The sup_… ticket from POST /api/v1/signup."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-billable": "issue"
+      }
+    },
+    "/api/v1/dev/signup-paid": {
+      "post": {
+        "operationId": "post_api_v1_dev_signup_paid",
+        "summary": "Local development only: act as the Stripe webhook for a sign-up ticket.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ticket"
+                ],
+                "properties": {
+                  "ticket": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/.well-known/oauth-authorization-server": {
       "get": {
         "operationId": "get_well_known_oauth_authorization_server",

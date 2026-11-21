@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { testEnv, call, newDevice, enroll, meter } from '../test-utils/env.js';
+import { testEnv, call, newDevice, enroll, meter, ORIGIN } from '../test-utils/env.js';
 import { inspectCredential, createProof, signJws, sha256b64u, b64u } from '../packages/verify/src/index.js';
 import { OPERATIONS } from './utils/cost-policy.js';
 import { hotp } from './services/totp.js';
@@ -87,6 +87,19 @@ describe('cost policy matches the code', () => {
     within('issue', await measured(async () => { const d = await newDevice(); return call(env, 'POST', '/api/v1/credentials', { auth: 'alice', body: { public_jwk: d.publicJwk, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }] } }); }), later(11, 16));
     const token = (await call(env, 'POST', '/api/v1/enrollment-tokens', { auth: 'alice', body: { name: 'f', aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], max_uses: 10, expires_in_days: 5 } })).body.token;
     within('issue', await measured(async () => { const d = await newDevice(); return call(env, 'POST', '/api/v1/enrollments/redeem', { body: { enrollment_token: token, request: await d.enrollRequest({ device: { name: 'a', kind: 'agent' } }) } }); }), later(11, 16));
+  });
+
+  it('issue by completing a paid sign-up (B9)', async () => {
+    Object.assign(env, { STRIPE_SECRET_KEY: 'sk_test', STRIPE_FETCH: async () => new Response(JSON.stringify({ id: 'cs_test_1', url: 'https://checkout.stripe.com/c/pay/cs_test_1' }), { headers: { 'Content-Type': 'application/json' } }) });
+    const device = await newDevice();
+    const { ticket } = (await call(env, 'POST', '/api/v1/signup', { body: { request: await device.enrollRequest({ device: { name: 'a' } }), credit_cents: 500, accept_terms: true } })).body;
+    await call(env, 'POST', '/api/v1/dev/signup-paid', { body: { ticket } });
+    // The audience registry seeds itself once per deployment, not per sign-up.
+    await enroll(env, 'alice', await newDevice());
+    m.reset();
+    const proof = await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url: `${ORIGIN}/api/v1/signup/complete`, credential: ticket });
+    expect((await call(env, 'POST', '/api/v1/signup/complete', { body: { ticket }, headers: { DPoP: proof } })).body.status).toBe('complete');
+    within('issue', m.read(), later(11, 16));
   });
 
   it('decision', async () => {

@@ -37,7 +37,7 @@ const SUMMARIES = {
   'ca-bundle': 'The CA certificates (PEM) that sign device client certificates, one per issuer key. Add them to your mTLS trust store.',
   'audience-webhook-test': 'Send a signed webhook.test event (typ dba-event+jwt, spec/events.md) to the audience\'s revocation_webhook now and report the answer. Charges the read price.',
   'audience-usage': 'Online decisions, sign-ins and spend per month for an audience you own (this month and up to 11 before it).',
-  keys: 'Account API keys (dbak_…). The secret is shown once.', checkout: 'Start a Stripe Checkout for prepaid credit. ?dry_run=1 shows the card fee.', 'dev-deposit': 'Local development only: add credit.',
+  keys: 'Account API keys (dbak_…). The secret is shown once.', checkout: 'Start a Stripe Checkout for prepaid credit. ?dry_run=1 shows the card fee.', 'dev-deposit': 'Local development only: add credit.', signup: 'Create an account by paying its first deposit, without a sign-in provider: opens a Stripe Checkout for a new account bound to the signing-up key and returns a ticket to complete with. Writes nothing until the payment arrives. ?dry_run=1 quotes the card fee.', 'signup-complete': 'Finish a paid sign-up: with a DPoP proof by the signing-up key (ath = hash of the ticket), returns {status:"pending"} until the payment arrives, then the dashboard credential (dba:session), charged the issue price to the new balance. Repeating returns the same credential.', 'dev-signup-paid': 'Local development only: act as the Stripe webhook for a sign-up ticket.',
   'oidc-authorize-page': 'OpenID Connect authorization endpoint (redirects to the consent page).', 'oidc-authorize': 'Consent page submission.', 'oidc-token': 'OpenID Connect token endpoint (authorization_code + PKCE S256).',
   'oidc-userinfo': 'OpenID Connect userinfo.', mcp: 'Model Context Protocol (Streamable HTTP, JSON-RPC).', 'clerk-webhook': 'Clerk webhook (signed).', 'stripe-webhook': 'Stripe webhook (signed).'
 };
@@ -58,7 +58,10 @@ const BODIES = {
   'account-settings': { type: 'object', properties: { max_issues_per_day: { type: 'integer', minimum: 1, maximum: 100000 }, max_renewals_per_credential_per_month: { type: ['integer', 'null'], minimum: 1, maximum: 100000 }, security_email: { type: 'string', enum: ['off', 'sensitive', 'all'] } } },
   'push-subscriptions': { type: 'object', required: ['subscription'], properties: { name: { type: 'string', maxLength: 64 }, subscription: { type: 'object', required: ['endpoint', 'keys'], description: 'PushSubscription.toJSON() from the browser.', properties: { endpoint: { type: 'string', format: 'uri' }, keys: { type: 'object', required: ['p256dh', 'auth'], properties: { p256dh: { type: 'string' }, auth: { type: 'string' } } } } } } },
   keys: { type: 'object', required: ['scopes'], properties: { name: { type: 'string' }, scopes: { type: 'array', items: { type: 'string' } } } },
-  checkout: { type: 'object', required: ['credit_cents'], properties: { credit_cents: { type: 'integer', minimum: 500, maximum: 100000 } } }
+  checkout: { type: 'object', required: ['credit_cents'], properties: { credit_cents: { type: 'integer', minimum: 500, maximum: 100000 } } },
+  signup: { type: 'object', required: ['request', 'credit_cents', 'accept_terms'], properties: { request: { ...jws, description: 'A dba-enroll+jwt signed by the new key (as for POST /api/v1/enrollments); aud and grants may be left out and are ignored: a sign-up always makes a dashboard device (dba:session).' }, credit_cents: { type: 'integer', minimum: 500, maximum: 2000, description: 'First deposit in cents ($5–$20 in an account\'s first week).' }, accept_terms: { type: 'boolean', const: true } } },
+  'signup-complete': { type: 'object', required: ['ticket'], properties: { ticket: { type: 'string', description: 'The sup_… ticket from POST /api/v1/signup.' } } },
+  'dev-signup-paid': { type: 'object', required: ['ticket'], properties: { ticket: { type: 'string' } } }
 };
 const SECURITY = {
   [PUBLIC]: [], [SESSION]: [{ Session: [] }, { DeviceCredential: [] }], [DEVICE]: [{ DeviceCredential: [] }],

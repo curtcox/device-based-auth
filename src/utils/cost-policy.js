@@ -32,6 +32,8 @@ export const OPERATIONS = Object.freeze({
   // Security notices (master plan §10): one encrypted Web Push to each of up to 5 subscribed
   // browsers (ECDH, HKDF, AES-GCM; the VAPID signature is reused for hours), ~2 ms each, sent by
   // the account's DO after it answers; whether to send rides on the balance row (no extra write).
+  // Completing a paid sign-up (B9) reads the account's sign-up instead of the enrollment get/put;
+  // the sign-up's own writes (the profile and the deposit) are a deposit's, which are free.
   issue: { workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 },
   // Credential status (auth, with the rate limit), credential status (renew), funds check, renew; later
   // compaction deletes its ledger, receipt and audit rows.

@@ -163,6 +163,9 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `DELETE /api/v1/keys/{id}` (session): Account API keys (dbak_…). The secret is shown once.
 - `POST /api/v1/payments/checkout` (session): Start a Stripe Checkout for prepaid credit. ?dry_run=1 shows the card fee.
 - `POST /api/v1/dev/deposit` (session): Local development only: add credit.
+- `POST /api/v1/signup` (public): Create an account by paying its first deposit, without a sign-in provider: opens a Stripe Checkout for a new account bound to the signing-up key and returns a ticket to complete with. Writes nothing until the payment arrives. ?dry_run=1 quotes the card fee.
+- `POST /api/v1/signup/complete` (public): Finish a paid sign-up: with a DPoP proof by the signing-up key (ath = hash of the ticket), returns {status:"pending"} until the payment arrives, then the dashboard credential (dba:session), charged the issue price to the new balance. Repeating returns the same credential.
+- `POST /api/v1/dev/signup-paid` (public): Local development only: act as the Stripe webhook for a sign-up ticket.
 - `GET /.well-known/oauth-authorization-server` (public): OpenID Connect discovery document; also OAuth authorization-server metadata (RFC 8414) for MCP clients.
 - `GET /.well-known/oauth-protected-resource` (public): OAuth protected-resource metadata (RFC 9728) for the MCP server at /mcp.
 - `GET /.well-known/oauth-protected-resource/mcp` (public): OAuth protected-resource metadata (RFC 9728) for the MCP server at /mcp.
