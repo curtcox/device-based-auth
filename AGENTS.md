@@ -80,8 +80,9 @@ Pushing to `main` deploys production only when the owner sets `DBA_DEPLOY_ENABLE
   64 KiB, raster images 256 KiB; the generated `frontend/openapi.json` 256 KiB and
   `frontend/llms-full.txt` 160 KiB, `spec/vectors/*.json` 256 KiB, the SDK bundle 64 KiB; the full
   list is `RULES` in `scripts/check-file-sizes.mjs`). When a file outgrows its limit, split it.
-  `scripts/file-size-baseline.json` grandfathers the files that were already too big (STATUS B8);
-  they may not grow. After shrinking one, run `npm run check:file-sizes -- --update-baseline`.
+  `scripts/file-size-baseline.json` is empty; it only grandfathers files when a new or tighter
+  rule arrives (`--write-baseline`), and those may not grow. After shrinking one, run
+  `npm run check:file-sizes -- --update-baseline`.
   Never raise or add baseline entries to make a check pass. `npm install` enables the pre-push
   hook in `.githooks/`, which also rejects big files committed and deleted again before a push.
 - **Errors** are JSON `{ error, code, ... }` with the right HTTP status; `402` for balance refusals.
