@@ -97,7 +97,8 @@ export class AccountEmail {
     for (const [key, item] of await this.storage.list({ prefix: 'mailq:' })) {
       if (item.digest) { next = Math.min(next ?? Infinity, item.send_at); continue; }
       if (item.send_at > now) { next = Math.min(next ?? Infinity, item.send_at); continue; }
-      const to = (await this.storage.get('profile'))?.email;
+      // A verification goes to the address being verified; everything else to the account's address.
+      const to = item.to || (await this.storage.get('profile'))?.email;
       const result = to ? await sendEmail(this.env, { to, subject: item.subject, text: item.text }, now) : { ok: false, retry: false, error: 'no address' };
       if (!result.ok && result.retry && item.attempts < EMAIL_RETRY_MS.length) {
         const at = now + EMAIL_RETRY_MS[item.attempts];

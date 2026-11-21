@@ -109,14 +109,17 @@ export class AccountRecovery {
 
   /**
    * How the owner could get back in after losing every device: recovery codes left, the gates
-   * that can approve a recovery, and whether they said they accept losing the account instead.
-   * `at_risk` while none of these.
+   * that can approve a recovery, a verified email address, and whether they said they accept
+   * losing the account instead (`at_risk` while none of these); and email recoveries waiting,
+   * which any dashboard sign-in may cancel.
    */
-  async op_recovery_status() {
+  async op_recovery_status(_args, now) {
     const codes = (await this.storage.get('recovery'))?.hashes?.length ?? 0;
     const gates = recoveryGates(await this.storage.list({ prefix: 'gate:' })).map(g => ({ id: g.id, kind: g.kind, label: g.label }));
-    const acknowledged = (await this.storage.get('profile'))?.no_recovery_acknowledged_at ?? null;
-    return { recovery_codes_left: codes, recovery_gates: gates, no_recovery_acknowledged_at: acknowledged, at_risk: codes === 0 && !gates.length && !acknowledged };
+    const profile = await this.storage.get('profile');
+    const email = profile?.email_source === 'verified' ? profile.email : null;
+    const acknowledged = profile?.no_recovery_acknowledged_at ?? null;
+    return { recovery_codes_left: codes, recovery_gates: gates, recovery_email: email, no_recovery_acknowledged_at: acknowledged, at_risk: codes === 0 && !gates.length && !email && !acknowledged, pending_email_recoveries: await this.pendingEmailRecoveries(now) };
   }
 
   /** The owner accepts that losing every device loses the account (shown until a method exists). */
@@ -128,6 +131,6 @@ export class AccountRecovery {
       await tx.put('profile', { ...profile, no_recovery_acknowledged_at: now });
       await this.audit(tx, now, 'recovery.none_acknowledged', {});
     });
-    return this.op_recovery_status();
+    return this.op_recovery_status({}, now);
   }
 }

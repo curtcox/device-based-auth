@@ -1,6 +1,6 @@
 # Paid accounts without Clerk
 
-Status: **A0–A4 done** (2026-11-21), A5 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **A0–A5 done** (2026-11-21), A6 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
@@ -143,7 +143,7 @@ code.
   needs a recent sign-in, so §3.3's ten minutes, or a recovery, is how the first one gets added.
   The sign-up flow offers it straight away.
 
-### 3.5 Recovery (codes done in A3, gates in A4)
+### 3.5 Recovery (codes done in A3, gates in A4, email in A5)
 
 As built in A3 (`src/api/recovery.js`, `src/durable-objects/account/recovery.js`): the owner's
 choice is **read from what exists** rather than kept as separate booleans that could disagree with
@@ -171,7 +171,21 @@ gate now answers for that gate as the device (before, the Worker saw it only as 
 second dashboard browser could never answer as a device gate); it types the number like any device.
 The recovery report lists `recovery_gates`.
 
-The original design, for A5:
+As built in A5: `POST /api/v1/account/email` (recent sign-in) emails a link to `/email-link.html`,
+charged the notice price; the page posts it to `/api/v1/account/email/verify`, and the address
+becomes the security email and recovery address (`email_source: 'verified'`). The registry maps
+each verified address, as `SHA-256("dba-email\n" + lower-cased address)`, to the one account it
+recovers (another account verifying it gets 409 `email_in_use`); `DELETE /api/v1/account/email`
+(recent sign-in) releases it. `via: 'email'` answers the same whether or not the address is known
+and its ticket never names the account (completion looks it up again). The emailed link starts a
+**72-hour wait** (O1 still open: implemented with the recommended value pending approval), told to
+every browser and by email; any dashboard sign-in cancels it (`POST /api/v1/account/recovery
+{ cancel_email_recovery }`, shown on the Account page). At most three recovery emails per account
+per hour; one the balance cannot pay goes free. Pages need a click before anything happens, so mail
+scanners that open links change nothing. Playwright does not cover `/email-link.html` yet: the local
+server sends no email (A7).
+
+The original design:
 
 The owner's choice is kept in account settings as
 `recovery: { codes: bool, gates: bool, email: bool, none_acknowledged_at }`. It is set at sign-up
@@ -273,7 +287,7 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 | **A2** ✅ | The first ten minutes (§3.3) and re-verification through gates (§3.4), including the 403 body and the dashboard panel. Done: `src/durable-objects/account/reverify.js`, `POST /api/v1/session/reverify`, `frontend/js/dashboard-reverify.js`; tests `src/session-reverify.test.js`, Playwright `reverify.spec.js`. | A Clerk-free owner can add a second device and create API keys. |
 | **A3** ✅ | Recovery status, recovery codes onto a new device, accepting no recovery (§3.5). **The journey test.** Done: `POST /api/v1/recover`, `/api/v1/account/recovery`; tests `src/recovery.test.js` and the journey `src/clerk-free-accounts.test.js` (production, Clerk unset, every `CLERK_*` read recorded, every route checked open to a device or key). | The journey test passes. |
 | **A4** ✅ | Recovery by passkey or second device. Done: `POST /api/v1/recover` with `via: 'gate'` and `POST /api/v1/recover/complete`; tests in `src/recovery.test.js`, cost in `src/cost-counts.test.js`. | Gate recovery tests pass. |
-| **A5** | Verified email, `email_source`, email recovery with the waiting period. | Email tests pass (SES faked as in `src/security-email.test.js`). |
+| **A5** ✅ | Verified email, `email_source`, email recovery with the waiting period (72 hours, pending O1). Done: `src/durable-objects/account/email-address.js`, `src/api/email-address.js`, `via: 'email'`, `/email-link.html`, the Account page's address and "Getting back in" sections; tests `src/email-recovery.test.js`. | Email tests pass (SES faked as in `src/security-email.test.js`). |
 | **A6** | Clerk linking both ways (§3.6), plus the ops step for the session token. | Link and unlink tests pass. |
 | **A7** | Sign-up and recovery pages, CLI `signup`/`recover`, SDK release, Playwright. | `npm run test:e2e` passes. |
 | **A8** | Docs (§6), CI sample, STATUS (B9 done, S8 note), `git mv` this file to `done/`. | Docs state the claim and link the journey test. |
@@ -300,7 +314,7 @@ A minimum Clerk-free launch is A0–A3, the sign-up page and code recovery from 
 
 | ID | Question | Recommendation |
 |----|----------|----------------|
-| O1 | Waiting period before email recovery takes effect | 72 hours, cancellable by any dashboard device or browser |
+| O1 | Waiting period before email recovery takes effect | 72 hours, cancellable by any dashboard device or browser. **Implemented with 72 hours pending approval** (`EMAIL_RECOVERY_WAIT_MS`) |
 | O2 | Can a TOTP gate recover an account, or only re-verify? | Re-verify yes; recover no (it often lives on the phone that was lost) |
 | O3 | A balance nobody can reach (sign-up paid and never completed, or every device lost with no recovery) | Refund to the original card on request within 90 days, by Stripe payment id; legal to confirm |
 | O4 | Dormant-account notices (D8) for an account with no email | Push to its browsers; with nothing to reach, close after 12 months as D8 says |

@@ -97,7 +97,10 @@ export const OPERATIONS = Object.freeze({
   // message, so at most one message is billed), each signing the request (SigV4, ~3 ms) and
   // rewriting or deleting the queue row (3 rows) and setting the next alarm (2 rows), then an
   // audit row and its later deletion (2 rows) and, for the hourly digest, its last-sent row
-  // (1 row; building it reads up to 40 rows of the audit trail and devices).
+  // (1 row; building it reads up to 40 rows of the audit trail and devices). Verifying an address and
+  // recovering by email (B9) each send one such email; the link in it, used once, costs a read's
+  // worth more (src/cost-counts.test.js), and a recovery email the balance cannot pay goes free (at
+  // most three an hour per account).
   notice: { workerRequests: 0, doRequests: 3, rowWrites: 15, cpuMs: 10, storageKBMonths: 0.5 * 13, r2ClassA: 0, emails: 1 },
   // Authentication (with the rate limit), registry read, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
   // the charge's ledger and receipt rows and the audit row.

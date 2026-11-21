@@ -6,6 +6,7 @@ import { api } from './api.js';
 import { signedInLabel, currentDevice } from './auth.js';
 import { h, replace, usd, money, num, date, badge, notice, table, dl, field } from './html.js';
 import { state, view, enc, flash, errorBox, confirmButton, busy, refreshStrip, render } from './dashboard.js';
+import { emailSection, recoverySection } from './dashboard-recovery.js';
 
 // ---------------------------------------------------------------------------------------------
 // Account
@@ -30,36 +31,6 @@ function settingsForm(settings) {
     });
   });
   return [h('p', { class: 'muted' }, 'Limits on what this account can spend if a session, API key or device misbehaves. Issuing beyond the daily limit and renewing beyond the monthly cap are refused (HTTP 429) without charge. Changes are recorded in the audit trail.'), form, out];
-}
-
-// ---------------------------------------------------------------------------------------------
-// Security emails (STATUS S8, D9)
-
-const EMAIL_LEVELS = [
-  ['all', 'Everything: takeover-sensitive events at once, other issuances in an hourly digest'],
-  ['sensitive', 'Takeover-sensitive events only'],
-  ['off', 'None']
-];
-
-function emailSection(settings, address) {
-  const intro = h('p', { class: 'muted' }, `An email when something that could hand your account to someone else happens (credentials that can act on your account, API keys, enrollment tokens, gates, recovery codes, raised limits) and, if you like, one digest an hour of other issuances. Each email costs ${money(state.config.prices.notice)}, charged when it is queued; with too little balance none is sent.`);
-  if (!state.config.security_email) return [intro, h('p', { class: 'muted' }, 'Security email is not configured on this server.')];
-  if (!address) return [intro, h('p', { class: 'muted' }, 'Your sign-in has no verified email address, so no security email is sent.')];
-  const form = h('form', { class: 'stack', id: 'email-form' },
-    h('p', {}, 'Sent to ', h('strong', { id: 'security-email-address' }, address), h('span', { class: 'muted small' }, ' (your sign-in’s primary address)')),
-    h('label', {}, 'Security emails', h('select', { name: 'level' }, EMAIL_LEVELS.map(([value, label]) => h('option', { value, selected: settings.security_email === value }, label)))),
-    h('div', { class: 'actions' }, h('button', { type: 'submit' }, 'Save')));
-  const out = h('div', {});
-  form.addEventListener('submit', event => {
-    event.preventDefault();
-    busy(form, async () => {
-      try {
-        const saved = await api('/api/v1/account/settings', { method: 'PATCH', body: { security_email: field(form, 'level') } });
-        replace(out, notice('success', saved.security_email === 'off' ? 'Saved. A last email says they were turned off.' : 'Saved.'));
-      } catch (error) { replace(out, errorBox(error)); }
-    });
-  });
-  return [intro, form, h('p', { class: 'muted small' }, 'Turning emails down needs a recent sign-in, since it is what a thief would do first.'), out];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -130,7 +101,7 @@ function pushSection(subscriptions) {
 
 /** Page #account: balance, deposits, budget limits, security notices and emails, dashboard device. */
 export async function accountView() {
-  const [a, settings, subscriptions] = await Promise.all([api('/api/v1/account'), api('/api/v1/account/settings').catch(() => null), api('/api/v1/push-subscriptions').catch(() => null)]); state.accountInfo = a;
+  const [a, settings, subscriptions, recovery] = await Promise.all([api('/api/v1/account'), api('/api/v1/account/settings').catch(() => null), api('/api/v1/push-subscriptions').catch(() => null), api('/api/v1/account/recovery').catch(() => null)]); state.accountInfo = a;
   const kinds = Object.keys(a.month?.by_kind || {});
   const aggregates = Object.entries(a.today?.aggregates || {});
   const deposit = state.config.local ? localDeposit() : cardDeposit();
@@ -153,7 +124,8 @@ export async function accountView() {
     h('h2', {}, 'Add credit'), deposit,
     settings ? [h('h2', {}, 'Limits'), settingsForm(settings)] : null,
     subscriptions ? [h('h2', {}, 'Security notices'), pushSection(subscriptions)] : null,
-    settings ? [h('h2', {}, 'Security emails'), emailSection(settings, a.security_email_address)] : null,
+    settings ? [h('h2', {}, 'Security emails'), emailSection(settings, a)] : null,
+    recovery ? [h('h2', {}, 'Getting back in'), recoverySection(recovery)] : null,
     h('h2', {}, 'Sign in with this browser'),
     device
       ? h('p', {}, 'This browser is signed in with its own device credential ', h('a', { href: `#credential/${enc(device.payload.cid)}` }, device.payload.cid), '. Every request is signed with a key that never leaves this browser. Signing out revokes it.')

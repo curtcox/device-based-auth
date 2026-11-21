@@ -12,6 +12,7 @@ import { AccountGateDelivery } from './account/gate-delivery.js';
 import { AccountSignIn } from './account/sign-in.js';
 import { AccountReverify } from './account/reverify.js';
 import { AccountRecovery } from './account/recovery.js';
+import { AccountEmailAddress } from './account/email-address.js';
 import { AccountCompaction } from './account/compaction.js';
 import { AccountEmail, SECURITY_EMAIL_LEVELS } from './account/email.js';
 import { cleanEmailAddress } from '../services/email.js';
@@ -104,7 +105,9 @@ export class AccountDO {
 
   /**
    * Create the account on first sight. `email` (the primary address Clerk verified, from its
-   * user.created/user.updated webhook) is where security emails go; a change is audited.
+   * user.created/user.updated webhook) is where security emails go; a change is audited. An
+   * address devicebasedauth.org verified itself (account/email-address.js) is never replaced by
+   * Clerk's.
    * `signup` ({ id, jkt }, from a paid sign-up: api/signup.js) binds a new account to the key that
    * signed up; it never attaches to an account that already exists.
    */
@@ -115,10 +118,10 @@ export class AccountDO {
       let profile = await tx.get('profile');
       const dashboard = session ? await dashboardState(tx, session, now) : undefined;
       if (!profile) { profile = { account, created_at: now, ...(signup ? { created_via: 'signup', signup: { id: signup.id, jkt: signup.jkt }, terms_accepted_at: now } : {}) }; await tx.put('profile', profile); }
-      if (address !== undefined && (profile.email ?? null) !== address) {
+      if (address !== undefined && profile.email_source !== 'verified' && (profile.email ?? null) !== address) {
         const had = !!profile.email;
-        profile = { ...profile, email: address };
-        if (!address) delete profile.email;
+        profile = { ...profile, email: address, email_source: 'clerk' };
+        if (!address) { delete profile.email; delete profile.email_source; }
         await tx.put('profile', profile);
         await this.audit(tx, now, 'account.email_changed', { had_address: had, has_address: !!address });
       }
@@ -140,7 +143,7 @@ export class AccountDO {
     return this.tx(async tx => {
       const profile = (await tx.get('profile')) || {};
       const state = await readBalance(tx, now, funds_check ? { flush: false } : undefined);
-      return { account: profile.account, created_at: profile.created_at, security_email_address: profile.email ?? null, balance_microdollars: state.balance_microdollars, month: state.month, today: state.day };
+      return { account: profile.account, created_at: profile.created_at, security_email_address: profile.email ?? null, security_email_source: profile.email ? profile.email_source ?? 'clerk' : null, security_email_pending: profile.email_pending && profile.email_pending.expires_at > now ? profile.email_pending.address : null, balance_microdollars: state.balance_microdollars, month: state.month, today: state.day };
     });
   }
 
@@ -215,8 +218,8 @@ export class AccountDO {
     // is set for the first one still live, so none outlives it for long on an account that has
     // nothing else to do.
     let shortLived = null;
-    for (const prefix of ['gatereq:', 'code:', 'dashsess:']) for (const [key, value] of await this.storage.list({ prefix })) {
-      const until = prefix === 'gatereq:' ? requestUntil(value) : prefix === 'dashsess:' ? value.until : value.expires_at;
+    for (const prefix of ['gatereq:', 'code:', 'dashsess:', 'emailrec:']) for (const [key, value] of await this.storage.list({ prefix })) {
+      const until = prefix === 'gatereq:' ? requestUntil(value) : prefix === 'dashsess:' || prefix === 'emailrec:' ? value.until : value.expires_at;
       if (until <= now) await this.storage.delete(key);
       else shortLived = Math.min(shortLived ?? Infinity, until);
     }
@@ -239,7 +242,7 @@ export class AccountDO {
  * `this` bound to the AccountDO, as when they were written in one class: they are copied onto its
  * prototype so op_* dispatch, the alarm and tests find them on the object itself.
  */
-const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountReverify, AccountRecovery, AccountCompaction, AccountEmail];
+const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountReverify, AccountRecovery, AccountEmailAddress, AccountCompaction, AccountEmail];
 for (const group of OPERATION_GROUPS) {
   for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(group.prototype))) {
     if (name === 'constructor') continue;

@@ -77,7 +77,7 @@ describe('recovery onto a new device (B9, phase A3)', () => {
     const stale = await phone.enrollRequest({ iat: Math.floor(t / 1000) - 3600 });
     expect((await recover(phone, { request: stale })).body.code).toBe('invalid_request');
     expect((await recover(phone, { request: 'not-a-jws' })).body.code).toBe('invalid_request');
-    expect((await recover(phone, { via: 'email' })).body.code).toBe('invalid_recovery');
+    expect((await recover(phone, { via: 'sms' })).body.code).toBe('invalid_recovery');
     // A refused request uses no code.
     expect((await recover(phone)).body.recovery_codes_left).toBe(9);
   });

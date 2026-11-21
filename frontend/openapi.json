@@ -6413,7 +6413,7 @@
     "/api/v1/recover": {
       "post": {
         "operationId": "post_api_v1_recover",
-        "summary": "Get back into an account after losing every device: body {account, via:\"code\"|\"gate\", code?, request (a dba-enroll+jwt signed by the new device's key; aud and grants may be left out)}. via code uses up the recovery code and returns a dashboard credential (dba:session) for the new device at once (5 wrong codes per account per 15 minutes). via gate asks the account's passkey, security-key and device gates and returns the number approvers type, the approval page link and a ticket for POST /api/v1/recover/complete (3 per account per hour). The credential is free and counts as a recent sign-in for 10 minutes.",
+        "summary": "Get back into an account after losing every device: body {account (not with via email), via:\"code\"|\"gate\"|\"email\", code?, email?, request (a dba-enroll+jwt signed by the new device's key; aud and grants may be left out)}. via code uses up the recovery code and returns a dashboard credential (dba:session) for the new device at once (5 wrong codes per account per 15 minutes). via gate asks the account's passkey, security-key and device gates and returns the number approvers type, the approval page link and a ticket for POST /api/v1/recover/complete (3 per account per hour). via email emails a link to the account's verified address (the same answer whether or not it belongs to an account); once used, the device gets in after 72 hours unless a signed-in device cancels. The credential is free and counts as a recent sign-in for 10 minutes.",
         "x-access": "public",
         "security": [],
         "parameters": [],
@@ -6474,17 +6474,21 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "account",
                   "request"
                 ],
                 "properties": {
                   "account": {
                     "type": "string"
                   },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
                   "via": {
                     "enum": [
                       "code",
-                      "gate"
+                      "gate",
+                      "email"
                     ]
                   },
                   "code": {
@@ -6505,7 +6509,7 @@
     "/api/v1/recover/complete": {
       "post": {
         "operationId": "post_api_v1_recover_complete",
-        "summary": "Finish a recovery by gate: with a DPoP proof by the new key (ath = hash of the ticket), returns {status:\"pending\"} until a gate approves, then the new device's dashboard credential; 403 recovery_denied if refused or timed out.",
+        "summary": "Finish a recovery by gate or email: with a DPoP proof by the new key (ath = hash of the ticket), returns {status:\"pending\"} until a gate approves, then the new device's dashboard credential; 403 recovery_denied if refused or timed out.",
         "x-access": "public",
         "security": [],
         "parameters": [],
@@ -6572,6 +6576,309 @@
                   "ticket": {
                     "type": "string",
                     "description": "The rcv_… ticket from POST /api/v1/recover with via gate."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recover/email-link": {
+      "post": {
+        "operationId": "post_api_v1_recover_email_link",
+        "summary": "Use the link from a recovery email (body {token}, the erl_… token from the link): the new device gets in after a 72-hour wait unless a signed-in device cancels it.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account/email": {
+      "post": {
+        "operationId": "post_api_v1_account_email",
+        "summary": "POST {email}: email a verification link to an address for security email and recovery by email (charged the notice price; needs a recent sign-in). DELETE: stop using the address (recent sign-in).",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_api_v1_account_email",
+        "summary": "POST {email}: email a verification link to an address for security email and recovery by email (charged the notice price; needs a recent sign-in). DELETE: stop using the address (recent sign-in).",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/account/email/verify": {
+      "post": {
+        "operationId": "post_api_v1_account_email_verify",
+        "summary": "Use a verification link (body {token}, the emv_… token from the link): the address becomes the account's security email and recovery address. 409 email_in_use if another account recovers by it.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
                   }
                 }
               }
@@ -6717,6 +7024,9 @@
                 "properties": {
                   "acknowledge_no_recovery": {
                     "const": true
+                  },
+                  "cancel_email_recovery": {
+                    "type": "string"
                   }
                 }
               }

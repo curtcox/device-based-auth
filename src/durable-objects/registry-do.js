@@ -61,6 +61,19 @@ export class RegistryDO {
             await tx.put(`aud:${args.name}`, next);
             return next;
           }
+          // Verified email addresses (by SHA-256 of the lower-cased address) to the one account that
+          // may be recovered by email there (todo/clerk_free_accounts.md §3.5).
+          case 'email-get': return { account: (await tx.get(`email:${args.hash}`)) ?? null };
+          case 'email-claim': {
+            const holder = await tx.get(`email:${args.hash}`);
+            assert(!holder || holder === args.account, 'email_in_use', 'Another account already uses this address for recovery', 409);
+            if (!holder) await tx.put(`email:${args.hash}`, args.account);
+            return { ok: true };
+          }
+          case 'email-release': {
+            if ((await tx.get(`email:${args.hash}`)) === args.account) await tx.delete(`email:${args.hash}`);
+            return { ok: true };
+          }
           default: assert(false, 'unknown_operation', 'Unknown registry operation', 500);
         }
       }));

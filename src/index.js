@@ -3,7 +3,8 @@ import { authenticate } from './auth/middleware.js';
 import { clerkWebhook } from './auth/clerk-webhook.js';
 import { checkout, stripeWebhook } from './api/payments.js';
 import { startSignup, completeSignup, devSignupPaid } from './api/signup.js';
-import { recoverAccount, completeRecovery, accountRecovery } from './api/recovery.js';
+import { recoverAccount, completeRecovery, confirmEmailRecovery, accountRecovery } from './api/recovery.js';
+import { accountEmail, verifyEmail } from './api/email-address.js';
 import { keys } from './api/keys.js';
 import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment, attestationChallenge, tpmActivation } from './api/enrollments.js';
 import { enrollmentTokens, redeemEnrollmentToken } from './api/enrollment-tokens.js';
@@ -121,6 +122,10 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/dev/signup-paid`, access: PUBLIC, handler: 'dev-signup-paid' },
   { method: 'POST', path: `${V1}/recover`, access: PUBLIC, handler: 'recover' },
   { method: 'POST', path: `${V1}/recover/complete`, access: PUBLIC, handler: 'recover-complete' },
+  { method: 'POST', path: `${V1}/recover/email-link`, access: PUBLIC, handler: 'recover-email-link' },
+  { method: 'POST', path: `${V1}/account/email`, access: SESSION, handler: 'account-email' },
+  { method: 'DELETE', path: `${V1}/account/email`, access: SESSION, handler: 'account-email' },
+  { method: 'POST', path: `${V1}/account/email/verify`, access: PUBLIC, handler: 'email-verify' },
   { method: 'GET', path: `${V1}/account/recovery`, access: SESSION, handler: 'account-recovery' },
   { method: 'POST', path: `${V1}/account/recovery`, access: SESSION, handler: 'account-recovery' },
   { method: 'GET', path: '/.well-known/oauth-authorization-server', access: PUBLIC, handler: 'oidc-configuration' },
@@ -234,6 +239,9 @@ async function handle(route, request, env, auth) {
     case 'dev-signup-paid': return devSignupPaid(request, env);
     case 'recover': return recoverAccount(request, env);
     case 'recover-complete': return completeRecovery(request, env);
+    case 'recover-email-link': return confirmEmailRecovery(request, env);
+    case 'account-email': return accountEmail(request, env, auth);
+    case 'email-verify': return verifyEmail(request, env);
     case 'account-recovery': return accountRecovery(request, env, auth);
     case 'dev-deposit': {
       assert(env.ENVIRONMENT === 'local', 'not_found', 'Not found', 404);

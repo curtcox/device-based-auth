@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { testEnv, call, newDevice, enroll, meter, ORIGIN } from '../test-utils/env.js';
+import { testEnv, call, newDevice, enroll, meter, ORIGIN, runAlarms } from '../test-utils/env.js';
 import { inspectCredential, createProof, signJws, sha256b64u, b64u } from '../packages/verify/src/index.js';
 import { OPERATIONS } from './utils/cost-policy.js';
 import { hotp } from './services/totp.js';
@@ -147,6 +147,28 @@ describe('cost policy matches the code', () => {
     };
     // Listing the phone's requests is a read; the rest is the gate and the issue.
     withinSum(['gate', 'issue', 'read'], await measured(recoverOnce), later(11 + 1, 16 + 1));
+  });
+
+  it('verifying an address and starting a recovery by email are one email each (B9)', async () => {
+    Object.assign(env, { EMAIL_PROVIDER: 'ses', SES_REGION: 'us-east-1', SES_ACCESS_KEY_ID: 'AKIDTEST', SES_SECRET_ACCESS_KEY: 'secret', EMAIL_FROM: 'dba <security@devicebasedauth.org>' });
+    const sent = []; env.EMAIL_FETCH = async (url, init) => { sent.push(JSON.parse(init.body).Content.Simple.Body.Text.Data); return new Response('{}', { status: 200 }); };
+    const tokenIn = (text, prefix) => text.match(new RegExp(`#(${prefix}[A-Za-z0-9_.-]+)`))[1];
+    await enroll(env, 'alice', await newDevice()); // the registry seeds itself once per deployment
+    // Asking, sending (the account's alarm) and using the link: one email, plus a read's worth for
+    // the link (its check, the registry's index row, the profile row and its audit row); each link
+    // exists only because an email was paid for.
+    m.reset();
+    await call(env, 'POST', '/api/v1/account/email', { auth: 'alice', body: { email: 'alice@example.com' } });
+    await runAlarms(env);
+    await call(env, 'POST', '/api/v1/account/email/verify', { body: { token: tokenIn(sent.at(-1), 'emv_') } });
+    withinSum(['notice', 'read'], m.read(), later(0, 2 + 1));
+    // A recovery by email: the registry lookup, the request row (pruned by the alarm later) and one
+    // email (free when the balance cannot pay; at most three an hour per account).
+    const d = await newDevice();
+    m.reset();
+    await call(env, 'POST', '/api/v1/recover', { body: { via: 'email', email: 'alice@example.com', request: await d.enrollRequest({ device: { name: 'p' } }) } });
+    await runAlarms(env);
+    withinSum(['notice', 'read'], m.read(), later(0, 2 + 1));
   });
 
   it('decision', async () => {
