@@ -1,0 +1,15 @@
+{
+  "comment": "Files over their size limit when the check arrived. They may not grow; after shrinking one, run: npm run check:file-sizes -- --update-baseline. See scripts/check-file-sizes.mjs.",
+  "files": {
+    "frontend/js/app.js": 81280,
+    "packages/cli/dba.js": 42424,
+    "packages/cli/lib.js": 46465,
+    "packages/cli/lib.test.js": 46679,
+    "packages/verify-go/grants.go": 40524,
+    "src/durable-objects/account-do.js": 96231,
+    "src/durable-objects/gates.js": 35641,
+    "src/gates.test.js": 54596,
+    "src/integration.test.js": 39635,
+    "src/services/tpm-ek-anchors.js": 73937
+  }
+}

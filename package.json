@@ -17,11 +17,13 @@
     "lint": "eslint --ext .js,.mjs src packages scripts spec docs/samples frontend/js frontend/tests playwright.config.js test-utils --no-error-on-unmatched-pattern",
     "test": "vitest run",
     "test:unit": "vitest run",
+    "check:file-sizes": "node scripts/check-file-sizes.mjs",
     "test:e2e": "playwright test",
     "test:samples": "node scripts/run-samples.mjs",
     "vectors:generate": "node scripts/generate-vectors.mjs",
     "docs:generate": "node scripts/generate-openapi.mjs && node scripts/generate-llms-full.mjs && node scripts/sync-browser-lib.mjs && node scripts/build-sdk.mjs",
-    "status": "grep -E '⬜|🚧|🟨|❓' STATUS.md"
+    "status": "grep -E '⬜|🚧|🟨|❓' STATUS.md",
+    "prepare": "node scripts/install-git-hooks.mjs"
   },
   "author": "Curt Cox",
   "license": "MIT",

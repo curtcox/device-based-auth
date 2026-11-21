@@ -48,6 +48,7 @@ Node 22+. `npm install` (an `.npmrc` sets `legacy-peer-deps`).
 |---------|-----------|
 | `npm test` | Unit, integration and conformance tests (Vitest). Run before every commit. |
 | `npm run lint` | ESLint; must be clean. |
+| `npm run check:file-sizes` | Per-type file size limits and the ratchet (also run by the pre-push hook, the tests and CI). |
 | `npm run dev:local` | Full local stack at http://localhost:8787. `Authorization: LocalDev <name>`; `POST /api/v1/dev/deposit` adds credit. |
 | `npm run test:samples` | Runs docs/samples against a fresh local server on port 8788 (needs python3 with cryptography+requests, and go). |
 | `npm run test:e2e` | Playwright browser tests (starts the local server). |
@@ -74,6 +75,14 @@ Pushing to `main` deploys production only when the owner sets `DBA_DEPLOY_ENABLE
 - **Docs samples are executed in CI**; never paste an untested sample into a docs page.
 - **Frontend:** no framework, no bundler. Escape anything dynamic before `innerHTML`; the
   credential inspector renders untrusted input.
+- **File sizes** have per-type limits (source code 32 KiB, HTML/CSS 64 KiB, prose 48 KiB, data
+  64 KiB, raster images 256 KiB; the generated `frontend/openapi.json` 256 KiB and
+  `frontend/llms-full.txt` 160 KiB, `spec/vectors/*.json` 256 KiB, the SDK bundle 64 KiB; the full
+  list is `RULES` in `scripts/check-file-sizes.mjs`). When a file outgrows its limit, split it.
+  `scripts/file-size-baseline.json` grandfathers the files that were already too big (STATUS B8);
+  they may not grow. After shrinking one, run `npm run check:file-sizes -- --update-baseline`.
+  Never raise or add baseline entries to make a check pass. `npm install` enables the pre-push
+  hook in `.githooks/`, which also rejects big files committed and deleted again before a push.
 - **Errors** are JSON `{ error, code, ... }` with the right HTTP status; `402` for balance refusals.
 - **Secrets** never appear in logs, responses or the repo.
 
