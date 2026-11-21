@@ -5,6 +5,7 @@ import { checkout, stripeWebhook } from './api/payments.js';
 import { startSignup, completeSignup, devSignupPaid } from './api/signup.js';
 import { recoverAccount, completeRecovery, confirmEmailRecovery, accountRecovery } from './api/recovery.js';
 import { accountEmail, verifyEmail } from './api/email-address.js';
+import { clerkLink } from './api/clerk-link.js';
 import { keys } from './api/keys.js';
 import { startEnrollment, describeEnrollment, approveEnrollment, denyEnrollment, pollEnrollment, attestationChallenge, tpmActivation } from './api/enrollments.js';
 import { enrollmentTokens, redeemEnrollmentToken } from './api/enrollment-tokens.js';
@@ -126,6 +127,8 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/account/email`, access: SESSION, handler: 'account-email' },
   { method: 'DELETE', path: `${V1}/account/email`, access: SESSION, handler: 'account-email' },
   { method: 'POST', path: `${V1}/account/email/verify`, access: PUBLIC, handler: 'email-verify' },
+  { method: 'POST', path: `${V1}/account/clerk-link`, access: SESSION, handler: 'clerk-link' },
+  { method: 'DELETE', path: `${V1}/account/clerk-link`, access: SESSION, handler: 'clerk-link' },
   { method: 'GET', path: `${V1}/account/recovery`, access: SESSION, handler: 'account-recovery' },
   { method: 'POST', path: `${V1}/account/recovery`, access: SESSION, handler: 'account-recovery' },
   { method: 'GET', path: '/.well-known/oauth-authorization-server', access: PUBLIC, handler: 'oidc-configuration' },
@@ -242,6 +245,7 @@ async function handle(route, request, env, auth) {
     case 'recover-email-link': return confirmEmailRecovery(request, env);
     case 'account-email': return accountEmail(request, env, auth);
     case 'email-verify': return verifyEmail(request, env);
+    case 'clerk-link': return clerkLink(request, env, auth);
     case 'account-recovery': return accountRecovery(request, env, auth);
     case 'dev-deposit': {
       assert(env.ENVIRONMENT === 'local', 'not_found', 'Not found', 404);

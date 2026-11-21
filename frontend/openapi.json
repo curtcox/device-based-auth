@@ -6887,6 +6887,155 @@
         }
       }
     },
+    "/api/v1/account/clerk-link": {
+      "post": {
+        "operationId": "post_api_v1_account_clerk_link",
+        "summary": "POST {session_token}: let the Clerk user holding that session sign in to this account (an account made without Clerk adds a password sign-in). Refused if that user opens another account or has its own with money or credentials. DELETE: unlink it, if you keep another way in. Both need a recent sign-in.",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "session_token"
+                ],
+                "properties": {
+                  "session_token": {
+                    "type": "string",
+                    "description": "The Clerk session token of the sign-in to link (from Clerk's browser SDK after signing in)."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_api_v1_account_clerk_link",
+        "summary": "POST {session_token}: let the Clerk user holding that session sign in to this account (an account made without Clerk adds a password sign-in). Refused if that user opens another account or has its own with money or credentials. DELETE: unlink it, if you keep another way in. Both need a recent sign-in.",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/account/recovery": {
       "get": {
         "operationId": "get_api_v1_account_recovery",

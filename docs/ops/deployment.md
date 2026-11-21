@@ -44,7 +44,7 @@ dashboard cannot add TOTP gates (other gates work).
 
 Create a separate Clerk application for devicebasedauth.org (Google and GitHub sign-in, like
 hashbin). Secrets: `DBA_CLERK_SECRET_KEY`, `DBA_CLERK_PUBLISHABLE_KEY`; add a webhook to
-`https://devicebasedauth.org/webhooks/clerk` for `user.created`/`user.updated` and store its signing
+`https://devicebasedauth.org/webhooks/clerk` for `user.created`/`user.updated`/`user.deleted` and store its signing
 secret as `DBA_CLERK_WEBHOOK_SECRET`. Set the GitHub variable `DBA_OPERATOR_ACCOUNT` to your own
 Clerk user id: that account owns the first-party audiences (devicebasedauth.org, hashbin.org,
 cronly.org) and pays for their online decisions and OpenID Connect sign-ins, so keep it funded.
@@ -56,7 +56,21 @@ those operations are refused. Check after deploying: sign in, wait 11 minutes, t
 key (expect "Please confirm it is you"), sign in again, and it succeeds.
 
 The `user.created`/`user.updated` webhook also carries the user's primary email address; once
-Clerk has verified it, it is where security emails go (next section).
+Clerk has verified it, it is where security emails go (next section), unless the owner verified an
+address with devicebasedauth.org itself. `user.deleted` never closes an account: it forgets the
+link and the address that came from Clerk.
+
+**Linking a password sign-in to an account made without Clerk (STATUS B9).** Customize the session
+token (Clerk dashboard → Sessions → Customize session token) with:
+
+```json
+{ "dba_account": "{{user.public_metadata.dba_account}}" }
+```
+
+The Worker writes `public_metadata.dba_account` through Clerk's Backend API when an owner links a
+sign-in, and accepts the claim only when that account names the same Clerk user back. Check after
+deploying: create an account by paying (no Clerk), add a password sign-in on its Account page, sign
+out, and sign in with that password sign-in: the dashboard opens the same account id.
 
 ## 3a. Security email (Amazon SES, optional; STATUS S8, D9)
 

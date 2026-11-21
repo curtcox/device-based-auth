@@ -13,6 +13,7 @@ import { AccountSignIn } from './account/sign-in.js';
 import { AccountReverify } from './account/reverify.js';
 import { AccountRecovery } from './account/recovery.js';
 import { AccountEmailAddress } from './account/email-address.js';
+import { AccountClerkLink } from './account/clerk-link.js';
 import { AccountCompaction } from './account/compaction.js';
 import { AccountEmail, SECURITY_EMAIL_LEVELS } from './account/email.js';
 import { cleanEmailAddress } from '../services/email.js';
@@ -109,13 +110,16 @@ export class AccountDO {
    * address devicebasedauth.org verified itself (account/email-address.js) is never replaced by
    * Clerk's.
    * `signup` ({ id, jkt }, from a paid sign-up: api/signup.js) binds a new account to the key that
-   * signed up; it never attaches to an account that already exists.
+   * signed up; it never attaches to an account that already exists. `link_sub` (a Clerk session or
+   * webhook naming this account through `dba_account`) must be the Clerk user linked here
+   * (account/clerk-link.js); otherwise nothing is created and the session is refused.
    */
-  async op_init({ account, rate, session, email, signup }, now) {
+  async op_init({ account, rate, session, email, signup, link_sub }, now) {
     if (rate) await this.op_rate_limit(rate, now);
     const address = email === undefined ? undefined : cleanEmailAddress(email);
     return this.tx(async tx => {
       let profile = await tx.get('profile');
+      if (link_sub !== undefined) assert(profile?.clerk_sub === link_sub, 'invalid_auth', 'This sign-in is not linked to that account', 401);
       const dashboard = session ? await dashboardState(tx, session, now) : undefined;
       if (!profile) { profile = { account, created_at: now, ...(signup ? { created_via: 'signup', signup: { id: signup.id, jkt: signup.jkt }, terms_accepted_at: now } : {}) }; await tx.put('profile', profile); }
       if (address !== undefined && profile.email_source !== 'verified' && (profile.email ?? null) !== address) {
@@ -143,7 +147,7 @@ export class AccountDO {
     return this.tx(async tx => {
       const profile = (await tx.get('profile')) || {};
       const state = await readBalance(tx, now, funds_check ? { flush: false } : undefined);
-      return { account: profile.account, created_at: profile.created_at, security_email_address: profile.email ?? null, security_email_source: profile.email ? profile.email_source ?? 'clerk' : null, security_email_pending: profile.email_pending && profile.email_pending.expires_at > now ? profile.email_pending.address : null, balance_microdollars: state.balance_microdollars, month: state.month, today: state.day };
+      return { account: profile.account, created_at: profile.created_at, security_email_address: profile.email ?? null, security_email_source: profile.email ? profile.email_source ?? 'clerk' : null, security_email_pending: profile.email_pending && profile.email_pending.expires_at > now ? profile.email_pending.address : null, created_via: profile.created_via ?? 'clerk', clerk_linked: !!profile.clerk_sub, balance_microdollars: state.balance_microdollars, month: state.month, today: state.day };
     });
   }
 
@@ -242,7 +246,7 @@ export class AccountDO {
  * `this` bound to the AccountDO, as when they were written in one class: they are copied onto its
  * prototype so op_* dispatch, the alarm and tests find them on the object itself.
  */
-const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountReverify, AccountRecovery, AccountEmailAddress, AccountCompaction, AccountEmail];
+const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountReverify, AccountRecovery, AccountEmailAddress, AccountClerkLink, AccountCompaction, AccountEmail];
 for (const group of OPERATION_GROUPS) {
   for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(group.prototype))) {
     if (name === 'constructor') continue;

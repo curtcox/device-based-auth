@@ -37,15 +37,13 @@ export async function authenticate(request, env, { anyAudience = false, recovery
     const token = header.slice(7).trim();
     // An app connected through the MCP OAuth flow: acts like an API key with the approved scopes.
     if (isMcpAccessToken(token)) return authenticateMcpToken(token, env);
-    assert(env.CLERK_SECRET_KEY, 'invalid_auth', 'Session sign-in is not configured', 401);
-    let claims;
-    // env.CLERK_VERIFY_TOKEN replaces Clerk's verifier in tests only.
-    const verify = env.CLERK_VERIFY_TOKEN || verifyClerkToken;
-    try { claims = await verify(token, { secretKey: env.CLERK_SECRET_KEY, authorizedParties: [env.APP_ORIGIN] }); } catch { claims = null; }
-    assert(claims?.sub && claims.sid, 'invalid_auth', 'Invalid session', 401);
+    const claims = await verifyClerkSession(env, token);
     const session_key = `sid:${claims.sid}`;
-    const init = await rpc(env.ACCOUNTS, claims.sub, 'init', { account: claims.sub, rate: { id: 'session', limit: SESSION_RATE }, session: session_key });
-    return { account: claims.sub, session: true, kind: 'clerk', factor_age_minutes: factorAgeMinutes(claims), rated: true, session_key, dashboard: init.dashboard };
+    // A Clerk user linked to an account made without Clerk names it in `dba_account`; that
+    // account must name this user back (op_init checks it), so the claim alone opens nothing.
+    const account = clerkAccount(claims);
+    const init = await rpc(env.ACCOUNTS, account, 'init', { account, rate: { id: 'session', limit: SESSION_RATE }, session: session_key, ...(account !== claims.sub ? { link_sub: claims.sub } : {}) });
+    return { account, session: true, kind: 'clerk', factor_age_minutes: factorAgeMinutes(claims), rated: true, session_key, dashboard: init.dashboard };
   }
   if (header.startsWith('ApiKey ')) {
     const token = header.slice(7).trim();
@@ -56,6 +54,20 @@ export async function authenticate(request, env, { anyAudience = false, recovery
   }
   assert(false, 'auth_required', 'Authentication required', 401);
 }
+
+/** Verify a Clerk session token; its claims, or a 401. */
+export async function verifyClerkSession(env, token) {
+  assert(env.CLERK_SECRET_KEY, 'invalid_auth', 'Session sign-in is not configured', 401);
+  let claims;
+  // env.CLERK_VERIFY_TOKEN replaces Clerk's verifier in tests only.
+  const verify = env.CLERK_VERIFY_TOKEN || verifyClerkToken;
+  try { claims = await verify(token, { secretKey: env.CLERK_SECRET_KEY, authorizedParties: [env.APP_ORIGIN] }); } catch { claims = null; }
+  assert(claims?.sub && claims.sid, 'invalid_auth', 'Invalid session', 401);
+  return claims;
+}
+
+/** The account a Clerk user signs in to: the linked one (`dba_account`), or their own. */
+export const clerkAccount = claims => typeof claims.dba_account === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(claims.dba_account) ? claims.dba_account : claims.sub;
 
 /**
  * A credential signed by a withdrawn issuer key, checked against that key. Only the renew route

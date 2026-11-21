@@ -7,6 +7,7 @@
 import { api } from './api.js';
 import { h, replace, money, date, notice, table, field } from './html.js';
 import { state, flash, errorBox, confirmButton, busy, render } from './dashboard.js';
+import { clerkTokenForLinking } from './auth.js';
 
 const EMAIL_LEVELS = [
   ['all', 'Everything: takeover-sensitive events at once, other issuances in an hourly digest'],
@@ -74,4 +75,29 @@ export function recoverySection(r) {
       h('button', { type: 'button', class: 'link', id: 'accept-no-recovery', onclick: async () => { await api('/api/v1/account/recovery', { method: 'POST', body: { acknowledge_no_recovery: true } }); await render(); } }, 'accept that'), '.')
     : null;
   return [waiting, risk, h('p', { id: 'recovery-ways' }, ways.length ? `You can get back in with: ${ways.join('; ')}.` : 'You accepted having no way back in.')];
+}
+
+/**
+ * A password (Clerk) sign-in for an account made without one, or unlinking it (STATUS B9,
+ * todo/clerk_free_accounts.md §3.6). An account Clerk made opens with its own sign-in already.
+ */
+export function signInSection(a) {
+  const out = h('div', {});
+  if (a.clerk_linked) {
+    return [h('p', { id: 'clerk-link-state' }, 'A password sign-in (Clerk) also opens this account.'),
+      confirmButton('Unlink', 'Stop the password sign-in opening this account? You need another way in: a dashboard device, recovery codes, a passkey or a verified email address.', async () => {
+        try { await api('/api/v1/account/clerk-link', { method: 'DELETE' }); flash('success', 'Unlinked.'); await render(); } catch (error) { replace(out, errorBox(error)); }
+      }), out];
+  }
+  if (a.created_via !== 'signup') return [h('p', { class: 'muted' }, 'This account opens with the sign-in it was created with.')];
+  if (!state.config.clerk_publishable_key) return [h('p', { class: 'muted' }, 'This server has no password sign-in to add.')];
+  const add = h('button', { type: 'button', id: 'clerk-link', onclick: async () => {
+    add.disabled = true;
+    try {
+      const session_token = await clerkTokenForLinking();
+      await api('/api/v1/account/clerk-link', { method: 'POST', body: { session_token } });
+      flash('success', 'Linked: that sign-in now opens this account too.'); await render();
+    } catch (error) { replace(out, errorBox(error)); add.disabled = false; }
+  } }, 'Add a password sign-in');
+  return [h('p', { class: 'muted' }, 'This account opens only with its devices. You can add a password sign-in (with Google, GitHub or an email address) as another way in. Adding it needs a recent sign-in.'), add, out];
 }

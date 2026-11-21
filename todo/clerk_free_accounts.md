@@ -1,6 +1,6 @@
 # Paid accounts without Clerk
 
-Status: **A0–A5 done** (2026-11-21), A6 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **A0–A6 done** (2026-11-21), A7 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
@@ -215,7 +215,20 @@ the recovery sheet, because recovery needs it.
 - **None.** Sign-up asks the owner to tick "If I lose this device, I lose this account and its
   balance". The dashboard keeps a banner until a method is added.
 
-### 3.6 Linking Clerk, both ways
+### 3.6 Linking Clerk, both ways (done in A6)
+
+As built: the middleware takes `dba_account` from the Clerk session (else `sub`) and passes the
+Clerk user to the `init` call it already makes, which refuses (401, creating nothing) unless the
+account's `clerk_sub` names that user, so a stale or forged claim opens nothing and no request is
+added. Linking writes the account first, then marks the Clerk user's own account `linked_to` (so
+`user.deleted` reaches the linked one), then Clerk's metadata; a retry after Clerk fails goes
+through. "History" that refuses a link: a balance, any ledger row, credential or API key, or a link
+to another account. Unlinking clears a Clerk-sourced address too. Only accounts made by paying are
+offered "Add a password sign-in" on the Account page; the API allows any account without a link.
+Linking is a free dashboard action with one call to Clerk; no price changes. Playwright cannot
+cover the Clerk window (it needs a real Clerk application); the live check is in
+docs/ops/deployment.md §3.
+
 
 - **Clerk-free account adds a Clerk sign-in.** On the Account page (with a recent sign-in), the
   owner signs up with Clerk, and the dashboard posts the new Clerk session token to
@@ -288,7 +301,7 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 | **A3** ✅ | Recovery status, recovery codes onto a new device, accepting no recovery (§3.5). **The journey test.** Done: `POST /api/v1/recover`, `/api/v1/account/recovery`; tests `src/recovery.test.js` and the journey `src/clerk-free-accounts.test.js` (production, Clerk unset, every `CLERK_*` read recorded, every route checked open to a device or key). | The journey test passes. |
 | **A4** ✅ | Recovery by passkey or second device. Done: `POST /api/v1/recover` with `via: 'gate'` and `POST /api/v1/recover/complete`; tests in `src/recovery.test.js`, cost in `src/cost-counts.test.js`. | Gate recovery tests pass. |
 | **A5** ✅ | Verified email, `email_source`, email recovery with the waiting period (72 hours, O1 approved). Done: `src/durable-objects/account/email-address.js`, `src/api/email-address.js`, `via: 'email'`, `/email-link.html`, the Account page's address and "Getting back in" sections; tests `src/email-recovery.test.js`. | Email tests pass (SES faked as in `src/security-email.test.js`). |
-| **A6** | Clerk linking both ways (§3.6), plus the ops step for the session token. | Link and unlink tests pass. |
+| **A6** ✅ | Clerk linking both ways (§3.6), plus the ops step for the session token. Done: `POST`/`DELETE /api/v1/account/clerk-link`, `src/durable-objects/account/clerk-link.js`, the webhook's `user.deleted`, the Account page's "Password sign-in" section, docs/ops/deployment.md §3; tests `src/clerk-link.test.js`. | Link and unlink tests pass. |
 | **A7** | Sign-up and recovery pages, CLI `signup`/`recover`, SDK release, Playwright. | `npm run test:e2e` passes. |
 | **A8** | Docs (§6), CI sample, STATUS (B9 done, S8 note), `git mv` this file to `done/`. | Docs state the claim and link the journey test. |
 

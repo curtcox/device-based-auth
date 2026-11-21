@@ -6,7 +6,7 @@ import { api } from './api.js';
 import { signedInLabel, currentDevice } from './auth.js';
 import { h, replace, usd, money, num, date, badge, notice, table, dl, field } from './html.js';
 import { state, view, enc, flash, errorBox, confirmButton, busy, refreshStrip, render } from './dashboard.js';
-import { emailSection, recoverySection } from './dashboard-recovery.js';
+import { emailSection, recoverySection, signInSection } from './dashboard-recovery.js';
 
 // ---------------------------------------------------------------------------------------------
 // Account
@@ -126,6 +126,7 @@ export async function accountView() {
     subscriptions ? [h('h2', {}, 'Security notices'), pushSection(subscriptions)] : null,
     settings ? [h('h2', {}, 'Security emails'), emailSection(settings, a)] : null,
     recovery ? [h('h2', {}, 'Getting back in'), recoverySection(recovery)] : null,
+    h('h2', {}, 'Password sign-in'), signInSection(a),
     h('h2', {}, 'Sign in with this browser'),
     device
       ? h('p', {}, 'This browser is signed in with its own device credential ', h('a', { href: `#credential/${enc(device.payload.cid)}` }, device.payload.cid), '. Every request is signed with a key that never leaves this browser. Signing out revokes it.')

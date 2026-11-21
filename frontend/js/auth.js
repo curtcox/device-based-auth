@@ -159,6 +159,24 @@ export async function reauthenticate() {
   return true;
 }
 
+/**
+ * A Clerk session token for linking a password sign-in to this account (STATUS B9): loads Clerk
+ * if needed, opens its sign-up window when nobody is signed in to it, and waits for the sign-in.
+ * The dashboard keeps using this browser's device; the token is only sent to be linked.
+ */
+export async function clerkTokenForLinking() {
+  const config = await getConfig();
+  if (!config.clerk_publishable_key) throw new Error('This server has no password sign-in');
+  clerk ||= await loadClerk(config.clerk_publishable_key);
+  if (!clerk.user) {
+    await new Promise(resolve => {
+      const stop = clerk.addListener(({ user }) => { if (user) { stop?.(); resolve(); } });
+      clerk.openSignUp({});
+    });
+  }
+  return clerk.session.getToken();
+}
+
 /** Sign out. A device-credential session revokes its own credential (free) and forgets the key. */
 export async function signOut() {
   if (mode === 'device' && device) { try { await device.revoke(); } catch { await device.forget().catch(() => {}); } }
