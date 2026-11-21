@@ -19,6 +19,7 @@ function requestSubject(r) {
     case 'sign_in': return [h('span', {}, `Sign in to ${r.audience}`), h('div', { class: 'small muted' }, 'with Sign in with devicebasedauth.org')];
     case 'dashboard': return [h('span', {}, 'Sign in to this dashboard'), h('div', { class: 'small muted' }, 'a new session waits for its sign-in gate')];
     case 'settings': return [h('span', {}, 'Loosen your sign-in gates'), h('div', { class: 'small muted' }, 'a change waits for your current gates')];
+    case 'recover': return [h('span', {}, 'Recover your account onto a new device'), h('div', { class: 'small muted' }, 'after losing every device; approve only if it is you, typing the number it shows')];
     case 'reverify': return [h('span', {}, 'Confirm it is you'), h('div', { class: 'small muted' }, 'a dashboard device asks before changing account settings (it shows a number to type)')];
     default: return [h('span', {}, r.purpose)];
   }

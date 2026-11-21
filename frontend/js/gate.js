@@ -24,10 +24,13 @@ async function challengeFor(entry, decision) {
 }
 
 /**
- * A sign-in, or a dashboard device confirming it is the owner (STATUS B9), shows a two-digit number;
+ * A sign-in, a dashboard device confirming it is the owner, or a new device recovering the account
+ * (STATUS B9) shows a two-digit number;
  * the approver types it (number matching, plan §5.1).
  */
-const TYPES_NUMBER = new Set(['sign_in', 'reverify']);
+const TYPES_NUMBER = new Set(['sign_in', 'reverify', 'recover']);
+const NUMBER_LABEL = { sign_in: 'Number shown on the sign-in page ', reverify: 'Number shown on the dashboard ', recover: 'Number shown on the new device ' };
+const NUMBER_HINT = { sign_in: ' — if you are not signing in right now, deny.', reverify: ' — if you did not just ask to confirm it is you, deny.', recover: ' — deny unless you are recovering your account right now, on a device you hold.' };
 const numberInput = h('input', { id: 'gate-number-input', inputmode: 'numeric', maxlength: 2, pattern: '[0-9]{2}', 'aria-label': 'Number shown on the sign-in page' });
 
 async function answer(entry, gate, decision, proof, status) {
@@ -91,6 +94,7 @@ function entryView(entry, index) {
 }
 
 function render(banner) {
+  if (TYPES_NUMBER.has(view.purpose)) numberInput.setAttribute('aria-label', NUMBER_LABEL[view.purpose].trim());
   replace(root,
     banner || null,
     h('div', { id: 'gate-summary' },
@@ -98,11 +102,12 @@ function render(banner) {
       dl([
         ...(view.purpose === 'sign_in' ? [['Wants to', `sign in to ${view.audience}`]]
           : view.purpose === 'reverify' ? [['Wants to', 'confirm it is you, to change account settings on the dashboard']]
+          : view.purpose === 'recover' ? [['Wants to', 'get into your account after losing every device']]
           : [['Wants to', h('span', { class: 'mono' }, view.action)], ['On', view.resource ? h('span', { class: 'mono' }, view.resource) : 'any resource'], ['At', view.audience], ['Request number', h('strong', { class: 'mono' }, view.number)]]),
         ['Asked', new Date(view.created_at).toLocaleString()]
       ])),
     TYPES_NUMBER.has(view.purpose) && view.status === 'pending'
-      ? h('label', { class: 'gate-number' }, view.purpose === 'reverify' ? 'Number shown on the dashboard ' : 'Number shown on the sign-in page ', numberInput, h('span', { class: 'hint' }, view.purpose === 'reverify' ? ' — if you did not just ask to confirm it is you, deny.' : ' — if you are not signing in right now, deny.'))
+      ? h('label', { class: 'gate-number' }, NUMBER_LABEL[view.purpose], numberInput, h('span', { class: 'hint' }, NUMBER_HINT[view.purpose]))
       : null,
     view.entries.map(entryView));
 }

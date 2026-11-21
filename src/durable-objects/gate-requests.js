@@ -33,7 +33,7 @@ export const requestKey = id => `gatereq:${id}`;
 
 // Requests where a person waits to be let in (a sign-in, the dashboard gate, re-verifying a
 // dashboard device): the number is shown only where they wait, and approvers elsewhere type it.
-const SIGN_IN_LIKE = new Set(['sign_in', 'dashboard', 'reverify']);
+const SIGN_IN_LIKE = new Set(['sign_in', 'dashboard', 'reverify', 'recover']);
 
 /** The signed link token for one request (HMAC; it routes itself to the account). */
 export async function linkToken(env, account, req) {
@@ -115,7 +115,7 @@ export async function refreshRequest(tx, req, now) {
  * resource and audience, or a sign-in's site and requester, plus the exact gate list.
  */
 export function requestKeyFor({ purpose = 'authorize', cid, action, resource, audience, requester, signature }) {
-  return purpose === 'sign_in' || purpose === 'dashboard' || purpose === 'settings' || purpose === 'reverify'
+  return purpose === 'sign_in' || purpose === 'dashboard' || purpose === 'settings' || purpose === 'reverify' || purpose === 'recover'
     ? [purpose, audience, requester, signature].join('\n')
     : ['authorize', cid, action, resource ?? '', audience, signature].join('\n');
 }
@@ -218,7 +218,10 @@ export async function answerRequest(tx, req, { entry: entryIndex, gate: gateId, 
   if (gate.kind === 'owner') {
     assert(answerer.kind === 'owner', 'not_the_gate', 'Only the account owner (a signed-in browser or dashboard device) answers for the owner gate', 403);
   } else if (gate.kind === 'dba-device') {
-    assert(answerer.kind === 'device' && answerer.device_id === gate.device_id, 'not_the_gate', `Only device ${gate.device_id} answers for gate ${gate.id}`, 403);
+    // The gate's own device answers, whether it holds dba:approvals:answer or is a dashboard device
+    // (which the Worker sees as the owner); either way it answers as that device, number and all.
+    assert((answerer.kind === 'device' || answerer.kind === 'owner') && answerer.device_id && answerer.device_id === gate.device_id, 'not_the_gate', `Only device ${gate.device_id} answers for gate ${gate.id}`, 403);
+    answerer = { kind: 'device', device_id: answerer.device_id };
   } else if (VENDOR_KINDS.includes(gate.kind)) {
     assert(answerer.kind === 'vendor' && answerer.gate === gate.id, 'not_the_gate', `Gate ${gate.id} is answered by ${gate.kind === 'duo' ? 'Duo' : 'Okta Verify'}, as DBA polls it`, 403);
   } else if (gate.kind === 'webhook') {

@@ -36,6 +36,8 @@ export const OPERATIONS = Object.freeze({
   // the sign-up's own writes (the profile and the deposit) are a deposit's, which are free.
   // Recovering onto a new device with a recovery code is an issue given free (an empty balance must
   // not lock the owner out); each costs one code, ten per sheet, and a sheet needs a recent sign-in.
+  // Recovering by gate is a gate request (charged as one, D13) plus such an issue, at most three an
+  // hour per account.
   issue: { workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 },
   // Credential status (auth, with the rate limit), credential status (renew), funds check, renew; later
   // compaction deletes its ledger, receipt and audit rows.

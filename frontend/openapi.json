@@ -6413,7 +6413,7 @@
     "/api/v1/recover": {
       "post": {
         "operationId": "post_api_v1_recover",
-        "summary": "Get back into an account after losing every device: body {account, via:\"code\", code, request (a dba-enroll+jwt signed by the new device's key; aud and grants may be left out)}. Uses up the recovery code and returns a dashboard credential (dba:session) for the new device, free; it counts as a recent sign-in for 10 minutes. 5 wrong codes per account per 15 minutes.",
+        "summary": "Get back into an account after losing every device: body {account, via:\"code\"|\"gate\", code?, request (a dba-enroll+jwt signed by the new device's key; aud and grants may be left out)}. via code uses up the recovery code and returns a dashboard credential (dba:session) for the new device at once (5 wrong codes per account per 15 minutes). via gate asks the account's passkey, security-key and device gates and returns the number approvers type, the approval page link and a ticket for POST /api/v1/recover/complete (3 per account per hour). The credential is free and counts as a recent sign-in for 10 minutes.",
         "x-access": "public",
         "security": [],
         "parameters": [],
@@ -6475,7 +6475,6 @@
                 "type": "object",
                 "required": [
                   "account",
-                  "code",
                   "request"
                 ],
                 "properties": {
@@ -6483,7 +6482,10 @@
                     "type": "string"
                   },
                   "via": {
-                    "const": "code"
+                    "enum": [
+                      "code",
+                      "gate"
+                    ]
                   },
                   "code": {
                     "type": "string",
@@ -6492,6 +6494,84 @@
                   "request": {
                     "type": "string",
                     "description": "Compact JWS (ES256)."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recover/complete": {
+      "post": {
+        "operationId": "post_api_v1_recover_complete",
+        "summary": "Finish a recovery by gate: with a DPoP proof by the new key (ath = hash of the ticket), returns {status:\"pending\"} until a gate approves, then the new device's dashboard credential; 403 recovery_denied if refused or timed out.",
+        "x-access": "public",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ticket"
+                ],
+                "properties": {
+                  "ticket": {
+                    "type": "string",
+                    "description": "The rcv_… ticket from POST /api/v1/recover with via gate."
                   }
                 }
               }

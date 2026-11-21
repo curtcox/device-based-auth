@@ -130,6 +130,25 @@ describe('cost policy matches the code', () => {
     within('issue', await measured(async () => { const r = await recover(codes.shift()); expect(r.body.status).toBe('recovered'); return r; }), later(11, 16));
   });
 
+  it('recovery by gate: one gate request and an issue given free (B9)', async () => {
+    const phone = await newDevice();
+    const phoneCred = (await enroll(env, 'alice', phone, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:approvals:answer'] }] })).approve.body.credential;
+    const gate = (await call(env, 'POST', '/api/v1/gates', { auth: 'alice', body: { kind: 'dba-device', label: 'Phone', device_id: inspectCredential(phoneCred).payload.sub } })).body.id;
+    const recoverOnce = async () => {
+      const d = await newDevice();
+      const asked = (await call(env, 'POST', '/api/v1/recover', { body: { account: 'alice', via: 'gate', request: await d.enrollRequest({ device: { name: 'p' } }) } })).body;
+      const id = (await call(env, 'GET', '/api/v1/gate-requests', { headers: await phone.headers('GET', '/api/v1/gate-requests', phoneCred) })).body.items.find(r => r.purpose === 'recover' && r.status === 'pending').id;
+      const answer = `/api/v1/gate-requests/${id}/answer`;
+      await call(env, 'POST', answer, { headers: await phone.headers('POST', answer, phoneCred), body: { gate, decision: 'allow', number: asked.number } });
+      const path = '/api/v1/recover/complete';
+      const done = await call(env, 'POST', path, { body: { ticket: asked.ticket }, headers: { DPoP: await createProof({ privateKey: d.privateKey, publicJwk: d.publicJwk, method: 'POST', url: `${ORIGIN}${path}`, credential: asked.ticket }) } });
+      expect(done.body.status).toBe('recovered');
+      return done;
+    };
+    // Listing the phone's requests is a read; the rest is the gate and the issue.
+    withinSum(['gate', 'issue', 'read'], await measured(recoverOnce), later(11 + 1, 16 + 1));
+  });
+
   it('decision', async () => {
     const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'v', scopes: ['authorize'] } })).body.secret;
     const device = await newDevice();

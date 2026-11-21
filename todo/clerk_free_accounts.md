@@ -1,6 +1,6 @@
 # Paid accounts without Clerk
 
-Status: **A0–A3 done** (2026-11-21), A4 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
+Status: **A0–A4 done** (2026-11-21), A5 next; STATUS **B9**, **D14** (owner's choices, 2026-11-21).
 This file is written to be picked up cold.
 
 ## 1. What we found (2026-11-21)
@@ -143,7 +143,7 @@ code.
   needs a recent sign-in, so §3.3's ten minutes, or a recovery, is how the first one gets added.
   The sign-up flow offers it straight away.
 
-### 3.5 Recovery (codes done in A3)
+### 3.5 Recovery (codes done in A3, gates in A4)
 
 As built in A3 (`src/api/recovery.js`, `src/durable-objects/account/recovery.js`): the owner's
 choice is **read from what exists** rather than kept as separate booleans that could disagree with
@@ -159,7 +159,19 @@ out (each recovery uses one of 10 codes, and a sheet needs a recent sign-in); it
 revoked device. Making codes returns the account id with them for the recovery sheet. An unknown
 account answers like a wrong code and stores nothing.
 
-The original design, for A4 and A5:
+As built in A4: `via: 'gate'` opens a gate request (purpose `recover`, keyed by the new key) to the
+account's `webauthn` and `dba-device` gates, one entry, denied after 10 minutes; it returns the
+number the new device shows (approvers type it, including on the approval page), the approval
+page link for passkeys, and a signed `rcv_` ticket. `POST /api/v1/recover/complete` with a DPoP
+proof bound to the ticket answers `pending` until a gate approves, then issues the credential
+(free, charge id from the request, so a repeat returns the same one). At most 3 new requests per
+account per hour; an unknown account or one without such gates answers 409 `no_recovery_gate` and
+stores nothing. TOTP gates do not recover (O2). A dashboard device registered as a `dba-device`
+gate now answers for that gate as the device (before, the Worker saw it only as the owner, so a
+second dashboard browser could never answer as a device gate); it types the number like any device.
+The recovery report lists `recovery_gates`.
+
+The original design, for A5:
 
 The owner's choice is kept in account settings as
 `recovery: { codes: bool, gates: bool, email: bool, none_acknowledged_at }`. It is set at sign-up
@@ -260,7 +272,7 @@ All new Vitest suites run with **`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and
 | **A1** ✅ | Account ids (§3.1), `POST /signup`, the webhook's signup kind, `signup/complete`, `dev/signup-paid`, the cost count. Done: `src/api/signup.js`, `src/signup.test.js` (production, Clerk unset). | A paid account exists and is used with no Clerk configured. |
 | **A2** ✅ | The first ten minutes (§3.3) and re-verification through gates (§3.4), including the 403 body and the dashboard panel. Done: `src/durable-objects/account/reverify.js`, `POST /api/v1/session/reverify`, `frontend/js/dashboard-reverify.js`; tests `src/session-reverify.test.js`, Playwright `reverify.spec.js`. | A Clerk-free owner can add a second device and create API keys. |
 | **A3** ✅ | Recovery status, recovery codes onto a new device, accepting no recovery (§3.5). **The journey test.** Done: `POST /api/v1/recover`, `/api/v1/account/recovery`; tests `src/recovery.test.js` and the journey `src/clerk-free-accounts.test.js` (production, Clerk unset, every `CLERK_*` read recorded, every route checked open to a device or key). | The journey test passes. |
-| **A4** | Recovery by passkey or second device. | Gate recovery tests pass. |
+| **A4** ✅ | Recovery by passkey or second device. Done: `POST /api/v1/recover` with `via: 'gate'` and `POST /api/v1/recover/complete`; tests in `src/recovery.test.js`, cost in `src/cost-counts.test.js`. | Gate recovery tests pass. |
 | **A5** | Verified email, `email_source`, email recovery with the waiting period. | Email tests pass (SES faked as in `src/security-email.test.js`). |
 | **A6** | Clerk linking both ways (§3.6), plus the ops step for the session token. | Link and unlink tests pass. |
 | **A7** | Sign-up and recovery pages, CLI `signup`/`recover`, SDK release, Playwright. | `npm run test:e2e` passes. |
