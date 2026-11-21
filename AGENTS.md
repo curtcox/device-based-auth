@@ -25,7 +25,8 @@ rewriting it.
 
 ```
 src/                 Worker: index.js (API_ROUTES, the only dispatch table), api/, auth/,
-                     durable-objects/ (AccountDO, StatusListDO, RegistryDO, EnrollmentDO, SafetyDO),
+                     durable-objects/ (AccountDO, its operations by area in account/, StatusListDO, RegistryDO,
+                     EnrollmentDO, SafetyDO; gates.js and gate-requests.js),
                      services/ (issuance, issuer keys, first-party audiences, OpenAPI, cost monitor),
                      utils/ (pricing.js = prices, cost-policy.js = rates and op counts)
 packages/verify/     @devicebasedauth/verify: JOSE, grants, DPoP, status lists, verifier, site helpers

@@ -78,7 +78,7 @@ the dashboard's own lists (rate-limited per account).
 
 Issuing prepays 13 months of storage for what it writes (credential, device, ledger, receipt and
 audit rows). Kept longer, those rows would cost money every month with nothing paying for them, so
-the account's Durable Object compacts them (`compact()` in `src/durable-objects/account-do.js`):
+the account's Durable Object compacts them (`compact()` in `src/durable-objects/account/compaction.js`):
 an expired credential goes 13 months after it was issued (and no sooner than 30 days after it
 expired), a device once it has no credential left and nothing was issued to it for 13 months, and
 audit, charge ledger and receipt rows once they are 13 months old, and revoked API keys and ended
