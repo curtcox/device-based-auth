@@ -77,6 +77,31 @@ describe('enrollment and offline verification', () => {
     expect(await send(again.dpop_nonce, '198.51.100.1')).toMatchObject({ allow: false, code: 'use_dpop_nonce', reasons: [['rtt_required']] });
   });
 
+  it('a verifier with dns allows addresses of a named host and refuses unvalidated answers where DNSSEC is required (B10 N4)', async () => {
+    await fund(env, 'alice');
+    const device = await newDevice();
+    const grants = [
+      { actions: ['hashbin:content:write'], net: { client: { addresses: { dns: { names: ['vpn.example.com'] } } } } },
+      { actions: ['hashbin:content:delete'], net: { client: { addresses: { dns: { names: ['vpn.example.com'], dnssec: true } } } } }
+    ];
+    const { approve } = await enroll(env, 'alice', device, { grants });
+    const asked = [];
+    const doh = async url => {
+      const u = new URL(url); asked.push(u.origin);
+      const A = u.searchParams.get('type') === 'A' ? [{ type: 1, TTL: 60, data: '203.0.113.7' }] : [];
+      return Response.json({ Status: 0, AD: false, Answer: A });
+    };
+    const verifier = verifierFor(env, 'hashbin.org', { dns: { endpoint: 'https://doh.test/dns-query', fetch: doh } });
+    const check = async (action, ip) => verifier.verifyRequest(await requestWith(device, approve.body.credential), { action, location: { network: { ip } } });
+    expect(await check('hashbin:content:write', '203.0.113.7')).toMatchObject({ allow: true });
+    expect(await check('hashbin:content:write', '203.0.113.8')).toMatchObject({ allow: false, reasons: [['address_not_allowed'], ['action_not_granted', 'address_not_allowed', 'dns_unvalidated:vpn.example.com']] });
+    expect(await check('hashbin:content:delete', '203.0.113.7')).toMatchObject({ allow: false, reasons: [['action_not_granted'], ['address_not_allowed', 'dns_unvalidated:vpn.example.com']] });
+    expect(asked).toEqual(['https://doh.test', 'https://doh.test']); // cached after the first request
+    const without = verifierFor(env);
+    expect(await without.verifyRequest(await requestWith(device, approve.body.credential), { action: 'hashbin:content:write', location: { network: { ip: '203.0.113.7' } } }))
+      .toMatchObject({ allow: false, reasons: [['address_not_allowed', 'dns_unresolved:vpn.example.com'], ['action_not_granted', 'address_not_allowed', 'dns_unresolved:vpn.example.com']] });
+  });
+
   it('accepts only https origins (or http://localhost) as return_origin', async () => {
     const device = await newDevice();
     const start = async origin => call(env, 'POST', '/api/v1/enrollments', { body: { request: await device.enrollRequest({ aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], return_origin: origin }) } });

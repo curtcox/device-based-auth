@@ -9,6 +9,7 @@ import { evaluateGrants } from './grants.js';
 import { decodeStatusList, getBit } from './status-list.js';
 import { verifyEvent } from './events.js';
 import { createRttChallenger, rttChallengeNeeded } from './rtt.js';
+import { createDohResolver, grantDnsNames } from './dns.js';
 
 /** Bitwise OR of two status lists (the longer length). */
 function unionBits(a, b) {
@@ -60,6 +61,10 @@ export function credentialFromRequest(request) {
  *               §7.1): verifyRequest then answers 401 use_dpop_nonce with a timed nonce in
  *               result.headers, and the device's retry is timed. Without it, pass
  *               check.location.network.rtt_ms yourself or such grants deny with rtt_required.
+ *   dns       — true to resolve net.client.addresses.dns names over DNS-over-HTTPS (Cloudflare's
+ *               1.1.1.1 through this verifier's fetch), { endpoint, … } for another resolver
+ *               (see createDohResolver), or a resolver of your own ({ resolveAll(names) }).
+ *               Without it, such names are unresolved and match nothing.
  */
 export function createVerifier(options = {}) {
   const issuer = options.issuer || DEFAULT_ISSUER;
@@ -78,6 +83,8 @@ export function createVerifier(options = {}) {
   const rtt = options.rtt ? createRttChallenger(options.rtt) : null;
   // Passing measurements a grant's reuse_s lets us remember: "jkt peer" -> { rtt_ms, until }.
   const rttReuse = new Map(); const RTT_REUSE_MAX = 10_000;
+  const dns = !options.dns ? null : typeof options.dns.resolveAll === 'function' ? options.dns
+    : createDohResolver({ fetch: fetcher, now: clock, ...(options.dns === true ? {} : options.dns) });
 
   let jwksFailure = null; const statusFailures = new Map();
   const FAILURE_BACKOFF = options.failureBackoff ?? 30;
@@ -226,12 +233,14 @@ export function createVerifier(options = {}) {
   async function verifyRequest(request, check) {
     const auth = await authenticateRequest(request);
     if (!auth.ok) return { allow: false, status: auth.status, code: auth.code, message: auth.message, reasons: [] };
-    if (!rtt || auth.kind !== 'device') return decide(auth.payload, check, { request, proof: auth.proof, confirmation: auth.confirmation });
-    return decideTimed(auth, check, request);
+    const names = dns ? grantDnsNames(auth.payload.grants) : [];
+    const resolved = names.length ? { dns: await dns.resolveAll(names) } : {};
+    if (!rtt || auth.kind !== 'device') return decide(auth.payload, check, { request, proof: auth.proof, confirmation: auth.confirmation, resolved });
+    return decideTimed(auth, check, request, resolved);
   }
 
   /** decide, with the device's round trip measured by a timed DPoP nonce (net.client.latency). */
-  async function decideTimed(auth, check, request) {
+  async function decideTimed(auth, check, request, resolved) {
     const network = check.location?.network ?? networkLocation(request) ?? {};
     const bind = { jkt: auth.payload.cnf.jkt, peer: network.ip };
     const reuseKey = `${bind.jkt} ${bind.peer ?? ''}`; const now = clock();
@@ -239,7 +248,7 @@ export function createVerifier(options = {}) {
     if (remembered && remembered.until <= now) rttReuse.delete(reuseKey);
     const measured = await rtt.check(auth.proof?.nonce, bind) ?? (remembered && remembered.until > now ? { rtt_ms: remembered.rtt_ms, samples: Infinity } : null);
     const timedCheck = measured && network.rtt_ms === undefined ? { ...check, location: { ...check.location, network: { ...network, rtt_ms: measured.rtt_ms } } } : check;
-    const result = decide(auth.payload, timedCheck, { request, proof: auth.proof, confirmation: auth.confirmation });
+    const result = decide(auth.payload, timedCheck, { request, proof: auth.proof, confirmation: auth.confirmation, resolved });
     if (result.allow) {
       const reuse = result.grant?.net?.client?.latency?.reuse_s ?? 0;
       if (measured && reuse > 0 && Number.isFinite(measured.samples)) {
@@ -259,10 +268,13 @@ export function createVerifier(options = {}) {
     return actions.filter(action => decide(payload, { action, location }, { request, proof, confirmation }).allow);
   }
 
-  /** Evaluate grants for an already-verified payload (and its verified confirmation, if any). */
-  function decide(payload, check, { request, proof, confirmation } = {}) {
+  /**
+   * Evaluate grants for an already-verified payload (and its verified confirmation, if any).
+   * `resolved` holds what the verifier looked up for net (spec/evaluation.md §3.10), e.g. { dns }.
+   */
+  function decide(payload, check, { request, proof, confirmation, resolved } = {}) {
     const location = { network: check.location?.network ?? (request ? networkLocation(request) : undefined), device: check.location?.device ?? proof?.loc };
-    const result = evaluateGrants(payload.grants, { now: clock(), action: check.action, resource: check.resource, location, online: false, attestation: payload.device?.attestation, confirmation: confirmation ?? undefined, policy: catalog.get(check.action) });
+    const result = evaluateGrants(payload.grants, { now: clock(), action: check.action, resource: check.resource, location, online: false, attestation: payload.device?.attestation, confirmation: confirmation ?? undefined, policy: catalog.get(check.action), ...resolved });
     return {
       allow: result.allow, status: result.allow ? 200 : 403, code: result.allow ? 'ok' : result.online_required ? 'online_required' : 'forbidden',
       reasons: result.reasons, grant_index: result.grant_index, grant: result.grant, caveats: result.caveats, online_required: result.online_required,
