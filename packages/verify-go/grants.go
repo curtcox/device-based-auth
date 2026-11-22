@@ -5,16 +5,21 @@ import (
 	"strings"
 )
 
-// Grant vocabulary v1: validation and evaluation. The normative description is
+// Grant vocabulary (v1, and v2 which adds net): validation and evaluation. The normative description is
 // spec/evaluation.md, and spec/vectors/evaluation.json must pass. Grants are untrusted JSON
 // (parsed with ParseJSON), handled dynamically so that unknown members can be detected and
 // reported exactly as the JavaScript evaluator reports them.
 //
 // This file holds the vocabulary, matching and evaluation; grants_validate.go validation,
-// grants_time.go zones and time windows, grants_place.go networks and places.
+// grants_time.go zones and time windows, grants_place.go networks and places, grants_net.go
+// the net constraint.
 
-// VocabularyVersion is the grant vocabulary version credentials carry in "ver".
+// VocabularyVersion is the base grant vocabulary version credentials carry in "ver"; a
+// credential whose grants use net carries 2 (VocabularyVersions, GrantsNeedVersion2).
 const VocabularyVersion = 1
+
+// VocabularyVersions are the vocabulary versions a credential may carry in "ver".
+var VocabularyVersions = []int{1, 2}
 
 // Days are the weekday names grants use, Sunday first (time.Weekday order).
 var Days = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
@@ -26,7 +31,7 @@ var UsePeriods = []string{"minute", "hour", "day", "month", "total"}
 var Limits = struct{ Grants, Actions, Resources, Windows, Places, Networks, ResourceLength int }{32, 64, 64, 16, 64, 64, 256}
 
 var (
-	grantKeys     = keySet("actions", "resources", "when", "where", "limits", "require")
+	grantKeys     = keySet("actions", "resources", "when", "where", "net", "limits", "require")
 	whenKeys      = keySet("tz", "windows", "not_before", "not_after")
 	windowKeys    = keySet("days", "from", "to")
 	whereKeys     = keySet("source", "countries", "regions", "areas", "networks")
@@ -143,6 +148,14 @@ type Context struct {
 	Policy any
 	// GateKinds maps gate ids to kinds ({gate id: kind}); only devicebasedauth.org knows them (online).
 	GateKinds any
+
+	// What the verifier resolved for the net constraint (spec/evaluation.md §3.10), as parsed
+	// JSON. The observed round-trip time is Location.Network.RttMs.
+	Route          any // the verified relay route {relays: [device ids], origin, attested: [bools]}, or nil
+	RouteError     any // a string when the presented route did not verify (e.g. "bad_signature")
+	AddressLists   any // {list id: {cidrs: [...]}} for the address lists fetched
+	DNS            any // {host name: {addrs: [...], dnssec}} for the names resolved
+	AddressWebhook any // {gate id: true} for address webhooks that allowed (online only)
 }
 
 // Online lists the checks of a grant that only devicebasedauth.org can make.
@@ -154,11 +167,13 @@ type Online struct {
 	GatesReuse int         `json:"gates_reuse_s,omitempty"` // seconds one approval covers repeated uses
 	FailOpen   *bool       `json:"fail_open,omitempty"`     // false: the audience refuses allows by timeout
 	GatePolicy bool        `json:"gate_policy,omitempty"`   // the audience requires gates on this action
+	// AddressWebhook is the net.client address webhook gate that alone could still allow the address.
+	AddressWebhook string `json:"address_webhook,omitempty"`
 }
 
 // IsEmpty reports whether the grant needs no online checks.
 func (o Online) IsEmpty() bool {
-	return o.Uses == nil && !o.StepUp && !o.Required && o.Gates == nil && !o.GatePolicy
+	return o.Uses == nil && !o.StepUp && !o.Required && o.Gates == nil && !o.GatePolicy && o.AddressWebhook == ""
 }
 
 // GrantResult is the outcome for one grant.
@@ -201,9 +216,11 @@ func EvaluateGrant(grant any, ctx Context) GrantResult {
 		for _, nested := range []struct {
 			key     string
 			allowed map[string]bool
-		}{{"when", whenKeys}, {"where", whereKeys}, {"limits", limitKeys}, {"require", requireKeys}} {
+		}{{"when", whenKeys}, {"where", whereKeys}, {"net", nil}, {"limits", limitKeys}, {"require", requireKeys}} {
 			v, _ := g.Get(nested.key)
-			if o, ok := asObject(v); ok {
+			if nested.key == "net" {
+				unknown = append(unknown, netUnknownKeys(v)...)
+			} else if o, ok := asObject(v); ok {
 				for _, k := range o.Keys() {
 					if !nested.allowed[k] {
 						unknown = append(unknown, nested.key+"."+k)
@@ -285,6 +302,10 @@ func EvaluateGrant(grant any, ctx Context) GrantResult {
 			checkDevice(where, ctx.Location.Device, now, &reasons)
 		}
 	}
+
+	net, _ := g.Get("net")
+	client, _ := get(net, "client")
+	checkNetClient(client, ctx, &reasons, &online)
 
 	// Key attestation is a fact about the credential (device.attestation, signed by the issuer),
 	// so it is checked offline like time and place.
@@ -429,6 +450,8 @@ func EvaluateGrants(grants any, ctx Context) Result {
 		return Result{Reasons: [][]string{{"invalid_grants"}}, Results: []GrantResult{}}
 	}
 	ctx.Confirmation, ctx.Policy, ctx.GateKinds = normalizeGo(ctx.Confirmation), normalizeGo(ctx.Policy), normalizeGo(ctx.GateKinds)
+	ctx.Route, ctx.RouteError, ctx.AddressLists = normalizeDeep(ctx.Route), normalizeDeep(ctx.RouteError), normalizeDeep(ctx.AddressLists)
+	ctx.DNS, ctx.AddressWebhook = normalizeDeep(ctx.DNS), normalizeDeep(ctx.AddressWebhook)
 	results := make([]GrantResult, len(list))
 	index := -1
 	for i, g := range list {

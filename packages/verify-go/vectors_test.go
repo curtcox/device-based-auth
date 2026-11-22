@@ -40,7 +40,7 @@ func contextFromVector(c any) Context {
 	ctx := Context{Now: int64(now.(float64)), Action: str(c, "action"), Resource: str(c, "resource"), Online: truthy(online)}
 	location, _ := get(c, "location")
 	if network, _ := get(location, "network"); truthy(network) {
-		ctx.Location.Network = &NetworkLocation{Country: str(network, "country"), Region: str(network, "region"), Lat: num(network, "lat"), Lon: num(network, "lon"), IP: str(network, "ip")}
+		ctx.Location.Network = &NetworkLocation{Country: str(network, "country"), Region: str(network, "region"), Lat: num(network, "lat"), Lon: num(network, "lon"), IP: str(network, "ip"), RttMs: num(network, "rtt_ms")}
 	}
 	device, _ := get(location, "device")
 	ctx.Location.Device = DeviceLocationFromClaim(device)
@@ -48,6 +48,11 @@ func contextFromVector(c any) Context {
 	ctx.Confirmation, _ = get(c, "confirmation")
 	ctx.Policy, _ = get(c, "policy")
 	ctx.GateKinds, _ = get(c, "gate_kinds")
+	ctx.Route, _ = get(c, "route")
+	ctx.RouteError, _ = get(c, "route_error")
+	ctx.AddressLists, _ = get(c, "address_lists")
+	ctx.DNS, _ = get(c, "dns")
+	ctx.AddressWebhook, _ = get(c, "address_webhook")
 	return ctx
 }
 

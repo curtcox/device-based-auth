@@ -56,6 +56,7 @@ func ValidateGrant(grant any, path string) []string {
 	if where, ok := g.Get("where"); ok && checkKeys(where, whereKeys, path+".where", &errs) {
 		validateWhere(where, path, &errs)
 	}
+	validateGrantNet(g, path, &errs)
 	if limits, ok := g.Get("limits"); ok && checkKeys(limits, limitKeys, path+".limits", &errs) {
 		if uses, ok := get(limits, "uses"); ok && checkKeys(uses, usesKeys, path+".limits.uses", &errs) {
 			count, _ := get(uses, "count")

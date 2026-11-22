@@ -111,8 +111,10 @@ func ValidateCredentialPayload(payload *Object, typ string) []string {
 			errs = append(errs, "exp must be after nbf")
 		}
 	}
-	if ver, _ := payload.Get("ver"); !strictEqual(ver, float64(VocabularyVersion)) {
-		errs = append(errs, fmt.Sprintf("ver must be %d", VocabularyVersion))
+	if ver, _ := payload.Get("ver"); !strictEqual(ver, 1.0) && !strictEqual(ver, 2.0) {
+		errs = append(errs, "ver must be 1 or 2")
+	} else if grants, _ := payload.Get("grants"); strictEqual(ver, 1.0) && GrantsNeedVersion2(grants) {
+		errs = append(errs, "ver must be 2 when a grant uses net")
 	}
 	status, _ := payload.Get("status")
 	statusList, _ := get(status, "status_list")

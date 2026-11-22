@@ -135,6 +135,7 @@ type NetworkLocation struct {
 	Lat     *float64 `json:"lat,omitempty"`
 	Lon     *float64 `json:"lon,omitempty"`
 	IP      string   `json:"ip,omitempty"`
+	RttMs   *float64 `json:"rtt_ms,omitempty"` // measured round-trip time to the device, for net.client.latency
 }
 
 // DeviceLocation is the device-reported "loc" claim of a verified DPoP proof. Nil fields were

@@ -59,8 +59,8 @@ Options worth knowing:
 
 - `PublicOrigin` / `RequestURL`: DPoP proofs sign the absolute URL the client used. Behind a
   TLS-terminating proxy, tell the verifier what that URL is.
-- `NetworkLocation`: where a request came from, for grants with `where`. The default is
-  *unknown*, so network-restricted grants deny. Use `dbaverify.CloudflareLocation` only behind
+- `NetworkLocation`: where a request came from, for grants with `where` or `net` client
+  addresses. The default is *unknown*, so network-restricted grants deny. Use `dbaverify.CloudflareLocation` only behind
   Cloudflare and `dbaverify.RemoteAddrLocation` only without a proxy; otherwise clients could
   choose their own location.
 - `HTTPClient`: any `Do(*http.Request)`; tests inject a fake.
@@ -84,6 +84,12 @@ for _, now := range []int64{wednesday10am, wednesday10am + 9*3600} {
 	fmt.Println(result.Allow, result.Reasons)
 }
 ```
+
+Grants with `net` (vocabulary 2, spec/evaluation.md §3.10) are evaluated from what you resolved
+first: `NetworkLocation.RttMs` for `latency`, and `Context.Route`, `RouteError`, `AddressLists`,
+`DNS` and `AddressWebhook` (parsed JSON, shaped as in spec/vectors/evaluation.json). Anything not
+resolved denies with its reason (`route_required`, `rtt_required`, `address_list_unavailable:<id>`,
+`dns_unresolved:<name>` …). `net.server` is validated but never evaluated by verifiers.
 
 Lower-level functions mirror the JavaScript exports: `VerifyCredential`, `VerifyProof`,
 `DecodeStatusList`, `GetBit`, `EvaluateGrants`, `JWKThumbprint`, `VerifyJWS`, and, for tests and
