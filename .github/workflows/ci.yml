@@ -28,10 +28,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends swtpm swtpm-tools tpm2-tools
-      - run: npm run test:samples
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends swtpm swtpm-tools tpm2-tools gnome-keyring libsecret-tools dbus-daemon dbus-bin
+      # A private session bus with an unlocked GNOME Keyring, so os-keychain.sh stores the CLI's
+      # key through the real Secret Service (secret-tool), as on a Linux desktop.
+      - run: dbus-run-session -- bash -c 'printf ci-keyring | gnome-keyring-daemon --unlock --components=secrets >/dev/null && npm run test:samples'
         env:
           DBA_SAMPLES_STRICT: '1'
+          DBA_SAMPLES_OS_KEYCHAIN: '1'
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e -- --trace off
       - run: npx wrangler deploy --dry-run --outdir /tmp/dba-build
@@ -47,7 +50,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: swift --version
+      # A throwaway default keychain, unlocked, for os-keychain.sh (the CLI's key in the Keychain).
+      - run: |
+          security create-keychain -p ci dba-ci.keychain
+          security set-keychain-settings dba-ci.keychain
+          security unlock-keychain -p ci dba-ci.keychain
+          security list-keychains -d user -s dba-ci.keychain
+          security default-keychain -d user -s dba-ci.keychain
       - run: npm run test:samples
         env:
           DBA_SAMPLES_STRICT: '1'
-          DBA_SAMPLES_ONLY: ios
+          DBA_SAMPLES_ONLY: ios,os-keychain.sh
+          DBA_SAMPLES_OS_KEYCHAIN: '1'

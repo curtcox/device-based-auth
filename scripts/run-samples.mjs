@@ -9,6 +9,8 @@
 // tpm2-tools for the TPM sample; Swift for the iOS sample) is skipped, unless DBA_SAMPLES_STRICT=1,
 // when it fails. A sample for another operating system (iOS needs macOS) is always skipped; CI runs
 // it in its own job with DBA_SAMPLES_ONLY=ios (a comma-separated list of sample names).
+// os-keychain.sh writes to this machine's real keychain, so it runs only with DBA_SAMPLES_OS_KEYCHAIN=1
+// (CI gives it a throwaway keychain on macOS and a GNOME Keyring on a private D-Bus on Linux).
 //
 // The TPM sample runs on a software TPM whose EK certificate comes from a throwaway CA made here;
 // the server trusts that CA through TPM_EK_TEST_CA, which only a local server reads.
@@ -98,6 +100,14 @@ const SAMPLES = [
     expect: [/^The TPM proved the key is inside it/m, /^Approved\. Saved the credential\.$/m, /^Attested: +tpm key \(tpm, TPM manufacturer id:00001014\)$/m, /key: tpm\)$/m,
       /^key\.json keeps only the TPM's blobs: \["created_at","key_protection","key_store","public_jwk","tpm_parent","tpm_private","tpm_public"\]$/m,
       /^whoami: account sample-owner, device dev_\w+$/m, /only with a key attested to be in secure hardware/]
+  },
+  {
+    // Writes one entry to this machine's real keychain (and removes it), so it runs only when asked.
+    name: 'os-keychain.sh', command: ['bash', 'docs/samples/os-keychain.sh'], optIn: 'DBA_SAMPLES_OS_KEYCHAIN',
+    needs: () => (process.platform === 'darwin' ? has('sh', ['-c', 'command -v security']) : has('sh', ['-c', 'command -v secret-tool'])) || 'security (macOS) or secret-tool with a running Secret Service',
+    expect: [/^Approved\. Saved the credential\.$/m, /key: os-keychain\)$/m, /^key\.json keeps no private key: \["created_at","key_protection","key_store","key_store_account","public_jwk"\]$/m,
+      /^Store: (macos-keychain|secret-service); entry for the key: yes$/m, /^whoami: account sample-owner, device dev_\w+$/m,
+      /^After rotation: old entry no, new entry yes$/m, /^After revoking: entry no$/m]
   },
   {
     name: 'go_verify', command: ['go', 'run', '.'], cwd: 'docs/samples/go_verify', credential: true,
@@ -308,6 +318,11 @@ async function main() {
       if (ONLY && !ONLY.includes(sample.name)) continue;
       if (sample.platform && sample.platform !== process.platform) {
         console.log(`skip ${sample.name}: runs only on ${PLATFORMS[sample.platform] ?? sample.platform}`);
+        skipped.push(sample.name);
+        continue;
+      }
+      if (sample.optIn && process.env[sample.optIn] !== '1') {
+        console.log(`skip ${sample.name}: set ${sample.optIn}=1 to run it`);
         skipped.push(sample.name);
         continue;
       }
