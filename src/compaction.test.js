@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { price } from './utils/pricing.js';
 import { testEnv, call, newDevice, enroll } from '../test-utils/env.js';
 import { inspectCredential } from '../packages/verify/src/index.js';
 import { RECORD_RETENTION_MS, EXPIRED_VISIBLE_MS, COMPACTION_INTERVAL_MS } from './durable-objects/account-do.js';
@@ -59,7 +60,7 @@ describe('record compaction', () => {
     // The deposit's ledger row and the balance are untouched.
     expect(keys(account, 'ledger:').length).toBeGreaterThan(0);
     expect(keys(account, 'ledger:').every(k => account.storage.rows.get(k).amount_microdollars > 0)).toBe(true);
-    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.balance_microdollars).toBe(1_000_000 - 85);
+    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.balance_microdollars).toBe(1_000_000 - price('issue'));
     expect((await call(env, 'GET', `/api/v1/credentials/${cid}`, { auth: 'alice' })).status).toBe(404);
   });
 

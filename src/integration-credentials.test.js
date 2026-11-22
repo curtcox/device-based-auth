@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { price } from './utils/pricing.js';
 import { testEnv, call, newDevice, enroll, runAlarms, ORIGIN } from '../test-utils/env.js';
 import { signJws, inspectCredential } from '../packages/verify/src/index.js';
 import { fund, verifierFor, requestWith } from '../test-utils/integration.js';
@@ -23,7 +24,7 @@ describe('enrollment and offline verification', () => {
     const { start, approve } = await enroll(env, 'alice', device);
     expect(start.approval_url).toMatch(/^http:\/\/localhost:8787\/approve\.html#enr_/);
     expect(approve.status).toBe(200);
-    expect(approve.body.cost_microdollars).toBe(85);
+    expect(approve.body.cost_microdollars).toBe(price('issue'));
     const credential = approve.body.credential;
     const { header, payload } = inspectCredential(credential);
     expect(header).toMatchObject({ typ: 'dba-device+jwt', kid: 'test-1' });
@@ -33,7 +34,7 @@ describe('enrollment and offline verification', () => {
     expect(poll.body).toMatchObject({ status: 'approved', credential });
 
     const account = await call(env, 'GET', '/api/v1/account', { auth: 'alice' });
-    expect(account.body.balance_microdollars).toBe(1_000_000 - 85);
+    expect(account.body.balance_microdollars).toBe(1_000_000 - price('issue'));
 
     const verifier = verifierFor(env);
     expect(await verifier.verifyRequest(await requestWith(device, credential), { action: 'hashbin:content:write' })).toMatchObject({ allow: true, account: 'alice' });
@@ -132,7 +133,7 @@ describe('renewal, rotation and access tokens', () => {
     const path = `/api/v1/credentials/${cid}/renew`;
     const keyProof = await signJws({ typ: 'dba-rotate+jwt', jwk: next.publicJwk }, { cid, iat: Math.floor(Date.now() / 1000) }, next.privateKey);
     const rotated = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: { new_key_proof: keyProof } });
-    expect(rotated.body).toMatchObject({ rotated: true, cost_microdollars: 85 });
+    expect(rotated.body).toMatchObject({ rotated: true, cost_microdollars: price('issue') });
     const fresh = inspectCredential(rotated.body.credential).payload;
     expect(fresh.cnf.jkt).toBe(next.jkt);
     await runAlarms(env);
@@ -146,8 +147,8 @@ describe('renewal, rotation and access tokens', () => {
     const device = await newDevice();
     const credential = (await enroll(env, 'alice', device, { aud: ['hashbin.org', 'cronly.org'], grants: [{ actions: ['hashbin:content:write', 'cronly:run'] }] })).approve.body.credential;
     const result = await call(env, 'POST', '/api/v1/token', { headers: await device.headers('POST', '/api/v1/token', credential), body: { audience: 'cronly.org' } });
-    expect(result.body).toMatchObject({ token_type: 'Bearer', expires_in: 600, audience: 'cronly.org', cost_microdollars: 5 });
-    expect(result.headers.get('X-DBA-Cost-Microdollars')).toBe('5');
+    expect(result.body).toMatchObject({ token_type: 'Bearer', expires_in: 600, audience: 'cronly.org', cost_microdollars: price('token') });
+    expect(result.headers.get('X-DBA-Cost-Microdollars')).toBe(String(price('token')));
     // This device's grants cover two sites, not the account: it does not see the owner's balance.
     expect(result.body.balance_microdollars).toBeUndefined();
     expect(result.headers.get('X-DBA-Balance-Microdollars')).toBeNull();
@@ -157,7 +158,7 @@ describe('renewal, rotation and access tokens', () => {
     const verifier = verifierFor(env, 'cronly.org');
     const allowed = await verifier.verifyRequest(new Request('https://cronly.org/api/jobs/x/run', { method: 'POST', headers: { Authorization: `Bearer ${result.body.access_token}` } }), { action: 'cronly:run' });
     expect(allowed.allow).toBe(true);
-    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.today.aggregates.token).toEqual({ count: 1, amount: 5 });
+    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.today.aggregates.token).toEqual({ count: 1, amount: price('token') });
   });
 });
 
@@ -185,7 +186,7 @@ describe('account budget guards', () => {
     const third = await enroll(env, 'alice', await newDevice());
     expect(third.approve.status).toBe(429);
     expect(third.approve.body).toMatchObject({ code: 'issuance_limit', limit: 2 });
-    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.balance_microdollars).toBe(1_000_000 - 2 * 85);
+    expect((await call(env, 'GET', '/api/v1/account', { auth: 'alice' })).body.balance_microdollars).toBe(1_000_000 - 2 * price('issue'));
     await call(env, 'PATCH', '/api/v1/account/settings', { auth: 'alice', body: { max_issues_per_day: 3 } });
     expect((await enroll(env, 'alice', await newDevice())).approve.status).toBe(200);
   });

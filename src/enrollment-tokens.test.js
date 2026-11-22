@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { price } from './utils/pricing.js';
 import { testEnv, call, newDevice, enroll } from '../test-utils/env.js';
 import { inspectCredential } from '../packages/verify/src/index.js';
 
@@ -21,7 +22,7 @@ describe('enrollment tokens (B2)', () => {
 
     const first = await redeem(created.body.token, await newDevice());
     expect(first.status).toBe(200);
-    expect(first.body).toMatchObject({ status: 'approved', cost_microdollars: 85 });
+    expect(first.body).toMatchObject({ status: 'approved', cost_microdollars: price('issue') });
     const { payload } = inspectCredential(first.body.credential);
     expect(payload).toMatchObject({ acct: 'alice', aud: ['hashbin.org'], grants: TEMPLATE.grants });
     expect(payload.exp - payload.iat).toBe(3600);

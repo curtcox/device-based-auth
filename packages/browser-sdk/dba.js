@@ -1,7 +1,7 @@
 /**
  * devicebasedauth.org browser SDK.
  *
- *   import { DBA } from 'https://devicebasedauth.org/sdk/v1.3.0/dba.js';
+ *   import { DBA } from 'https://devicebasedauth.org/sdk/v1.4.0/dba.js';
  *   const dba = new DBA();
  *   if (!await dba.ready()) await dba.enroll({ aud: ['example.com'], grants: [{ actions: ['example:read'] }] });
  *   const response = await dba.fetch('https://example.com/api/things');
@@ -16,7 +16,7 @@ import { generateKeyPair, exportPublicJwk, signJws } from '../verify/src/jose.js
 import { createProof, inspectCredential } from '../verify/src/credential.js';
 import { describeGrant, evaluateGrants } from '../verify/src/grants.js';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 const DB = 'devicebasedauth';
 const STORE = 'devices';
 
@@ -54,6 +54,27 @@ export class DBA {
    */
   constructor({ origin = 'https://devicebasedauth.org', name = 'default' } = {}) {
     this.origin = origin.replace(/\/$/, ''); this.name = `${this.origin}#${name}`; this.state = null; this.renewTimer = null;
+    // DPoP nonces servers handed out (RFC 9449 §8), by origin: put in every later proof there.
+    this.nonces = new Map();
+  }
+
+  /**
+   * Keep the DPoP nonce a response hands out (header DPoP-Nonce) for its origin, and say whether
+   * the response is a nonce challenge (401 use_dpop_nonce): then send the request again, with new
+   * headers. devicebasedauth.org asks for one in the first minute after an account's object
+   * starts; api(), fetch() and fetchWithGates() retry once by themselves.
+   * @returns {Promise<boolean>}
+   */
+  async nonceChallenge(url, response) {
+    const origin = new URL(url, location.href).origin;
+    const header = response.headers.get('DPoP-Nonce');
+    if (response.status !== 401) { if (header) this.nonces.set(origin, header); return false; }
+    const body = await response.clone().json().catch(() => null);
+    const asked = body?.code === 'use_dpop_nonce' || body?.error === 'use_dpop_nonce' || /error="use_dpop_nonce"/.test(response.headers.get('WWW-Authenticate') || '');
+    const nonce = header || (typeof body?.dpop_nonce === 'string' ? body.dpop_nonce : null);
+    if (!asked || !nonce || nonce === this.nonces.get(origin)) return false;
+    this.nonces.set(origin, nonce);
+    return true;
   }
 
   /** Load the stored key and credential. Returns true when a usable (unexpired) credential exists. */
@@ -93,8 +114,9 @@ export class DBA {
 
   async api(path, { method = 'GET', body, auth = false, confirm = true } = {}) {
     const url = `${this.origin}${path}`;
-    const headers = { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(auth ? await this.headers(method, url, { confirm }) : {}) };
-    const response = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    const send = async () => fetch(url, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(auth ? await this.headers(method, url, { confirm }) : {}) }, body: body ? JSON.stringify(body) : undefined });
+    let response = await send();
+    if (auth && await this.nonceChallenge(url, response)) response = await send();
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new DBAError(data.error || `HTTP ${response.status}`, data.code || 'http_error', { status: response.status, details: data });
     return data;
@@ -230,16 +252,25 @@ export class DBA {
   async headers(method, url, { location: loc, confirm = true } = {}) {
     if (!this.credential) throw new DBAError('No credential; call enroll() first', 'no_credential');
     const confirmation = this.payload.confirm ? (this.confirmation || (confirm ? (await this.confirm()).confirmation : null)) : null;
-    const proof = await createProof({ privateKey: this.state.privateKey, publicJwk: this.state.publicJwk, method, url: new URL(url, location.href).href, credential: this.credential, location: loc });
+    const target = new URL(url, location.href);
+    const proof = await createProof({ privateKey: this.state.privateKey, publicJwk: this.state.publicJwk, method, url: target.href, credential: this.credential, nonce: this.nonces.get(target.origin), location: loc });
     return { Authorization: `DBA ${this.credential}`, DPoP: proof, ...(confirmation ? { 'DBA-Confirmation': confirmation } : {}) };
   }
 
-  /** fetch() with the credential and a proof attached. init.dba: { location, confirm }. */
+  /**
+   * fetch() with the credential and a proof attached. init.dba: { location, confirm }. Sent once
+   * more with a fresh proof when the server answers with a DPoP nonce challenge.
+   */
   async fetch(input, init = {}) {
-    const request = new Request(input, init);
-    const headers = new Headers(request.headers);
-    for (const [k, v] of Object.entries(await this.headers(request.method, request.url, init.dba || {}))) headers.set(k, v);
-    return fetch(new Request(request, { headers }));
+    const original = new Request(input, init);
+    const send = async () => {
+      const request = original.clone();
+      const headers = new Headers(request.headers);
+      for (const [k, v] of Object.entries(await this.headers(request.method, request.url, init.dba || {}))) headers.set(k, v);
+      return fetch(new Request(request, { headers }));
+    };
+    const response = await send();
+    return await this.nonceChallenge(original.url, response) ? send() : response;
   }
 
   /**

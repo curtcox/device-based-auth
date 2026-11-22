@@ -242,8 +242,8 @@ export async function forgetDeviceKey(file, { secrets } = {}) {
 }
 
 /** Authorization and DPoP header values for one request. The proof is single use. */
-export async function deviceHeaders({ key, credential, method, url }) {
-  return { Authorization: `DBA ${credential}`, DPoP: await createProof({ privateKey: key.privateKey, publicJwk: key.publicJwk, method, url, credential }) };
+export async function deviceHeaders({ key, credential, method, url, nonce }) {
+  return { Authorization: `DBA ${credential}`, DPoP: await createProof({ privateKey: key.privateKey, publicJwk: key.publicJwk, method, url, credential, nonce }) };
 }
 
 /** Does the credential belong to this key? Catches pairing a credential with the wrong profile. */

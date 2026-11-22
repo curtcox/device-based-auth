@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { price } from './utils/pricing.js';
 import { X509Certificate } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -30,7 +31,7 @@ describe('X.509 client certificates (B3)', () => {
   it('issues a certificate for the device key, chained to the published CA', async () => {
     const { device, credential, response } = await certificateFor({ lifetime_seconds: 600 });
     expect(response.status).toBe(200);
-    expect(response.body.cost_microdollars).toBe(5);
+    expect(response.body.cost_microdollars).toBe(price('token'));
     const { payload } = inspectCredential(credential);
     const leaf = new X509Certificate(response.body.certificate);
     const bundle = await call(env, 'GET', '/.well-known/dba-ca.pem');

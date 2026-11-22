@@ -332,6 +332,9 @@ async function main() {
         (STRICT ? failures : skipped).push(sample.name);
         continue;
       }
+      // As if the owner's account object had just started (an eviction, a deploy): every client
+      // then meets a DPoP nonce challenge (401 use_dpop_nonce) and must answer it (STATUS D15).
+      await api('POST', '/api/v1/dev/fresh-object');
       const started = Date.now();
       let result;
       if (sample.run) result = await sample.run().catch(error => ({ code: 1, output: `${error.stack}\n` }));

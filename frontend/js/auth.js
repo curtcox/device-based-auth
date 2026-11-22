@@ -133,6 +133,14 @@ export async function authHeaders(method, url) {
 }
 
 /**
+ * Called by api() on a 401 before handleUnauthorized: a dashboard device's request met an account
+ * object that just started and asks for its DPoP nonce. True when it should be sent again.
+ */
+export async function nonceChallenge(url, response) {
+  return mode === 'device' && device ? device.nonceChallenge(url, response) : false;
+}
+
+/**
  * Called by api() on a 401. A revoked or expired dashboard credential is forgotten so the page
  * can fall back to another sign-in. Returns true when a retry might succeed.
  */

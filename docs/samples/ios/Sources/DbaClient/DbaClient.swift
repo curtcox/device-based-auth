@@ -23,6 +23,8 @@ public struct DbaError: Error, CustomStringConvertible {
     public let status: Int
     public let code: String
     public let message: String
+    /// With code "use_dpop_nonce": the nonce to put in a new proof (RFC 9449 §8).
+    public var dpopNonce: String? = nil
     public var description: String { "\(message) (\(code))" }
 }
 
@@ -93,20 +95,28 @@ public struct DbaClient {
     }
 
     /// Call an API with the credential: `Authorization: DBA <credential>` plus a fresh DPoP proof.
+    /// An account object that started less than a minute ago answers 401 use_dpop_nonce with its
+    /// nonce: the request is sent once more with a proof that carries it.
     public func call(_ method: String, _ url: String, credential: String, body: [String: Any]? = nil) async throws -> [String: Any] {
-        let headers = ["Authorization": "DBA \(credential)", "DPoP": try dpopProof(credential: credential, method: method, url: url)]
-        return try await send(method, url, body: body, headers: headers)
+        let headers = { (nonce: String?) in ["Authorization": "DBA \(credential)", "DPoP": try dpopProof(credential: credential, method: method, url: url, nonce: nonce)] }
+        do {
+            return try await send(method, url, body: body, headers: try headers(nil))
+        } catch let error as DbaError where error.code == "use_dpop_nonce" && error.dpopNonce != nil {
+            return try await send(method, url, body: body, headers: try headers(error.dpopNonce))
+        }
     }
 
-    /// A single-use proof bound to this method, URL (without query or fragment) and credential (ath).
-    public func dpopProof(credential: String, method: String, url: String) throws -> String {
+    /// A single-use proof bound to this method, URL (without query or fragment) and credential (ath),
+    /// with the server's DPoP nonce when it asked for one.
+    public func dpopProof(credential: String, method: String, url: String, nonce: String? = nil) throws -> String {
         let htu = String(url.prefix { $0 != "?" && $0 != "#" })
         var jti = [UInt8](repeating: 0, count: 16)
         guard SecRandomCopyBytes(kSecRandomDefault, jti.count, &jti) == errSecSuccess else {
             throw DbaError(status: 0, code: "random_failed", message: "No randomness for the proof id")
         }
         let ath = Self.b64u(Data(SHA256.hash(data: Data(credential.utf8))))
-        let payload: [String: Any] = ["jti": Self.b64u(Data(jti)), "htm": method.uppercased(), "htu": htu, "iat": Self.now(), "ath": ath]
+        var payload: [String: Any] = ["jti": Self.b64u(Data(jti)), "htm": method.uppercased(), "htu": htu, "iat": Self.now(), "ath": ath]
+        if let nonce { payload["nonce"] = nonce }
         return try signJws(header: ["typ": "dpop+jwt", "jwk": publicJwk], payload: payload)
     }
 
@@ -145,7 +155,7 @@ public struct DbaClient {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         if !(200..<300).contains(status) {
-            throw DbaError(status: status, code: json["code"] as? String ?? "http_\(status)", message: "\(method) \(url): \(json["error"] as? String ?? "HTTP \(status)")")
+            throw DbaError(status: status, code: json["code"] as? String ?? "http_\(status)", message: "\(method) \(url): \(json["error"] as? String ?? "HTTP \(status)")", dpopNonce: json["dpop_nonce"] as? String)
         }
         return json
     }

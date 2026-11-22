@@ -3460,6 +3460,69 @@
         "x-billable": "token"
       }
     },
+    "/api/v1/dpop-nonce": {
+      "post": {
+        "operationId": "post_api_v1_dpop_nonce",
+        "summary": "The DPoP nonce of the presented credential's account, for clients that cannot send a request twice (dba curl, dba headers). Free. An account object that started less than a minute ago asks every proof for its nonce (401 use_dpop_nonce, with the nonce in the DPoP-Nonce header and dpop_nonce); this answers the same nonce either way.",
+        "x-access": "device",
+        "security": [
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/certificate": {
       "post": {
         "operationId": "post_api_v1_certificate",
@@ -6074,6 +6137,72 @@
       "post": {
         "operationId": "post_api_v1_dev_deposit",
         "summary": "Local development only: add credit.",
+        "x-access": "session",
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "DeviceCredential": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. Every JSON response includes cost_microdollars.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cost_microdollars": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Integer micro-dollars (1 USD = 1,000,000)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential"
+          },
+          "402": {
+            "description": "Insufficient balance"
+          },
+          "403": {
+            "description": "Not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict (already decided, superseded)"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Cost-safety brake or dependency unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/dev/fresh-object": {
+      "post": {
+        "operationId": "post_api_v1_dev_fresh_object",
+        "summary": "Local development only: make your account's object act as if it had just started, so the next DPoP proofs need its nonce.",
         "x-access": "session",
         "security": [
           {

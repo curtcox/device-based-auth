@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { generateKeyPair, exportPublicJwk, createProof } from '../../packages/verify/src/index.js';
-import { separateVisitors, fund, uniqueName, enrollViaApi, signIn, asLocal } from './helpers.js';
+import { generateKeyPair, exportPublicJwk } from '../../packages/verify/src/index.js';
+import { separateVisitors, fund, uniqueName, enrollViaApi, signIn, asLocal, sendSigned } from './helpers.js';
 
 separateVisitors();
 
@@ -183,7 +183,7 @@ test('the grant builder writes gates, and the inspector explains confirm and con
   await page.getByLabel('Credential or access token').fill(issued.credential);
   await expect(page.locator('#confirm-summary')).toContainText(`Works only while ${gate.id} confirmed the device in the last 2 hours`);
   await expect(page.locator('#grant-descriptions')).toContainText('recent confirmation');
-  const signed = async (key, publicJwk, cred, method, path, data) => request.fetch(path, { method, data, headers: { Authorization: `DBA ${cred}`, DPoP: await createProof({ privateKey: key, publicJwk, method, url: new URL(path, page.url()).href, credential: cred }) } });
+  const signed = async (key, publicJwk, cred, method, path, data) => sendSigned(request, { privateKey: key, publicJwk, credential: cred, method, url: new URL(path, page.url()).href, data });
   const confirmPath = `/api/v1/credentials/${issued.cid}/confirm`;
   await signed(pair.privateKey, jwk, issued.credential, 'POST', confirmPath, {});
   const [waiting] = (await (await signed(phone.device.privateKey, phone.device.publicJwk, phone.credential, 'GET', '/api/v1/gate-requests')).json()).items;

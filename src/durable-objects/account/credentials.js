@@ -1,4 +1,5 @@
 import { assert } from '../../utils/errors.js';
+import { CLOCK_SKEW } from '../../../packages/verify/src/credential.js';
 import { rpc } from '../../utils/rpc.js';
 import { charge, readBalance } from '../ledger.js';
 import { signEvent, postEvent, WEBHOOK_ATTEMPTS, WEBHOOK_BACKOFF_MS } from '../../services/webhooks.js';
@@ -126,15 +127,21 @@ export class AccountCredentials {
   /**
    * proof_key/proof_exp: a DPoP proof presented to devicebasedauth.org's own API. DPoP does not
    * sign the body, so a proof seen once (a logging proxy, a leaked header) must not be accepted
-   * again with another body. The account's single DO instance makes this a global check.
+   * again with another body. The account's single DO instance makes this a global check, except
+   * that its memory starts empty when the object starts: a proof whose iat is less than
+   * CLOCK_SKEW seconds after that could have been accepted by the object before (a verifier takes
+   * an iat up to CLOCK_SKEW in its future), so it must carry this object's nonce, and gets
+   * { nonce_required, dpop_nonce } otherwise (the Worker answers 401 use_dpop_nonce).
    */
-  async op_credential_status({ cid, with_jws = false, proof_key, proof_exp, rate, session }, now) {
+  async op_credential_status({ cid, with_jws = false, proof_key, proof_exp, proof_iat, proof_nonce, rate, session }, now) {
     if (rate) await this.op_rate_limit(rate, now);
     const cred = await this.storage.get(`cred:${cid}`);
     // A dashboard device (dba:session) is a sign-in too: report whether the dashboard gate holds it.
     const dashboard = session ? await dashboardState(this.storage, session, now) : undefined;
     if (!cred) return { exists: false, revoked: true };
     if (proof_key) {
+      const fresh = proof_nonce === this.dpopNonce || (Number.isFinite(proof_iat) && proof_iat * 1000 >= this.startedAt + CLOCK_SKEW * 1000);
+      if (!fresh) return { exists: true, nonce_required: true, dpop_nonce: this.dpopNonce };
       const nowSeconds = Math.floor(now / 1000);
       for (const [key, exp] of this.proofs) { if (exp > nowSeconds) break; this.proofs.delete(key); }
       if (this.proofs.has(proof_key)) return { exists: true, replayed: true };
@@ -143,7 +150,7 @@ export class AccountCredentials {
     // When this credential's holder last proved it is the owner: re-verified through a gate, or
     // issued by paying for a sign-up or by a recovery (done/clerk_free_accounts.md §3.3–§3.5).
     const signedInAt = Math.max(cred.reverified_at ?? 0, FRESH_SOURCES.includes(cred.source) ? cred.created_at ?? 0 : 0) || null;
-    return { exists: true, signed_in_at: signedInAt, ...(dashboard ? { dashboard } : {}), ...(cred.confirm ? { confirm: cred.confirm, confirmed_until: cred.confirmed_until ?? 0 } : {}), ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
+    return { exists: true, dpop_nonce: this.dpopNonce, signed_in_at: signedInAt, ...(dashboard ? { dashboard } : {}), ...(cred.confirm ? { confirm: cred.confirm, confirmed_until: cred.confirmed_until ?? 0 } : {}), ...(with_jws ? { jws: cred.jws } : {}), revoked: !!cred.revoked_at, state: credentialState(cred, now), jti: cred.jti, exp: cred.exp, grants: cred.grants, aud: cred.aud, device_id: cred.device_id, jkt: cred.jkt, lifetime: cred.lifetime, max_exp: cred.max_exp, status: cred.status, device: cred.device, ...(cred.parent_cid ? { parent_cid: cred.parent_cid } : {}) };
   }
 
   async revokeOne(tx, cred, now, reason) {

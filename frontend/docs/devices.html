@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phones and PCs: Android, iOS and TPM — devicebasedauth.org</title>
+<meta name="description" content="Keep a devicebasedauth.org device key in Android Keystore or StrongBox, the iPhone Secure Enclave with App Attest, or a PC's TPM 2.0, and prove it with key attestation.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/docs.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/" aria-current="page">Docs</a><a href="/tools/">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<h1>Phones and PCs: Android, iOS and TPM</h1>
+<p class="lead">Native devices keep their key in hardware and can prove it to the issuer with key attestation, so grants can require <code>require.attestation: "hardware"</code>. The rest of the API is the same as for every device: see the <a href="/docs/">docs</a>.</p>
+<div class="docs-layout">
+<nav class="docs-toc" aria-label="On this page"><ol>
+<li><a href="#android">Quick start: Android</a></li>
+<li><a href="#ios">Quick start: iOS and App Attest</a></li>
+<li><a href="#tpm">PCs: TPM key attestation</a></li>
+</ol></nav>
+<div class="docs-body">
+<section id="android">
+<h2>Quick start: Android</h2>
+<p><a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/android"><code>docs/samples/android</code></a> is two files to copy into an app (API 26+, no dependencies): <code>AndroidKeystoreKeys</code> generates a P-256 signing key inside the Android Keystore (StrongBox when the phone has one), and <code>DbaClient</code> sends the signed enrollment request, waits for approval and signs a DPoP proof for each call. The key never leaves the secure hardware; only its public half is sent. Run the calls off the main thread.</p>
+<pre class="code"><code>String challenge = DbaClient.attestationChallenge(origin);              // for key attestation
+AndroidKeystoreKeys keys = AndroidKeystoreKeys.create("dba-device", challenge);
+DbaClient client = new DbaClient(origin, keys.privateKey(), keys.publicKey());
+String credential = client.enroll(List.of("hashbin.org"), grants,
+    DbaClient.map("name", Build.MODEL, "kind", "phone", "key_protection", keys.keyProtection()),
+    keys.attestation(challenge),                                            // the Keystore's certificate chain
+    url -&gt; startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))));   // owner approves
+Object result = client.call("POST", "https://hashbin.org/api/content", credential, body);</code></pre>
+<p>Because the key was generated with devicebasedauth.org's challenge, the Keystore's certificate chain proves to the issuer that the key lives in a TEE or StrongBox and was never exported. The approval page and the credential then say <em>Android Keystore, attested by Google</em> (with the verified-boot state) instead of <em>self-reported</em>, in <code>device.attestation</code> (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>). The attestation also names the app that made the key, so a grant can pin your app with <code>"require": { "app_ids": ["android:com.example.app:&lt;sha256&gt;"] }</code>, where the digest is your signing certificate's SHA-256 as lowercase hex (<code>apksigner verify --print-certs</code>, or the Play Console's app signing page without the colons); it counts only on phones with verified boot and a locked bootloader. A rejected chain fails the enrollment with <code>invalid_attestation</code>; leave out the attestation to enroll without one. On later runs use <code>AndroidKeystoreKeys.load("dba-device")</code>.</p>
+<p>The same <code>DbaClient</code> runs in CI on a plain JVM with a software key (<code>Main.java</code>, below), against a local server, and the Keystore class is type-checked against the Android API there:</p>
+<pre class="code" data-sample="android/Main.java"><code>        DbaClient client = new DbaClient(origin, key.getPrivate(), (ECPublicKey) key.getPublic());
+
+        List&lt;Object&gt; grants = List.of(DbaClient.map(&quot;actions&quot;, List.of(&quot;hashbin:content:write&quot;)));
+        Map&lt;String, Object&gt; device = DbaClient.map(&quot;name&quot;, &quot;Android sample&quot;, &quot;kind&quot;, &quot;phone&quot;, &quot;key_protection&quot;, &quot;software&quot;);
+        String credential = client.enroll(Collections.singletonList(&quot;hashbin.org&quot;), grants, device, url -&gt; {
+            System.out.println(&quot;Ask the account owner to approve this device:&quot;);
+            System.out.println(url);
+            System.out.flush();
+        });
+        String payload = new String(Base64.getUrlDecoder().decode(credential.split(&quot;\\.&quot;)[1]), java.nio.charset.StandardCharsets.UTF_8);</code></pre>
+<p class="small muted">Store the credential next to the key alias (it is not secret) and renew it at about two thirds of its lifetime with <code>client.call("POST", origin + "/api/v1/credentials/" + cid + "/renew", credential, DbaClient.map())</code>, as <code>Main.java</code> does. For iPhone and iPad see <a href="#ios">iOS</a>.</p>
+</section>
+
+<section id="ios">
+<h2>Quick start: iOS and Apple App Attest</h2>
+<p><a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/ios"><code>docs/samples/ios</code></a> is a Swift package (iOS 15+, Foundation, CryptoKit and DeviceCheck only) to copy into an app or depend on: <code>SecureEnclaveKeys</code> generates the P-256 signing key inside the Secure Enclave and keeps only its encrypted handle in the Keychain (this device only), <code>AppAttest</code> has App Attest vouch for it, and <code>DbaClient</code> sends the signed enrollment request, waits for approval and signs a DPoP proof for each call.</p>
+<pre class="code"><code>let key = try SecureEnclaveKeys.loadOrCreate(name: "dba-device")
+let client = DbaClient(origin: "https://devicebasedauth.org", key: key)
+let challenge = try await client.attestationChallenge()
+let attestation = try await AppAttest.attestation(for: key, challenge: challenge, appId: "ABCDE12345.org.example.wallet")
+let credential = try await client.enroll(audiences: ["hashbin.org"], grants: grants,
+    device: ["name": UIDevice.current.name, "kind": "phone", "key_protection": "secure-enclave"],
+    attestation: attestation) { url in UIApplication.shared.open(URL(string: url)!) }   // owner approves
+let result = try await client.call("POST", "https://hashbin.org/api/content", credential: credential, body: body)</code></pre>
+<p>CI builds the package on macOS, type-checks it for iOS, and runs the same <code>DbaClient</code> against a local server with a software key (<code>Sources/dba-sample/main.swift</code>; CI machines have no Secure Enclave):</p>
+<pre class="code" data-sample="ios/Sources/dba-sample/main.swift"><code>    var credential = try await client.enroll(
+        audiences: [&quot;hashbin.org&quot;],
+        grants: [[&quot;actions&quot;: [&quot;hashbin:content:write&quot;]]],
+        device: [&quot;name&quot;: &quot;iOS sample&quot;, &quot;kind&quot;: &quot;phone&quot;, &quot;key_protection&quot;: &quot;software&quot;]
+    ) { url in
+        print(&quot;Ask the account owner to approve this device:&quot;)
+        print(url)
+        fflush(stdout)
+    }</code></pre>
+<p>What the attestation proves:</p>
+<p>App Attest cannot vouch for an arbitrary key: Apple attests a key of its own and says which app, on a genuine iPhone or iPad, holds it. So an iOS app makes its DBA key in the Secure Enclave as usual and then has App Attest vouch for that key:</p>
+<ol>
+<li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>
+<li>Generate the P-256 signing key in the Secure Enclave and compute its JWK thumbprint (RFC 7638).</li>
+<li>Call <code>DCAppAttestService.shared.generateKey()</code>, then <code>attestKey(keyId, clientDataHash:)</code> with the SHA-256 of the UTF-8 string <code>"&lt;challenge&gt;.&lt;thumbprint&gt;"</code>.</li>
+<li>Add <code>attestation: { format: "apple-appattest", challenge, app_id: "TEAMID.bundle.id", key_id, object }</code> (<code>key_id</code> and <code>object</code> base64) to the signed enrollment request.</li>
+</ol>
+<p>The issuer checks Apple's certificate chain, the nonce, the key id, the app id and the counter (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>) and signs <code>{ format: "apple-appattest", security_level: "secure_enclave", app_id, environment }</code> into <code>device.attestation</code>; the approval page says <em>Secure Enclave, reported by the app … as attested by Apple</em>. Because what Apple proves is the app, not the key, a grant counts it for <code>require.attestation</code> only when it also names the app in <code>require.app_ids</code>, and only for production builds:</p>
+<pre class="code"><code>{ "actions": ["hashbin:content:write"],
+  "require": { "attestation": "hardware", "app_ids": ["ABCDE12345.org.example.wallet"] } }</code></pre>
+</section>
+
+<section id="tpm">
+<h2>PCs: TPM key attestation</h2>
+<p>On a PC with a TPM 2.0, keep the DBA key in the TPM and have the TPM's attestation identity key (AIK) certify it. Windows gets an AIK certificate from Microsoft after checking the TPM's endorsement certificate, so the issuer can trust it:</p>
+<ol>
+<li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>
+<li>Create a P-256 signing key in the TPM (Windows: the Microsoft Platform Crypto Provider) and compute its JWK thumbprint (RFC 7638).</li>
+<li>Certify it with the AIK (<code>TPM2_Certify</code>; on Windows <code>NCryptCreateClaim</code> with the "Windows AIK") using qualifying data = SHA-256 of the UTF-8 string <code>"&lt;challenge&gt;.&lt;thumbprint&gt;"</code>.</li>
+<li>Add <code>attestation: { format: "tpm", challenge, alg, x5c, sig, cert_info, pub_area }</code> to the signed enrollment request: <code>alg</code> <code>-257</code> (RS256) or <code>-65535</code> (RS1), <code>x5c</code> the AIK certificate and its CA (base64 DER), and the signature, <code>TPMS_ATTEST</code> and <code>TPMT_PUBLIC</code> in base64.</li>
+</ol>
+<p>The issuer checks the chain to Microsoft's TPM root and its revocation list, the AIK certificate, the signature, that the certified key is the enrolled key, and that it was generated in the TPM and cannot leave it (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>). It signs <code>{ format: "tpm", security_level: "tpm", tpm_manufacturer }</code> into <code>device.attestation</code>, which satisfies <code>require.attestation: "hardware"</code> (not <code>"strongbox"</code>, and not <code>require.verified_boot</code>).</p>
+<h3>Linux and other TPMs without a Microsoft AIK certificate</h3>
+<p>Here the TPM proves that its attestation key (AK) sits beside its endorsement key (EK), whose certificate the TPM's manufacturer issued. The device key is the same TPM-resident P-256 key; with tpm2-tools that is <code>tpm2_createek</code>, <code>tpm2_createak</code>, <code>tpm2_create</code> with <code>fixedtpm|fixedparent|sensitivedataorigin|sign</code>, and <code>tpm2_certify</code>:</p>
+<ol>
+<li>Get a challenge as above.</li>
+<li><code>POST /api/v1/enrollments/tpm-activation</code> with <code>{ challenge, ek_certificate, ak_pub_area, pub_area, cert_info, sig }</code>, all base64: the RSA-2048 EK certificate (<code>tpm2_nvread 0x01c00002</code>), the AK's public area, the device key's public area, and the certify's <code>TPMS_ATTEST</code> and <code>TPMT_SIGNATURE</code>. Add <code>ek_chain</code> if your EK certificate's CA is not one DBA knows but chains to one.</li>
+<li>The answer holds a secret only your TPM can unwrap, as <code>credential_blob</code> (the file <code>tpm2_activatecredential -i</code> reads) or as <code>id_object</code> and <code>encrypted_secret</code>, and an <code>activation</code> token. Unwrap it with <code>TPM2_ActivateCredential</code> (AK and EK loaded; the EK needs a policy session with <code>tpm2_policysecret -c e</code>).</li>
+<li>Add <code>attestation: { format: "tpm-ek", challenge, activation, secret }</code> (the secret base64) to the signed enrollment request, within 10 minutes.</li>
+</ol>
+<p>A complete shell script, run in CI against a software TPM, does all of this and then signs each request's DPoP proof with <code>tpm2_sign</code>: <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/tpm/enroll-tpm.sh">docs/samples/tpm/enroll-tpm.sh</a>. The <code>dba</code> CLI does the same for you with <code>dba enroll --key-store tpm</code> (<a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/tpm/dba-cli.sh">docs/samples/tpm/dba-cli.sh</a>, also run in CI). A key rotated with <code>dba renew --rotate</code> moves to a new TPM key, but the renewed credential carries no attestation until the device enrolls again.</p>
+<p>The issuer checks the EK certificate against the TPM manufacturers' EK CAs (Infineon, STMicroelectronics, Nuvoton, Intel, Nationz), the AK's attributes and signature, the certified key, and the returned secret, checks the EK certificate (and any CA you sent in <code>ek_chain</code>) against its manufacturer's revocation list when the certificate names one (an unreachable list answers <code>503 attestation_unavailable</code>; try again), then signs the same <code>{ format: "tpm", security_level: "tpm", tpm_manufacturer }</code>. The EK certificate is not stored. Virtual TPMs (cloud vTPMs, swtpm) are not trusted.</p>
+</section>
+</div>
+</div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>

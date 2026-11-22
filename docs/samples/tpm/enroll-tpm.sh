@@ -85,10 +85,17 @@ credential="$(jq -r .credential poll.json)"
 jq -R 'split(".")[1] | gsub("-"; "+") | gsub("_"; "/") | @base64d | fromjson | .device.attestation' <<< "$credential" \
   | jq -r '"Approved. Attested: \(.security_level) (\(.tpm_manufacturer))"'
 
-# 4. Call the API: a DPoP proof per request, signed by the TPM.
-url="$origin/api/v1/whoami"
+# 4. Call the API: a DPoP proof per request, signed by the TPM. curl sends once, so first ask for
+#    the account's DPoP nonce (free): an account object that started less than a minute ago
+#    refuses proofs without it (401 use_dpop_nonce, which carries the nonce too).
 ath="$(printf %s "$credential" | openssl dgst -sha256 -binary | b64u)"
-proof="$(sign_jws "{\"alg\":\"ES256\",\"typ\":\"dpop+jwt\",\"jwk\":$jwk}" \
-  "$(jq -cn --arg jti "$(openssl rand -hex 16)" --arg htu "$url" --arg ath "$ath" --argjson iat "$(date +%s)" '{jti: $jti, htm: "GET", htu: $htu, iat: $iat, ath: $ath}')")"
-curl -sS --fail-with-body "$url" -H "Authorization: DBA $credential" -H "DPoP: $proof" \
+proof_for() { # METHOD URL [NONCE]
+  sign_jws "{\"alg\":\"ES256\",\"typ\":\"dpop+jwt\",\"jwk\":$jwk}" \
+    "$(jq -cn --arg jti "$(openssl rand -hex 16)" --arg htm "$1" --arg htu "$2" --arg ath "$ath" --arg nonce "${3:-}" --argjson iat "$(date +%s)" \
+      '{jti: $jti, htm: $htm, htu: $htu, iat: $iat, ath: $ath} + (if $nonce == "" then {} else {nonce: $nonce} end)')"
+}
+nonce_url="$origin/api/v1/dpop-nonce"
+nonce="$(curl -sS -X POST "$nonce_url" -H "Authorization: DBA $credential" -H "DPoP: $(proof_for POST "$nonce_url")" | jq -r '.dpop_nonce // empty')"
+url="$origin/api/v1/whoami"
+curl -sS --fail-with-body "$url" -H "Authorization: DBA $credential" -H "DPoP: $(proof_for GET "$url" "$nonce")" \
   | jq -r '"whoami: account \(.account), device \(.device_id)", (.descriptions[] | " - \(.)")'

@@ -1,7 +1,7 @@
 // Shared helpers for the browser tests. Devices made here (Node side) use the same verify library
 // as everything else, so a test can create real credentials without a browser when it only needs one.
 import { test, expect } from '@playwright/test';
-import { generateKeyPair, exportPublicJwk, signJws } from '../../packages/verify/src/index.js';
+import { generateKeyPair, exportPublicJwk, signJws, createProof } from '../../packages/verify/src/index.js';
 
 /** A fresh local account name per test, so tests never share balances or credentials. */
 export const uniqueName = (prefix = 'user') => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
@@ -55,3 +55,15 @@ export async function enrollViaApi(request, owner, options) {
 
 /** Dollars from micro-dollars, formatted as the site does. */
 export const usd = micro => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(micro / 1_000_000);
+
+/**
+ * Send a request signed by a device, like the SDK and CLI do: once more with the nonce when a
+ * just-started account object answers 401 use_dpop_nonce (STATUS D15).
+ */
+export async function sendSigned(request, { privateKey, publicJwk, credential, method, url, data }) {
+  const send = async nonce => request.fetch(url, { method, data, headers: { Authorization: `DBA ${credential}`, DPoP: await createProof({ privateKey, publicJwk, method, url, credential, nonce }) } });
+  const first = await send();
+  if (first.status() !== 401) return first;
+  const body = await first.json().catch(() => ({}));
+  return body.code === 'use_dpop_nonce' && body.dpop_nonce ? send(body.dpop_nonce) : first;
+}

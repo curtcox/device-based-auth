@@ -52,15 +52,17 @@ function requestTarget(positionals, command) {
 export async function headers(profile, { positionals }) {
   const { method, url } = requestTarget(positionals, 'headers');
   const device = await usableDevice(profile);
-  const all = { ...await deviceHeaders({ ...device, method, url }), ...confirmationHeaders(await usableConfirmation(profile, device)) };
+  const nonce = await profile.client.nonceFor(device, url);
+  const all = { ...await deviceHeaders({ ...device, method, url, nonce }), ...confirmationHeaders(await usableConfirmation(profile, device)) };
   for (const [name, value] of Object.entries(all)) out(`${name}: ${value}`);
 }
 
 /** `dba sign`: only the DPoP proof for one request. */
 export async function sign(profile, { positionals }) {
   const { method, url } = requestTarget(positionals, 'sign');
-  const { key, credential } = await usableDevice(profile);
-  out(await createProof({ privateKey: key.privateKey, publicJwk: key.publicJwk, method, url, credential }));
+  const device = await usableDevice(profile);
+  const { key, credential } = device;
+  out(await createProof({ privateKey: key.privateKey, publicJwk: key.publicJwk, method, url, credential, nonce: await profile.client.nonceFor(device, url) }));
 }
 
 /** Run curl to completion; with `capture`, its stdout is returned instead of shown. */
@@ -84,7 +86,10 @@ export async function curl(profile, allArgs) {
   try {
     const file = join(dir, 'headers');
     const confirmation = await usableConfirmation(profile, device);
-    const writeHeaders = async () => writeFile(file, curlHeaderFile({ ...await deviceHeaders({ ...device, method, url }), ...confirmationHeaders(confirmation) }), { mode: 0o600 });
+    // curl sends once, so a request to devicebasedauth.org carries its account's DPoP nonce from
+    // the start (a just-started account object would refuse a proof without it).
+    const nonce = await profile.client.nonceFor(device, url);
+    const writeHeaders = async () => writeFile(file, curlHeaderFile({ ...await deviceHeaders({ ...device, method, url, nonce }), ...confirmationHeaders(confirmation) }), { mode: 0o600 });
     if (waitSeconds === null) {
       await writeHeaders();
       return (await runCurl(curlArgs(args, file))).code;

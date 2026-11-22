@@ -60,7 +60,7 @@ export async function newDevice() {
   const publicJwk = await exportPublicJwk(pair.publicKey);
   const device = { privateKey: pair.privateKey, publicJwk, jkt: await jwkThumbprint(publicJwk) };
   device.enrollRequest = (payload) => signJws({ typ: 'dba-enroll+jwt', jwk: publicJwk }, { iat: Math.floor(Date.now() / 1000), ...payload }, pair.privateKey);
-  device.headers = async (method, path, credential) => ({ Authorization: `DBA ${credential}`, DPoP: await createProof({ privateKey: pair.privateKey, publicJwk, method, url: `${ORIGIN}${path}`, credential }) });
+  device.headers = async (method, path, credential, nonce) => ({ Authorization: `DBA ${credential}`, DPoP: await createProof({ privateKey: pair.privateKey, publicJwk, method, url: `${ORIGIN}${path}`, credential, nonce }) });
   return device;
 }
 
@@ -88,9 +88,14 @@ export function meter(env) {
         object.metered = true;
         const fetch = object.fetch.bind(object);
         object.fetch = async request => { const args = await request.clone().json(); counts.doRequests++; counts.byOp.push(`${name}:${args.op}`); return fetch(request); };
-        const { storage } = object; const put = storage.put.bind(storage); const del = storage.delete.bind(storage);
-        storage.put = async (key, value) => { counts.rowWrites++; return put(key, value); };
-        storage.delete = async key => { counts.rowWrites += Array.isArray(key) ? key.length : 1; return del(key); };
+        // A restarted object (namespace.restart) shares its storage, which is counted once.
+        const { storage } = object;
+        if (!storage.metered) {
+          storage.metered = true;
+          const put = storage.put.bind(storage); const del = storage.delete.bind(storage);
+          storage.put = async (key, value) => { counts.rowWrites++; return put(key, value); };
+          storage.delete = async key => { counts.rowWrites += Array.isArray(key) ? key.length : 1; return del(key); };
+        }
       }
       return object;
     };

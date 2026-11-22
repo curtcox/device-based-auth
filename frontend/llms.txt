@@ -6,14 +6,14 @@ Machine-readable API: https://devicebasedauth.org/openapi.json
 Credential format: https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md
 Grant evaluation rules and test vectors: https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md
 Revocation webhook events: https://github.com/curtcox/device-based-auth/blob/main/spec/events.md
-Docs: https://devicebasedauth.org/docs/ (accounts without a password: https://devicebasedauth.org/docs/accounts.html)
+Docs: https://devicebasedauth.org/docs/ (accounts without a password: https://devicebasedauth.org/docs/accounts.html; Android, iOS and TPM devices: https://devicebasedauth.org/docs/devices.html)
 Everything in one file (this summary, every route, the credential spec, evaluation rules and pricing): https://devicebasedauth.org/llms-full.txt
 MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_…, a device credential, or an OAuth access token: MCP clients discover /.well-known/oauth-protected-resource/mcp, register at /oauth/register, and the owner approves the scopes)
 
 ## Key facts
 
 - Money is integer micro-dollars (µ$; $1 = 1,000,000 µ$). Every JSON response includes `cost_microdollars`. `GET /api/v1/quote?op=<op>` prices an operation before you do it; `?dry_run=1` on a billable call quotes it (and, with `account:read`, says whether the balance covers it) without doing it. Billable responses carry `balance_microdollars` / `X-DBA-Balance-Microdollars` for callers with `account:read`.
-- Prices (µ$): issue 85, renew 25, online decision 14, metered API read 5, token exchange 5, OIDC login 12 (paid by the site), audience registration/change 100. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
+- Prices (µ$): issue 87, renew 25, online decision 14, metered API read 7, token exchange 7, OIDC login 14 (paid by the site), audience registration/change 100. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
 - Errors: `{ "error": "...", "code": "..." }` with HTTP status; 402 = insufficient balance.
 - Private keys never leave the device. The service only ever sees public keys.
 
@@ -24,7 +24,7 @@ A credential is a compact JWS (ES256), header `{"typ":"dba-device+jwt","alg":"ES
 
 A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "require": {"online","step_up","attestation":"hardware|strongbox","verified_boot","app_ids":["TEAMID.bundle.id"]} }`. Deny by default; any passing grant allows; unknown constraints deny.
 
-Present it as `Authorization: DBA <credential>` plus `DPoP: <proof>` (RFC 9449 proof JWT signed by the device key with htm, htu, iat, jti, ath).
+Present it as `Authorization: DBA <credential>` plus `DPoP: <proof>` (RFC 9449 proof JWT signed by the device key with htm, htu, iat, jti, ath). For the first minute after an account's server object starts, devicebasedauth.org answers proofs without its nonce with `401 use_dpop_nonce` and the nonce in the `DPoP-Nonce` header (also `dpop_nonce` in the body): make a new proof with the `nonce` claim and send once more (the browser SDK v1.4.0+ and the CLI do this). Clients that cannot send twice get the nonce first from `POST /api/v1/dpop-nonce` (free).
 
 ## Verify (relying party)
 

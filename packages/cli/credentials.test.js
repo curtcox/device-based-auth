@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { price } from '../../src/utils/pricing.js';
 import { ApiError } from './errors.js';
 import { splitCommand } from './args.js';
 import { describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList } from './credentials.js';
@@ -140,7 +141,7 @@ describe('dba list', () => {
     expect(issued.status).toBe(200);
     const byKey = await client.request('GET', listQuery({ status: 'active' }), { apiKey: key });
     expect(byKey.items.map(c => c.cid)).toEqual([issued.body.cid]);
-    expect(byKey.cost_microdollars).toBe(5);
+    expect(byKey.cost_microdollars).toBe(price('read'));
     const byDevice = await client.request('GET', listQuery(), { device: { key: reader, credential: issued.body.credential } });
     expect(byDevice.items).toHaveLength(1);
     await expect(client.request('GET', listQuery(), { apiKey: 'dbak_nonsense' })).rejects.toMatchObject({ code: 'invalid_auth', status: 401 });

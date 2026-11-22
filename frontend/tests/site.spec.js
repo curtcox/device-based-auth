@@ -52,7 +52,7 @@ test('pricing page lists live prices and the calculator follows the inputs', asy
 
 test('pages fit a phone screen without horizontal scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const path of ['/', '/pricing.html', '/docs/', '/tools/', '/tools/inspector.html', '/tools/playground.html', '/tools/builder.html', '/tools/signer.html', '/terms.html']) {
+  for (const path of ['/', '/pricing.html', '/docs/', '/docs/devices.html', '/tools/', '/tools/inspector.html', '/tools/playground.html', '/tools/builder.html', '/tools/signer.html', '/terms.html']) {
     await page.goto(path);
     await page.waitForLoadState('networkidle');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), path).toBe(true);
@@ -67,7 +67,7 @@ test('pages fit a phone screen without horizontal scrolling', async ({ page }) =
 
 test('docs code taken from docs/samples matches the tested samples', async ({ page }) => {
   const blocks = [];
-  for (const path of ['/docs/accounts.html', '/docs/']) {
+  for (const path of ['/docs/accounts.html', '/docs/devices.html', '/docs/']) {
     await page.goto(path);
     blocks.push(...await page.locator('pre[data-sample]').evaluateAll(pres => pres.map(pre => ({ sample: pre.dataset.sample, text: pre.textContent }))));
   }
@@ -77,5 +77,8 @@ test('docs code taken from docs/samples matches the tested samples', async ({ pa
     const lines = source.split('\n').map(line => line.trimEnd());
     for (const line of text.split('\n').map(l => l.trimEnd()).filter(Boolean)) expect(lines, `${sample}: ${line}`).toContain(line);
   }
-  for (const id of ['concepts', 'format', 'browser', 'cli', 'android', 'verify', 'workers', 'authorize', 'oidc', 'mcp', 'revocation', 'api']) await expect(page.locator(`section#${id} h2`)).toBeVisible();
+  expect(blocks.map(b => b.sample)).toContain('android/Main.java');
+  for (const id of ['concepts', 'format', 'browser', 'cli', 'verify', 'workers', 'authorize', 'oidc', 'mcp', 'revocation', 'api']) await expect(page.locator(`section#${id} h2`)).toBeVisible();
+  await page.goto('/docs/devices.html');
+  for (const id of ['android', 'ios', 'tpm']) await expect(page.locator(`section#${id} h2`)).toBeVisible();
 });

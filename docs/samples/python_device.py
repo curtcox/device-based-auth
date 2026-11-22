@@ -43,8 +43,9 @@ def sign_jws(header: dict, payload: dict, key: ec.EllipticCurvePrivateKey) -> st
     return f"{signing_input}.{b64u(r.to_bytes(32, 'big') + s.to_bytes(32, 'big'))}"
 
 
-def dpop_proof(key, credential: str, method: str, url: str) -> str:
-    """A single-use proof bound to this method, URL (without query) and credential (ath)."""
+def dpop_proof(key, credential: str, method: str, url: str, nonce: str | None = None) -> str:
+    """A single-use proof bound to this method, URL (without query) and credential (ath), with
+    the server's DPoP nonce when it asked for one."""
     htu = url.split("?", 1)[0].split("#", 1)[0]
     payload = {
         "jti": secrets.token_urlsafe(16),
@@ -53,7 +54,22 @@ def dpop_proof(key, credential: str, method: str, url: str) -> str:
         "iat": int(time.time()),
         "ath": b64u(hashlib.sha256(credential.encode("ascii")).digest()),
     }
+    if nonce:
+        payload["nonce"] = nonce
     return sign_jws({"typ": "dpop+jwt", "jwk": public_jwk(key)}, payload, key)
+
+
+def signed(key, credential: str, method: str, url: str, **kwargs) -> requests.Response:
+    """Send with the credential and a proof. An account object that started less than a minute
+    ago answers 401 use_dpop_nonce with its nonce (header DPoP-Nonce): send once more with it."""
+    nonce = None
+    for _ in range(2):
+        headers = {"Authorization": f"DBA {credential}", "DPoP": dpop_proof(key, credential, method, url, nonce)}
+        response = requests.request(method, url, headers=headers, timeout=30, **kwargs)
+        nonce = response.headers.get("DPoP-Nonce")
+        if not (response.status_code == 401 and nonce and response.json().get("code") == "use_dpop_nonce"):
+            break
+    return response
 
 
 def check(response: requests.Response) -> dict:
@@ -95,10 +111,7 @@ def main():
 
     # Use it: devicebasedauth.org is itself a relying party, so ask it who we are.
     url = f"{ORIGIN}/api/v1/whoami"
-    me = check(requests.get(url, timeout=30, headers={
-        "Authorization": f"DBA {credential}",
-        "DPoP": dpop_proof(key, credential, "GET", url),
-    }))
+    me = check(signed(key, credential, "GET", url))
     print(f"whoami: account {me['account']}, device {me['device_id']}")
     for description in me["descriptions"]:
         print(" -", description)

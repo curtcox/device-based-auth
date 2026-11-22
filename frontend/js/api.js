@@ -3,7 +3,7 @@
  * device sign-in, a DPoP proof bound to this exact method and URL) and turns the
  * `{ error, code, ... }` envelope into an ApiError.
  */
-import { authHeaders, handleUnauthorized } from './auth.js';
+import { authHeaders, handleUnauthorized, nonceChallenge } from './auth.js';
 
 /** An API failure carrying the server's machine-readable code and HTTP status. */
 export class ApiError extends Error {
@@ -18,14 +18,18 @@ export class ApiError extends Error {
  */
 export async function api(path, { method = 'GET', body, auth = true, idempotencyKey } = {}) {
   const url = new URL(path, location.origin).href;
+  const key = idempotencyKey || crypto.randomUUID();
   const send = async () => {
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (method !== 'GET') headers['Idempotency-Key'] = idempotencyKey || crypto.randomUUID();
+    if (method !== 'GET') headers['Idempotency-Key'] = key;
     if (auth) Object.assign(headers, await authHeaders(method, url));
     return fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   };
   let response = await send();
+  // An account object that just started asks a dashboard device for its DPoP nonce: send again
+  // with it (never a reason to sign out).
+  if (response.status === 401 && auth && await nonceChallenge(url, response)) response = await send();
   // A revoked dashboard device credential falls back to another sign-in, once.
   if (response.status === 401 && auth && await handleUnauthorized()) response = await send();
   const text = await response.text();

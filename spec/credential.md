@@ -217,6 +217,18 @@ and payload:
 | `nonce` | Only when the verifier issued one. |
 | `loc` | Optional device-reported location `{ lat, lon, acc_m, t }` (§5 of evaluation.md). |
 
+**Nonce challenges (RFC 9449 §8).** A verifier whose replay cache may have lost proofs it saw (it
+keeps them in memory and has just started) cannot tell a fresh proof from a replayed one. It may
+answer `401` with `WWW-Authenticate: DPoP error="use_dpop_nonce"` and a `DPoP-Nonce` header; the
+device makes a new proof with `nonce` set to that value and sends the request once more, and puts
+the latest nonce it was given by that origin in its later proofs. devicebasedauth.org's own API
+does this for the first 60 s after an account's object starts: a proof with an `iat` earlier
+than 60 s after the start (the window in which an earlier object could have accepted it) must
+carry the object's nonce. The error body also carries `code: "use_dpop_nonce"` and `dpop_nonce`.
+Clients that cannot send a request twice (a curl command line) get the nonce first from
+`POST /api/v1/dpop-nonce`, which costs nothing. Sites that do the same with their own replay cache
+can rely on the browser SDK (v1.4.0+) answering the challenge.
+
 ## 5. Verification
 
 A verifier MUST, in order:

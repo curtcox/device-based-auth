@@ -14,6 +14,15 @@ export const COST_POLICY = Object.freeze({
 });
 
 /**
+ * A device's request to devicebasedauth.org's own API can first be answered 401 use_dpop_nonce
+ * (its account's object started less than a minute ago and asks for its nonce, STATUS D15), so
+ * each operation a device can ask for with a DPoP proof counts that challenge too: one more Worker
+ * request, its authentication (1 DO request, with the rate limit) and ~2 ms to check the proof.
+ * `dba curl` and `dba headers` ask POST /api/v1/dpop-nonce first instead, which costs the same.
+ */
+const withNonceChallenge = o => ({ ...o, workerRequests: o.workerRequests + 1, doRequests: o.doRequests + 1, cpuMs: o.cpuMs + 2 });
+
+/**
  * Worst-case resources per billable operation. Each entry lists the Worker requests,
  * Durable Object requests, rows written (including later pruning deletes), CPU ms,
  * KB-months of storage it prepays, and R2 writes.
@@ -38,10 +47,10 @@ export const OPERATIONS = Object.freeze({
   // not lock the owner out); each costs one code, ten per sheet, and a sheet needs a recent sign-in.
   // Recovering by gate is a gate request (charged as one, D13) plus such an issue, at most three an
   // hour per account.
-  issue: { workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 },
+  issue: withNonceChallenge({ workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 }),
   // Credential status (auth, with the rate limit), credential status (renew), funds check, renew; later
   // compaction deletes its ledger, receipt and audit rows.
-  renew: { workerRequests: 1, doRequests: 5, rowWrites: 8, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 },
+  renew: withNonceChallenge({ workerRequests: 1, doRequests: 5, rowWrites: 8, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 }),
   // Charges summed into the day's aggregate (decision, read, token, login) each count one more row:
   // the first of a kind on an account each day flushes yesterday's aggregate as a ledger row,
   // which is kept for good (a few bytes; the monthly summary row is shared by all charges).
@@ -53,13 +62,13 @@ export const OPERATIONS = Object.freeze({
   decision: { workerRequests: 1, doRequests: 4, rowWrites: 6, cpuMs: 15, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
   // Authentication (which also checks the rate limit), charge (aggregated on the balance row), and
   // the read itself: at most two calls (a credential's decisions; an audience's usage).
-  read: { workerRequests: 1, doRequests: 4, rowWrites: 2, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 },
+  read: withNonceChallenge({ workerRequests: 1, doRequests: 4, rowWrites: 2, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 }),
   // Credential status (auth, with the rate limit), registry, charge. An X.509 certificate (B3) costs the
   // same: no registry read, one DER build and signature well inside the CPU allowance.
-  token: { workerRequests: 1, doRequests: 4, rowWrites: 2, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 },
+  token: withNonceChallenge({ workerRequests: 1, doRequests: 4, rowWrites: 2, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 }),
   // Consent (session check with the rate limit, registry, code put, code alarm) + token (take
   // code, registry, charge). Rows: code put, code taken, code deleted, balance, daily aggregate.
-  login: { workerRequests: 2, doRequests: 7, rowWrites: 5, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 },
+  login: withNonceChallenge({ workerRequests: 2, doRequests: 7, rowWrites: 5, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 }),
   // One gate contacted by a gate request (STATUS B7, D13), billed to the account whose gates they
   // are. Creating it rides on the decision that asks (no extra request), but adds the charge
   // (balance row and the day's aggregate row) and the request row. Its answer is a request of its
@@ -73,22 +82,22 @@ export const OPERATIONS = Object.freeze({
   // (10 ms more). Re-verifying a dashboard device (B9) is one such gate request: asking is a free
   // dashboard request, its answer deletes the row and records the re-verification on the
   // credential's row (instead of the decision's delete) with one audit row.
-  gate: { workerRequests: 1, doRequests: 3, rowWrites: 9, cpuMs: 25, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
+  gate: withNonceChallenge({ workerRequests: 1, doRequests: 3, rowWrites: 9, cpuMs: 25, storageKBMonths: 0.5 * 13, r2ClassA: 0 }),
   // A webhook gate contacted: as a gate, plus the signed POST to the service after the decision
   // (signing ~2 ms; the subrequest itself is not billed) and the transaction that records its
   // outcome ("failed", or the synchronous answer: 1 row). A late answer arrives as a callback
   // request (the answer's Worker and DO requests, already counted).
-  gate_webhook: { workerRequests: 1, doRequests: 3, rowWrites: 10, cpuMs: 28, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
+  gate_webhook: withNonceChallenge({ workerRequests: 1, doRequests: 3, rowWrites: 10, cpuMs: 28, storageKBMonths: 0.5 * 13, r2ClassA: 0 }),
   // A Duo or Okta Verify gate contacted: as a gate, plus starting the push (a signed subrequest,
   // 2 ms) and the transaction recording it (1 row), then up to 24 status polls, each an alarm
   // wake-up of the account (1 DO request, ~2 ms incl. unsealing the vendor secret); poll times are
   // kept in memory, so a poll writes nothing until the answer arrives (already counted).
-  gate_vendor: { workerRequests: 1, doRequests: 3 + 24, rowWrites: 10, cpuMs: 28 + 48, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
+  gate_vendor: withNonceChallenge({ workerRequests: 1, doRequests: 3 + 24, rowWrites: 10, cpuMs: 28 + 48, storageKBMonths: 0.5 * 13, r2ClassA: 0 }),
   // Issuing a confirmation (its gates are charged as gate requests): the device's request
   // (credential status with the rate limit, the account's confirm), the credential row's
   // confirmed_until, the charge on the balance row and the day's aggregate, an audit row (and its
   // deletion after 13 months), and signing the confirmation JWS.
-  confirm: { workerRequests: 1, doRequests: 2, rowWrites: 5, cpuMs: 5, storageKBMonths: 0.5 * 13, r2ClassA: 0 },
+  confirm: withNonceChallenge({ workerRequests: 1, doRequests: 2, rowWrites: 5, cpuMs: 5, storageKBMonths: 0.5 * 13, r2ClassA: 0 }),
   // One security email (STATUS S8, D9), charged to the account when it is queued, so it is
   // prepaid before anything is sent. Queueing rides on the request that caused it (an issuance,
   // an API key...): the charge (balance row, ledger and receipt rows, both deleted by compaction
@@ -104,7 +113,7 @@ export const OPERATIONS = Object.freeze({
   notice: { workerRequests: 0, doRequests: 3, rowWrites: 15, cpuMs: 10, storageKBMonths: 0.5 * 13, r2ClassA: 0, emails: 1 },
   // Authentication (with the rate limit), registry read, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
   // the charge's ledger and receipt rows and the audit row.
-  audience: { workerRequests: 1, doRequests: 4, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 }
+  audience: withNonceChallenge({ workerRequests: 1, doRequests: 4, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 })
 });
 
 /** Worst-case marginal cost of one operation in micro-dollars (not rounded). */

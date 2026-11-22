@@ -65,6 +65,42 @@ describe('cost policy matches the code', () => {
     within('token', await measured(() => ask('/api/v1/certificate', {})));
   });
 
+  /** A device on its own account, and a request that meets a just-started account object (D15). */
+  async function nonceDevice() {
+    const device = await newDevice();
+    const credential = (await enroll(env, 'alice', device, { grants: [{ actions: ['dba:credentials:read', 'hashbin:content:write'] }], aud: ['devicebasedauth.org', 'hashbin.org'] })).approve.body.credential;
+    const challenged = (method, path, body) => async () => {
+      env.ACCOUNTS.restart('alice');
+      const first = await call(env, method, path, { headers: await device.headers(method, path, credential), body });
+      expect(first.body.code).toBe('use_dpop_nonce');
+      const again = await call(env, method, path, { headers: await device.headers(method, path, credential, first.body.dpop_nonce), body });
+      expect(again.status).toBe(200);
+      return again;
+    };
+    return { device, credential, challenged };
+  }
+
+  it('a device\'s read when its account object just started: one nonce challenge more (D15)', async () => {
+    const { challenged } = await nonceDevice();
+    within('read', await measured(challenged('GET', '/api/v1/credentials')));
+  });
+
+  it('a device\'s token when its account object just started: one nonce challenge more (D15)', async () => {
+    const { challenged } = await nonceDevice();
+    within('token', await measured(challenged('POST', '/api/v1/token', { audience: 'hashbin.org' })));
+  });
+
+  it('dba curl and dba headers ask for the nonce first: the same one extra request (D15)', async () => {
+    const { device, credential } = await nonceDevice();
+    within('token', await measured(async () => {
+      env.ACCOUNTS.restart('alice');
+      const path = '/api/v1/dpop-nonce';
+      const asked = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential) });
+      expect(asked.body.code).toBe('use_dpop_nonce');
+      return call(env, 'POST', '/api/v1/token', { headers: await device.headers('POST', '/api/v1/token', credential, asked.body.dpop_nonce), body: { audience: 'hashbin.org' } });
+    }));
+  });
+
   it('renew and rotate', async () => {
     const device = await newDevice();
     let credential = (await enroll(env, 'alice', device)).approve.body.credential;

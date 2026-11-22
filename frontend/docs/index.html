@@ -22,9 +22,9 @@
 <li><a href="#format">The credential format</a></li>
 <li><a href="#browser">Quick start: browser SDK</a></li>
 <li><a href="#cli">Quick start: CLI</a></li>
-<li><a href="#android">Quick start: Android</a></li>
-<li><a href="#ios">Quick start: iOS and App Attest</a></li>
-<li><a href="#tpm">PCs: TPM key attestation</a></li>
+<li><a href="/docs/devices.html#android">Quick start: Android</a></li>
+<li><a href="/docs/devices.html#ios">Quick start: iOS and App Attest</a></li>
+<li><a href="/docs/devices.html#tpm">PCs: TPM key attestation</a></li>
 <li><a href="#verify">Verify requests on your server</a></li>
 <li><a href="#workers">Cloudflare Worker middleware</a></li>
 <li><a href="#authorize">Online authorization API</a></li>
@@ -102,7 +102,7 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 <tr><td><code>limits.spend_usd_per_month</code></td><td>Returned as a caveat for the site to enforce on its own spending.</td><td>The audience</td></tr>
 <tr><td><code>require.online</code></td><td>Every use goes through online authorization.</td><td>Online only</td></tr>
 <tr><td><code>require.step_up</code></td><td>The owner approves each use in the dashboard.</td><td>Online only</td></tr>
-<tr><td><code>require.attestation</code></td><td><code>"hardware"</code> (TEE, StrongBox, Secure Enclave or TPM) or <code>"strongbox"</code>: the credential's <code>device.attestation</code> must show the key there (<a href="#android">Android key attestation</a>, <a href="#ios">Apple App Attest</a>, <a href="#tpm">TPM</a>); otherwise <code>attestation_required</code>. Apple App Attest counts only for production builds of apps listed in <code>require.app_ids</code>.</td><td>Verifier (offline)</td></tr>
+<tr><td><code>require.attestation</code></td><td><code>"hardware"</code> (TEE, StrongBox, Secure Enclave or TPM) or <code>"strongbox"</code>: the credential's <code>device.attestation</code> must show the key there (<a href="/docs/devices.html#android">Android key attestation</a>, <a href="/docs/devices.html#ios">Apple App Attest</a>, <a href="/docs/devices.html#tpm">TPM</a>); otherwise <code>attestation_required</code>. Apple App Attest counts only for production builds of apps listed in <code>require.app_ids</code>.</td><td>Verifier (offline)</td></tr>
 <tr><td><code>require.app_ids</code></td><td>App ids: Apple (<code>TEAMID.bundle.id</code>, from App Attest) or Android (<code>android:&lt;package&gt;:&lt;SHA-256 of the signing certificate, lowercase hex&gt;</code>, from Key Attestation, and only on a phone with verified boot and a locked bootloader): the credential must carry an attestation from one of them; otherwise <code>attested_app_required</code>.</td><td>Verifier (offline)</td></tr>
 <tr><td><code>require.verified_boot</code></td><td>The attestation must report verified boot and a locked bootloader; otherwise <code>verified_boot_required</code>.</td><td>Verifier (offline)</td></tr>
 </tbody></table>
@@ -111,7 +111,7 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 
 <section id="browser">
 <h2>Quick start: browser SDK</h2>
-<p>The SDK makes a non-extractable P-256 key with WebCrypto and keeps it in IndexedDB: scripts on your origin can sign with it, but nothing can read it out. Enrollment opens the approval page in a popup, so call it from a click handler. Pin a versioned copy with Subresource Integrity in production (<code>/sdk/v1.3.0/dba.js</code>; hashes in <a href="/sdk/integrity.json">/sdk/integrity.json</a>). Do not use v1.0.0: its <code>autoRenew()</code> renews in a loop for credentials living longer than about 37 days.</p>
+<p>The SDK makes a non-extractable P-256 key with WebCrypto and keeps it in IndexedDB: scripts on your origin can sign with it, but nothing can read it out. Enrollment opens the approval page in a popup, so call it from a click handler. Pin a versioned copy with Subresource Integrity in production (<code>/sdk/v1.4.0/dba.js</code>; versions before v1.4.0 do not answer DPoP nonce challenges, so their first requests after an idle spell can fail; hashes in <a href="/sdk/integrity.json">/sdk/integrity.json</a>). Do not use v1.0.0: its <code>autoRenew()</code> renews in a loop for credentials living longer than about 37 days.</p>
 <pre class="code"><code>&lt;script type=&quot;module&quot;&gt;
   import { DBA } from &#39;https://devicebasedauth.org/sdk/dba.js&#39;;
 
@@ -133,7 +133,8 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 <table><thead><tr><th>Method</th><th>What it does</th></tr></thead><tbody>
 <tr><td><code>ready()</code></td><td>Loads the stored key and credential; true when an unexpired credential exists.</td></tr>
 <tr><td><code>enroll(request, { popup, onApprovalUrl, timeoutMs })</code></td><td>Signs an enrollment request with a new key, opens the approval page and resolves with the credential (by <code>postMessage</code>, or by polling when approved elsewhere).</td></tr>
-<tr><td><code>fetch(input, init)</code></td><td><code>fetch()</code> with the credential and a fresh proof attached.</td></tr>
+<tr><td><code>fetch(input, init)</code></td><td><code>fetch()</code> with the credential and a fresh proof attached. When the server answers with a DPoP nonce challenge (<code>401 use_dpop_nonce</code> and a <code>DPoP-Nonce</code> header, RFC 9449 §8) it sends the request once more with the nonce; <code>api()</code> and <code>fetchWithGates()</code> do the same. (v1.4.0)</td></tr>
+<tr><td><code>nonceChallenge(url, response)</code></td><td>For your own fetch code with <code>headers()</code>: keeps the nonce a response hands out for later proofs to that origin, and is true when the response is a nonce challenge, so send the request again with new headers. (v1.4.0)</td></tr>
 <tr><td><code>headers(method, url)</code></td><td>Just the <code>Authorization</code> and <code>DPoP</code> headers for one request (and <code>DBA-Confirmation</code> for a credential issued with <code>confirm</code>).</td></tr>
 <tr><td><code>fetchWithGates(input, init, { timeoutMs, onPending })</code></td><td>Like <code>fetch()</code>, but while the site answers <code>403 gate_pending</code> (its online check waits for the grant's gates) it sends the request again with a fresh proof every <code>retry_after</code> seconds. <code>onPending(gate_request)</code> is called once, to tell the user who must approve. (v1.2.0)</td></tr>
 <tr><td><code>confirm({ timeoutMs, onPending })</code></td><td>For a credential issued with <code>confirm</code>: asks its gates to confirm the device and waits; <code>headers()</code> and <code>fetch()</code> send the confirmation and call this by themselves when it is missing or about to end (pass <code>{ dba: { confirm: false } }</code> to <code>fetch</code> to never wait). (v1.2.0)</td></tr>
@@ -148,7 +149,7 @@ DPoP: &lt;proof: {&quot;typ&quot;:&quot;dpop+jwt&quot;,&quot;alg&quot;:&quot;ES2
 
 <section id="cli">
 <h2>Quick start: CLI</h2>
-<p>The <code>dba</code> CLI never sends the key anywhere. It keeps it in the OS secret store when there is one (the macOS Keychain, the Secret Service through <code>secret-tool</code> on Linux, or on Windows sealed with DPAPI for your Windows account, through the built-in Windows PowerShell), and the credential then says <code>key_protection: "os-keychain"</code>; otherwise in a <code>0600</code> file under <code>~/.config/dba/&lt;profile&gt;/</code> (<code>"software"</code>). <code>--key-store os</code> or <code>file</code> (or <code>DBA_KEY_STORE</code>) makes the choice explicit. On a PC with a TPM 2.0 and tpm2-tools, <code>--key-store tpm</code> makes the key inside the TPM, where it stays: the TPM signs every request, and <code>dba</code> proves to the issuer that the key is there (<a href="#tpm">TPM attestation</a>), so the credential satisfies grants that require hardware. <code>dba help</code> lists every command.</p>
+<p>The <code>dba</code> CLI never sends the key anywhere. It keeps it in the OS secret store when there is one (the macOS Keychain, the Secret Service through <code>secret-tool</code> on Linux, or on Windows sealed with DPAPI for your Windows account, through the built-in Windows PowerShell), and the credential then says <code>key_protection: "os-keychain"</code>; otherwise in a <code>0600</code> file under <code>~/.config/dba/&lt;profile&gt;/</code> (<code>"software"</code>). <code>--key-store os</code> or <code>file</code> (or <code>DBA_KEY_STORE</code>) makes the choice explicit. On a PC with a TPM 2.0 and tpm2-tools, <code>--key-store tpm</code> makes the key inside the TPM, where it stays: the TPM signs every request, and <code>dba</code> proves to the issuer that the key is there (<a href="/docs/devices.html#tpm">TPM attestation</a>), so the credential satisfies grants that require hardware. <code>dba help</code> lists every command.</p>
 <pre class="code" data-sample="enroll-and-call.sh"><code># 1. Make a key and ask for permission to publish on hashbin.org. This prints a link; the
 #    account owner opens it, checks the grants and approves. The command waits for that.
 dba enroll --aud hashbin.org --action hashbin:content:write --name &quot;Sample laptop&quot; --wait 300
@@ -182,87 +183,7 @@ await dba.enroll({ device: { name: &#39;Kiosk 1&#39; } }, { enrollmentToken }) /
 <p>Under the hood that is <code>POST /api/v1/enrollments/redeem</code> with <code>{request, enrollment_token}</code>, where <code>request</code> is the usual <code>dba-enroll+jwt</code>; it may narrow the token's audiences, grants and lifetime but never widen them. Each device costs the issue price, paid by the token's account; the token stops after <code>max_uses</code> devices (at most 10,000), on its expiry (at most 90 days), or when revoked. Credentials record which token issued them. A device signed in with a delegated credential cannot create tokens.</p>
 </section>
 
-<section id="android">
-<h2>Quick start: Android</h2>
-<p><a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/android"><code>docs/samples/android</code></a> is two files to copy into an app (API 26+, no dependencies): <code>AndroidKeystoreKeys</code> generates a P-256 signing key inside the Android Keystore (StrongBox when the phone has one), and <code>DbaClient</code> sends the signed enrollment request, waits for approval and signs a DPoP proof for each call. The key never leaves the secure hardware; only its public half is sent. Run the calls off the main thread.</p>
-<pre class="code"><code>String challenge = DbaClient.attestationChallenge(origin);              // for key attestation
-AndroidKeystoreKeys keys = AndroidKeystoreKeys.create("dba-device", challenge);
-DbaClient client = new DbaClient(origin, keys.privateKey(), keys.publicKey());
-String credential = client.enroll(List.of("hashbin.org"), grants,
-    DbaClient.map("name", Build.MODEL, "kind", "phone", "key_protection", keys.keyProtection()),
-    keys.attestation(challenge),                                            // the Keystore's certificate chain
-    url -&gt; startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))));   // owner approves
-Object result = client.call("POST", "https://hashbin.org/api/content", credential, body);</code></pre>
-<p>Because the key was generated with devicebasedauth.org's challenge, the Keystore's certificate chain proves to the issuer that the key lives in a TEE or StrongBox and was never exported. The approval page and the credential then say <em>Android Keystore, attested by Google</em> (with the verified-boot state) instead of <em>self-reported</em>, in <code>device.attestation</code> (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>). The attestation also names the app that made the key, so a grant can pin your app with <code>"require": { "app_ids": ["android:com.example.app:&lt;sha256&gt;"] }</code>, where the digest is your signing certificate's SHA-256 as lowercase hex (<code>apksigner verify --print-certs</code>, or the Play Console's app signing page without the colons); it counts only on phones with verified boot and a locked bootloader. A rejected chain fails the enrollment with <code>invalid_attestation</code>; leave out the attestation to enroll without one. On later runs use <code>AndroidKeystoreKeys.load("dba-device")</code>.</p>
-<p>The same <code>DbaClient</code> runs in CI on a plain JVM with a software key (<code>Main.java</code>, below), against a local server, and the Keystore class is type-checked against the Android API there:</p>
-<pre class="code" data-sample="android/Main.java"><code>        DbaClient client = new DbaClient(origin, key.getPrivate(), (ECPublicKey) key.getPublic());
 
-        List&lt;Object&gt; grants = List.of(DbaClient.map(&quot;actions&quot;, List.of(&quot;hashbin:content:write&quot;)));
-        Map&lt;String, Object&gt; device = DbaClient.map(&quot;name&quot;, &quot;Android sample&quot;, &quot;kind&quot;, &quot;phone&quot;, &quot;key_protection&quot;, &quot;software&quot;);
-        String credential = client.enroll(Collections.singletonList(&quot;hashbin.org&quot;), grants, device, url -&gt; {
-            System.out.println(&quot;Ask the account owner to approve this device:&quot;);
-            System.out.println(url);
-            System.out.flush();
-        });
-        String payload = new String(Base64.getUrlDecoder().decode(credential.split(&quot;\\.&quot;)[1]), java.nio.charset.StandardCharsets.UTF_8);</code></pre>
-<p class="small muted">Store the credential next to the key alias (it is not secret) and renew it at about two thirds of its lifetime with <code>client.call("POST", origin + "/api/v1/credentials/" + cid + "/renew", credential, DbaClient.map())</code>, as <code>Main.java</code> does. For iPhone and iPad see <a href="#ios">iOS</a>.</p>
-</section>
-
-<section id="ios">
-<h2>Quick start: iOS and Apple App Attest</h2>
-<p><a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/ios"><code>docs/samples/ios</code></a> is a Swift package (iOS 15+, Foundation, CryptoKit and DeviceCheck only) to copy into an app or depend on: <code>SecureEnclaveKeys</code> generates the P-256 signing key inside the Secure Enclave and keeps only its encrypted handle in the Keychain (this device only), <code>AppAttest</code> has App Attest vouch for it, and <code>DbaClient</code> sends the signed enrollment request, waits for approval and signs a DPoP proof for each call.</p>
-<pre class="code"><code>let key = try SecureEnclaveKeys.loadOrCreate(name: "dba-device")
-let client = DbaClient(origin: "https://devicebasedauth.org", key: key)
-let challenge = try await client.attestationChallenge()
-let attestation = try await AppAttest.attestation(for: key, challenge: challenge, appId: "ABCDE12345.org.example.wallet")
-let credential = try await client.enroll(audiences: ["hashbin.org"], grants: grants,
-    device: ["name": UIDevice.current.name, "kind": "phone", "key_protection": "secure-enclave"],
-    attestation: attestation) { url in UIApplication.shared.open(URL(string: url)!) }   // owner approves
-let result = try await client.call("POST", "https://hashbin.org/api/content", credential: credential, body: body)</code></pre>
-<p>CI builds the package on macOS, type-checks it for iOS, and runs the same <code>DbaClient</code> against a local server with a software key (<code>Sources/dba-sample/main.swift</code>; CI machines have no Secure Enclave):</p>
-<pre class="code" data-sample="ios/Sources/dba-sample/main.swift"><code>    var credential = try await client.enroll(
-        audiences: [&quot;hashbin.org&quot;],
-        grants: [[&quot;actions&quot;: [&quot;hashbin:content:write&quot;]]],
-        device: [&quot;name&quot;: &quot;iOS sample&quot;, &quot;kind&quot;: &quot;phone&quot;, &quot;key_protection&quot;: &quot;software&quot;]
-    ) { url in
-        print(&quot;Ask the account owner to approve this device:&quot;)
-        print(url)
-        fflush(stdout)
-    }</code></pre>
-<p>What the attestation proves:</p>
-<p>App Attest cannot vouch for an arbitrary key: Apple attests a key of its own and says which app, on a genuine iPhone or iPad, holds it. So an iOS app makes its DBA key in the Secure Enclave as usual and then has App Attest vouch for that key:</p>
-<ol>
-<li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>
-<li>Generate the P-256 signing key in the Secure Enclave and compute its JWK thumbprint (RFC 7638).</li>
-<li>Call <code>DCAppAttestService.shared.generateKey()</code>, then <code>attestKey(keyId, clientDataHash:)</code> with the SHA-256 of the UTF-8 string <code>"&lt;challenge&gt;.&lt;thumbprint&gt;"</code>.</li>
-<li>Add <code>attestation: { format: "apple-appattest", challenge, app_id: "TEAMID.bundle.id", key_id, object }</code> (<code>key_id</code> and <code>object</code> base64) to the signed enrollment request.</li>
-</ol>
-<p>The issuer checks Apple's certificate chain, the nonce, the key id, the app id and the counter (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>) and signs <code>{ format: "apple-appattest", security_level: "secure_enclave", app_id, environment }</code> into <code>device.attestation</code>; the approval page says <em>Secure Enclave, reported by the app … as attested by Apple</em>. Because what Apple proves is the app, not the key, a grant counts it for <code>require.attestation</code> only when it also names the app in <code>require.app_ids</code>, and only for production builds:</p>
-<pre class="code"><code>{ "actions": ["hashbin:content:write"],
-  "require": { "attestation": "hardware", "app_ids": ["ABCDE12345.org.example.wallet"] } }</code></pre>
-</section>
-
-<section id="tpm">
-<h2>PCs: TPM key attestation</h2>
-<p>On a PC with a TPM 2.0, keep the DBA key in the TPM and have the TPM's attestation identity key (AIK) certify it. Windows gets an AIK certificate from Microsoft after checking the TPM's endorsement certificate, so the issuer can trust it:</p>
-<ol>
-<li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>
-<li>Create a P-256 signing key in the TPM (Windows: the Microsoft Platform Crypto Provider) and compute its JWK thumbprint (RFC 7638).</li>
-<li>Certify it with the AIK (<code>TPM2_Certify</code>; on Windows <code>NCryptCreateClaim</code> with the "Windows AIK") using qualifying data = SHA-256 of the UTF-8 string <code>"&lt;challenge&gt;.&lt;thumbprint&gt;"</code>.</li>
-<li>Add <code>attestation: { format: "tpm", challenge, alg, x5c, sig, cert_info, pub_area }</code> to the signed enrollment request: <code>alg</code> <code>-257</code> (RS256) or <code>-65535</code> (RS1), <code>x5c</code> the AIK certificate and its CA (base64 DER), and the signature, <code>TPMS_ATTEST</code> and <code>TPMT_PUBLIC</code> in base64.</li>
-</ol>
-<p>The issuer checks the chain to Microsoft's TPM root and its revocation list, the AIK certificate, the signature, that the certified key is the enrolled key, and that it was generated in the TPM and cannot leave it (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §3a</a>). It signs <code>{ format: "tpm", security_level: "tpm", tpm_manufacturer }</code> into <code>device.attestation</code>, which satisfies <code>require.attestation: "hardware"</code> (not <code>"strongbox"</code>, and not <code>require.verified_boot</code>).</p>
-<h3>Linux and other TPMs without a Microsoft AIK certificate</h3>
-<p>Here the TPM proves that its attestation key (AK) sits beside its endorsement key (EK), whose certificate the TPM's manufacturer issued. The device key is the same TPM-resident P-256 key; with tpm2-tools that is <code>tpm2_createek</code>, <code>tpm2_createak</code>, <code>tpm2_create</code> with <code>fixedtpm|fixedparent|sensitivedataorigin|sign</code>, and <code>tpm2_certify</code>:</p>
-<ol>
-<li>Get a challenge as above.</li>
-<li><code>POST /api/v1/enrollments/tpm-activation</code> with <code>{ challenge, ek_certificate, ak_pub_area, pub_area, cert_info, sig }</code>, all base64: the RSA-2048 EK certificate (<code>tpm2_nvread 0x01c00002</code>), the AK's public area, the device key's public area, and the certify's <code>TPMS_ATTEST</code> and <code>TPMT_SIGNATURE</code>. Add <code>ek_chain</code> if your EK certificate's CA is not one DBA knows but chains to one.</li>
-<li>The answer holds a secret only your TPM can unwrap, as <code>credential_blob</code> (the file <code>tpm2_activatecredential -i</code> reads) or as <code>id_object</code> and <code>encrypted_secret</code>, and an <code>activation</code> token. Unwrap it with <code>TPM2_ActivateCredential</code> (AK and EK loaded; the EK needs a policy session with <code>tpm2_policysecret -c e</code>).</li>
-<li>Add <code>attestation: { format: "tpm-ek", challenge, activation, secret }</code> (the secret base64) to the signed enrollment request, within 10 minutes.</li>
-</ol>
-<p>A complete shell script, run in CI against a software TPM, does all of this and then signs each request's DPoP proof with <code>tpm2_sign</code>: <a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/tpm/enroll-tpm.sh">docs/samples/tpm/enroll-tpm.sh</a>. The <code>dba</code> CLI does the same for you with <code>dba enroll --key-store tpm</code> (<a href="https://github.com/curtcox/device-based-auth/blob/main/docs/samples/tpm/dba-cli.sh">docs/samples/tpm/dba-cli.sh</a>, also run in CI). A key rotated with <code>dba renew --rotate</code> moves to a new TPM key, but the renewed credential carries no attestation until the device enrolls again.</p>
-<p>The issuer checks the EK certificate against the TPM manufacturers' EK CAs (Infineon, STMicroelectronics, Nuvoton, Intel, Nationz), the AK's attributes and signature, the certified key, and the returned secret, checks the EK certificate (and any CA you sent in <code>ek_chain</code>) against its manufacturer's revocation list when the certificate names one (an unreachable list answers <code>503 attestation_unavailable</code>; try again), then signs the same <code>{ format: "tpm", security_level: "tpm", tpm_manufacturer }</code>. The EK certificate is not stored. Virtual TPMs (cloud vTPMs, swtpm) are not trusted.</p>
-</section>
 
 <section id="verify">
 <h2>Verify requests on your server</h2>
@@ -458,7 +379,7 @@ curl --cert ~/.config/dba/default/client.crt --key ~/.config/dba/default/client.
 <p>Errors are JSON <code>{ "error": "message", "code": "machine_code", … }</code>:</p>
 <table><thead><tr><th>Status</th><th>Codes (examples)</th><th>Meaning</th></tr></thead><tbody>
 <tr><td>400</td><td><code>invalid_json</code>, <code>invalid_grants</code>, <code>invalid_audience</code>, <code>invalid_enrollment</code>, <code>confirm_required</code></td><td>The request is malformed or names something unknown.</td></tr>
-<tr><td>401</td><td><code>auth_required</code>, <code>invalid_auth</code>, <code>proof_required</code>, <code>stale_proof</code>, <code>replayed_proof</code> (each proof is accepted once: make a new one per request, retries included), <code>key_mismatch</code>, <code>revoked</code>, <code>expired</code>, <code>reissue_required</code> (renew the credential: its issuer key was withdrawn)</td><td>Who you are could not be established. Device errors also set <code>WWW-Authenticate: DPoP</code>.</td></tr>
+<tr><td>401</td><td><code>auth_required</code>, <code>invalid_auth</code>, <code>proof_required</code>, <code>stale_proof</code>, <code>replayed_proof</code> (each proof is accepted once: make a new one per request, retries included), <code>use_dpop_nonce</code> (the account's object started less than a minute ago and asks for its nonce: make a new proof with the <code>nonce</code> claim set to the <code>DPoP-Nonce</code> header, also in <code>dpop_nonce</code>, and send again; clients that cannot send twice ask <code>POST /api/v1/dpop-nonce</code> first, free), <code>key_mismatch</code>, <code>revoked</code>, <code>expired</code>, <code>reissue_required</code> (renew the credential: its issuer key was withdrawn)</td><td>Who you are could not be established. Device errors also set <code>WWW-Authenticate: DPoP</code>.</td></tr>
 <tr><td>402</td><td><code>insufficient_balance</code> (with <code>needed_microdollars</code>, <code>price_microdollars</code>)</td><td>The balance cannot cover the price. Nothing was done or charged.</td></tr>
 <tr><td>403</td><td><code>insufficient_scope</code>, <code>forbidden</code>, <code>not_narrower</code>, <code>delegation_depth</code>, <code>domain_unverified</code></td><td>Authenticated, but not allowed.</td></tr>
 <tr><td>404</td><td><code>not_found</code>, <code>unknown_audience</code></td><td>No such thing in your account.</td></tr>

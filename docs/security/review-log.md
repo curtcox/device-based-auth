@@ -28,22 +28,20 @@ Self-review done (delegation fixes in 8c68a50); budget guards (daily issuance li
 - `dba curl` put the credential and DPoP proof on curl's command line, where any local user can read them (ps); since DPoP does not sign the body, the proof could be raced to the same URL with another body; the headers now go through a private 0600 file (`-H @file`, curl 7.55+).
 - (found by an independent review of the attestation code): the TPM attestation chain checked only signatures, so one genuine Microsoft-issued AIK (a restricted TPM key signs any data not starting `TPM_GENERATED`, a TBSCertificate included) could issue a certificate for a software key and get it attested `security_level: tpm`, satisfying `require.attestation: hardware`; every certificate above the leaf must now be a CA (basicConstraints cA, keyCertSign when keyUsage is present, pathLenConstraint; `requireCaChain`, also applied to Android chains as defense in depth), and the AIK certificate must carry basicConstraints with cA false (WebAuthn §8.3.1); a malformed basicConstraints in `ek_chain` gave a 500, now 400.
 - The hourly caps on recoveries anyone may start (three by gate and three by email per account, each pushing or emailing the owner and possibly charging them a gate request or an email) were counted in the account object's memory, which starts from zero whenever the object is evicted after a short idle, so a stranger who paused between bursts could flood an owner and drain their balance; the counts are now on the profile row (`src/recovery.test.js`, `src/email-recovery.test.js` restart the object between starts).
+- (D15, owner's choice 2026-11-22) DBA's own API checked each DPoP proof once against a cache in the account object's memory, which is empty again whenever the object starts (an eviction after 70–140 s idle, a deploy, a move); a proof is accepted for up to 120 s after its `iat`, so a captured proof and credential could be sent once more, with another body, after a restart. For its first 60 s an object now requires its own nonce (RFC 9449 §8) in every proof whose `iat` is earlier than 60 s after its start, which no earlier object could have accepted, answering 401 `use_dpop_nonce` with `DPoP-Nonce`; the SDK (v1.4.0), the dashboard, the CLI and the samples answer it, and the extra round trip is counted in the prices it affects (`src/dpop-nonce.test.js`, `src/cost-counts.test.js`, every CI sample after a forced restart).
 
 ## Known limits
 
 - A stolen `dba:session` device can still issue itself a new non-`dba:` credential without step-up (only `dba:*` issuance needs a recent sign-in), so `dba:session` remains as strong as the owner's session.
-- **Replay caches live in memory.** The DPoP replay checks for DBA's own API and for online
-  `/authorize` keep seen proofs in the account's Durable Object memory. A proof is accepted for up
-  to 120 s after its `iat` (`PROOF_MAX_AGE` 60 s plus `CLOCK_SKEW` 60 s), so if the object is
-  evicted (after about a minute or two of idle) or restarted (a deploy) inside that time, a
-  captured proof and credential could be used once more, with another body, before the proof
-  ages out. It needs a captured proof and an otherwise idle account. Storing each proof would add a
-  row write and its deletion to every authenticated request, past the read and issue price floors,
-  so the options are owner decisions: (a) DPoP server nonces (RFC 9449 §8) demanded by a freshly
-  started object for proofs it cannot rule out, which needs `use_dpop_nonce` retries in the SDK,
-  CLI and samples; (b) a shorter window on DBA's own API (for example 60 s in all), which closes the
-  gap for clients with accurate clocks but refuses clients more than a minute slow; (c) storing
-  proofs only for requests that already write, with the row counted in their prices. Rate limits,
-  gate request limits and wrong-answer counters are in memory on purpose (their callers are the
-  owner's own devices or are paid for); the anonymous recovery caps no longer are (fixed above).
+- **Online `/authorize` keeps its replay cache in memory.** A DPoP proof is accepted for up to
+  120 s after its `iat` (`PROOF_MAX_AGE` 60 s plus `CLOCK_SKEW` 60 s), and the account's object
+  forgets the proofs it saw when it starts (after 70–140 s idle, a deploy, a move). DBA's own API
+  now closes that gap with server nonces (fixed below, D15); `/authorize` does not, because the
+  nonce would have to travel back through the site (a `use_dpop_nonce` decision the site relays
+  as a 401 with `DPoP-Nonce`, which the browser SDK v1.4.0 already answers) and every denial is
+  billed to the site as a decision, so each challenge would cost it an extra 14 µ$. A site that
+  also checks proofs with its own replay cache (`durableReplayCache`, B4) is not exposed. Whether
+  to add the relay and how to bill it is the owner's decision. Rate limits, gate request limits
+  and wrong-answer counters are in memory on purpose (their callers are the owner's own devices or
+  are paid for); the anonymous recovery caps no longer are (fixed above).
 - An independent review is still needed (STATUS L12).

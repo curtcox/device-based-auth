@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { price } from './utils/pricing.js';
 import { testEnv, call, newDevice, enroll } from '../test-utils/env.js';
 import { inspectCredential, signJws } from '../packages/verify/src/index.js';
 
@@ -17,7 +18,7 @@ describe('dry runs', () => {
     const before = await balance(env, 'alice');
     const quote = await call(env, 'POST', '/api/v1/credentials?dry_run=1', { auth: 'alice', body: { nonsense: true } });
     expect(quote.status).toBe(200);
-    expect(quote.body).toEqual({ dry_run: true, op: 'issue', price_microdollars: 85, balance_microdollars: before, sufficient: true, cost_microdollars: 0 });
+    expect(quote.body).toEqual({ dry_run: true, op: 'issue', price_microdollars: price('issue'), balance_microdollars: before, sufficient: true, cost_microdollars: 0 });
     expect(quote.headers.get('X-DBA-Balance-Microdollars')).toBe(String(before));
     expect(await balance(env, 'alice')).toBe(before);
     expect((await call(env, 'GET', '/api/v1/credentials', { auth: 'alice' })).body.items).toHaveLength(0);
@@ -26,7 +27,7 @@ describe('dry runs', () => {
   it('says when the balance would not cover the price', async () => {
     await fund(env, 'bob', 50);
     const quote = await call(env, 'POST', '/api/v1/enrollments/approve?dry_run=1', { auth: 'bob', body: {} });
-    expect(quote.body).toMatchObject({ op: 'issue', price_microdollars: 85, balance_microdollars: 50, sufficient: false });
+    expect(quote.body).toMatchObject({ op: 'issue', price_microdollars: price('issue'), balance_microdollars: 50, sufficient: false });
   });
 
   it('still requires authentication and access', async () => {
@@ -43,7 +44,7 @@ describe('dry runs', () => {
     expect(renew.body).toEqual({ dry_run: true, op: 'renew', price_microdollars: 25, cost_microdollars: 0 });
     const keyProof = await signJws({ typ: 'dba-rotate+jwt', jwk: next.publicJwk }, { cid, iat: Math.floor(Date.now() / 1000) }, next.privateKey);
     const rotate = await call(env, 'POST', `${path}?dry_run=1`, { headers: await device.headers('POST', path, credential), body: { new_key_proof: keyProof } });
-    expect(rotate.body).toMatchObject({ op: 'issue', price_microdollars: 85 });
+    expect(rotate.body).toMatchObject({ op: 'issue', price_microdollars: price('issue') });
     // Nothing happened: the credential is still version 1 and renews for real afterwards.
     const real = await call(env, 'POST', path, { headers: await device.headers('POST', path, credential), body: {} });
     expect(real.body).toMatchObject({ jti: `${cid}.2`, cost_microdollars: 25 });
@@ -52,7 +53,7 @@ describe('dry runs', () => {
 
   it('quotes the public enrollment-token redemption with the price only', async () => {
     const quote = await call(env, 'POST', '/api/v1/enrollments/redeem?dry_run=1', { body: {} });
-    expect(quote.body).toEqual({ dry_run: true, op: 'issue', price_microdollars: 85, cost_microdollars: 0 });
+    expect(quote.body).toEqual({ dry_run: true, op: 'issue', price_microdollars: price('issue'), cost_microdollars: 0 });
   });
 });
 
@@ -61,10 +62,10 @@ describe('balance after billable calls', () => {
     await fund(env, 'alice');
     const device = await newDevice();
     const { approve } = await enroll(env, 'alice', device);
-    expect(approve.body).toMatchObject({ cost_microdollars: 85, balance_microdollars: 1_000_000 - 85 });
+    expect(approve.body).toMatchObject({ cost_microdollars: price('issue'), balance_microdollars: 1_000_000 - price('issue') });
     const created = await call(env, 'POST', '/api/v1/credentials', { auth: 'alice', body: { public_jwk: (await newDevice()).publicJwk, aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }] } });
-    expect(created.body).toMatchObject({ cost_microdollars: 85, balance_microdollars: 1_000_000 - 170 });
-    expect(created.headers.get('X-DBA-Balance-Microdollars')).toBe(String(1_000_000 - 170));
+    expect(created.body).toMatchObject({ cost_microdollars: price('issue'), balance_microdollars: 1_000_000 - 2 * price('issue') });
+    expect(created.headers.get('X-DBA-Balance-Microdollars')).toBe(String(1_000_000 - 2 * price('issue')));
   });
 
   it('reports it to API keys that may read the account, not to others', async () => {
@@ -73,9 +74,9 @@ describe('balance after billable calls', () => {
     const reader = await key(['credentials:read', 'account:read']);
     const blind = await key(['credentials:read']);
     const seen = await call(env, 'GET', '/api/v1/credentials', { auth: reader });
-    expect(seen.body).toMatchObject({ cost_microdollars: 5, balance_microdollars: 1_000_000 - 5 });
+    expect(seen.body).toMatchObject({ cost_microdollars: price('read'), balance_microdollars: 1_000_000 - price('read') });
     const hidden = await call(env, 'GET', '/api/v1/credentials', { auth: blind });
-    expect(hidden.body.cost_microdollars).toBe(5);
+    expect(hidden.body.cost_microdollars).toBe(price('read'));
     expect(hidden.body.balance_microdollars).toBeUndefined();
     expect(hidden.headers.get('X-DBA-Balance-Microdollars')).toBeNull();
   });
@@ -84,6 +85,6 @@ describe('balance after billable calls', () => {
     await fund(env, 'alice');
     const created = await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'issuer', scopes: ['credentials:issue', 'account:read'] } });
     const quote = await call(env, 'POST', '/api/v1/credentials?dry_run=1', { auth: `ApiKey ${created.body.secret}`, body: {} });
-    expect(quote.body).toEqual({ dry_run: true, op: 'issue', price_microdollars: 85, balance_microdollars: 1_000_000 - 5, sufficient: true, cost_microdollars: 5 });
+    expect(quote.body).toEqual({ dry_run: true, op: 'issue', price_microdollars: price('issue'), balance_microdollars: 1_000_000 - price('read'), sufficient: true, cost_microdollars: price('read') });
   });
 });

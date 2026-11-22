@@ -37,22 +37,22 @@ handler adds a Durable Object call or a storage write.
 
 | Operation | Who pays | Counted (per `OPERATIONS`) | Cost µ$ | Floor µ$ | **Price µ$** |
 |-----------|----------|----------------------------|--------:|---------:|-------------:|
-| Issue a credential (enrollment approval or API) | Issuing account | 3 Worker req, 20 DO req, 26 rows, 81 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries, an enrollment token's check and use counter, and the **deletion of its records** after 13 months | 52 | 85 | **85** |
-| Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 52 | 85 | **85** |
-| Renew (same key) | Issuing account | 1 Worker req, 5 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 10 ms, 1 KB × 13 months | 12 | 20 | **25** |
+| Issue a credential (enrollment approval or API) | Issuing account | 4 Worker req, 21 DO req, 26 rows, 93 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries, an enrollment token's check and use counter, and the **deletion of its records** after 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 53 | 87 | **87** |
+| Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 53 | 87 | **87** |
+| Renew (same key) | Issuing account | 2 Worker req, 6 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 10 ms, 1 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 13 | 22 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 6 rows (balance, daily aggregate row, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 8 | 14 | **14** |
-| Gate request, per gate contacted (**proposed, D13**) | Account that owns the gates (the credential's issuer) | 1 Worker req and 3 DO req (the answer: authentication with the rate limit and the account; the alarm that prunes it), 9 rows (balance and daily aggregate row; request row; its answer or timeout settlement; an audit row and its deletion after 13 months; the row's deletion when used or pruned; for TOTP and security keys, the gate row's last step or signature counter), 25 ms (Web Push to up to 5 browsers; the notice of an allow by timeout; code and signature checks), 0.5 KB × 13 months | 12 | 20 | **20** |
-| Webhook gate request, per webhook gate contacted (**proposed, D13**) | Same | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 13 | 22 | **22** |
+| Gate request, per gate contacted (**proposed, D13**) | Account that owns the gates (the credential's issuer) | 2 Worker req and 4 DO req (the answer: authentication with the rate limit and the account; the alarm that prunes it), 9 rows (balance and daily aggregate row; request row; its answer or timeout settlement; an audit row and its deletion after 13 months; the row's deletion when used or pruned; for TOTP and security keys, the gate row's last step or signature counter), 25 ms (Web Push to up to 5 browsers; the notice of an allow by timeout; code and signature checks), 0.5 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 13 | 22 | **22** |
+| Webhook gate request, per webhook gate contacted (**proposed, D13**) | Same | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 14 | 23 | **23** |
 | Duo or Okta Verify gate request, per vendor gate contacted (**proposed, D13**) | Account that owns the gates | As a gate request, plus starting the push (signed subrequest, 1 row) and up to 24 status polls, each an alarm wake-up (24 DO req, ~2 ms each) | 18 | 30 | **30** |
-| Confirmation issued (periodic confirmation, **proposed, D13**) | Account that issued the credential (its gates are charged as gate requests) | 1 Worker req, 2 DO req, 5 rows (credential row, balance and daily aggregate row, an audit row and its later deletion), 5 ms (signing), 0.5 KB × 13 months | 7 | 12 | **12** |
+| Confirmation issued (periodic confirmation, **proposed, D13**) | Account that issued the credential (its gates are charged as gate requests) | 2 Worker req, 3 DO req, 5 rows (credential row, balance and daily aggregate row, an audit row and its later deletion), 5 ms (signing), 0.5 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 8 | 14 | **14** |
 | Security email (D9) | Account it is sent to, when it is queued | 3 DO req (up to 3 alarm wake-ups, one per attempt), 15 rows (charge: balance, ledger and receipt rows and their later deletion; queue row and alarm; attempts' rewrites or deletion and next alarms; an audit row and its deletion; the digest's last-sent row), 10 ms (SigV4 signing per attempt), 0.5 KB × 13 months, **1 SES email** (100 µ$; retried only when SES answered that it did not take it, so at most one is billed) | 117 | 191 | **200** |
-| Metered API read (API key or non-dashboard device) | Caller | 1 Worker req, 4 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) | 3 | 5 | **5** |
-| Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 1 Worker req, 4 DO req, 2 rows (balance, daily aggregate row) | 3 | 5 | **5** |
-| OpenID Connect sign-in | The site (audience owner) | 2 Worker req, 7 DO req, 5 rows (incl. daily aggregate row) | 7 | 12 | **12** |
-| Register or change an audience | Audience owner | 1 Worker req, 4 DO req, 8 rows (incl. later deletions), 4 KB × 13 months | 20 | 33 | **100** |
+| Metered API read (API key or non-dashboard device) | Caller | 2 Worker req, 5 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 4 | 7 | **7** |
+| Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 2 Worker req, 5 DO req, 2 rows (balance, daily aggregate row) — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 4 | 7 | **7** |
+| OpenID Connect sign-in | The site (audience owner) | 3 Worker req, 8 DO req, 5 rows (incl. daily aggregate row) — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 8 | 14 | **14** |
+| Register or change an audience | Audience owner | 2 Worker req, 5 DO req, 8 rows (incl. later deletions), 4 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 20 | 33 | **100** |
 | Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
 
-Decision, login, read, token and issue prices sit exactly at their floors (the thinnest margin the
+Decision, login, read, token, issue and confirmation prices sit exactly at their floors (the thinnest margin the
 rule allows). The owner approved these prices on 2026-11-18 (D6). That day issue went from 75 to
 85 µ$, when record compaction (below) added the deletes it prepays, and decision and login from 10
 to 12 µ$, when counting the daily aggregate ledger row (below) raised their floors. Later that day
@@ -60,6 +60,16 @@ an audit of online decisions found two more rows in the worst case (a usage wind
 single decision is written and later deleted; so is a step-up request), so decision went to its
 new floor of 14 µ$, also approved by the owner (D11). Step-up requests are now reused while
 they wait and deleted when their approval is used, which keeps it at two rows rather than three.
+
+**DPoP nonces (D15, approved by the owner 2026-11-22).** The account's object keeps the DPoP
+proofs it has seen in memory, which is empty again whenever the object starts (after a minute or
+two idle, a deploy, a move), so for its first 60 s it asks every proof for its nonce (RFC 9449
+§8): the device's first request answers `401 use_dpop_nonce` and is sent once more. A device that
+calls every few minutes meets this on most calls, so every operation a device can ask for with a
+proof counts one more Worker request, its authentication (1 DO request) and 2 ms. That raised the
+floors of issue (85 → 87), read and token (5 → 7), OpenID Connect sign-in (12 → 14), confirmation
+(12 → 14), gate (20 → 22) and webhook gate (22 → 23) requests; prices moved to the new floors. Online
+`/authorize` (paid by the site) is unchanged: it does not ask for nonces (STATUS L12).
 
 ### Gate requests (proposed, STATUS D13)
 
@@ -104,7 +114,7 @@ found metered reads making 4 DO requests where 3 were counted (5 before authenti
 the rate-limit check, which every authenticated request used to spend a DO request on), an
 audience change making 4, and connected MCP apps writing a "last used" row every hour, which is
 gone (the hourly refresh records `refreshed_at`). It also found the MCP refresh grant writing a
-row per refresh without charging; a refresh now costs a token (5 µ$, about $0.004 a month for an
+row per refresh without charging; a refresh now costs a token (7 µ$, about $0.005 a month for an
 app connected around the clock), and keeps its refresh digest on the balance row so it writes no
 row of its own.
 
@@ -175,19 +185,19 @@ The webhook test button (`POST /api/v1/audiences/{name}/webhook-test`) is charge
 | Small team: 200 devices, 7-day credentials | 200 × 4.3 × 25 µ$ ≈ **$0.02** |
 | Agent fleet: 1,000 agents, 1-hour credentials, 24/7 | 1,000 × 720 × 25 µ$ = **$18.00** |
 | Site doing 10 M online decisions | 10 M × 14 µ$ = **$140** |
-| Script polling the API 1 M times | 1 M × 5 µ$ = **$5** |
+| Script polling the API 1 M times | 1 M × 7 µ$ = **$7** |
 
-A $5 deposit covers about 58,000 issuances, 200,000 renewals, or about 357,000 online decisions.
+A $5 deposit covers about 57,000 issuances, 200,000 renewals, or about 357,000 online decisions.
 
 ## Margin and break-even
 
-Margin per operation (`price × 0.92 − cost`): issue ≈ 26 µ$, renew ≈ 11 µ$, decision ≈ 5.4 µ$,
-read ≈ 1.8 µ$, token ≈ 1.6 µ$, login ≈ 4.2 µ$. Profit = Σ margins − fixed costs, so it rises with every
+Margin per operation (`price × 0.92 − cost`): issue ≈ 28 µ$, renew ≈ 11 µ$, decision ≈ 5.4 µ$,
+read ≈ 3.0 µ$, token ≈ 3.0 µ$, login ≈ 5.5 µ$. Profit = Σ margins − fixed costs, so it rises with every
 operation (master plan principle 6).
 
 Fixed costs specific to devicebasedauth.org, assuming the shared Cloudflare account and LLC (as for
 cronly): the domain (~$11/year ≈ $0.92/month) plus Clerk if it ever exceeds 50,000 monthly retained
-users. Break-even on $1/month is roughly 38,000 issuances, 90,000 renewals, or 186,000 online
+users. Break-even on $1/month is roughly 36,000 issuances, 93,000 renewals, or 186,000 online
 decisions per month.
 
 ## Free paths and the cost brake

@@ -24,6 +24,26 @@ describe('the client against the Worker', () => {
     return result.credential;
   }
 
+  it('answers a just-started account object\'s DPoP nonce challenge, and gets the nonce first for curl (D15)', async () => {
+    const key = await newDeviceKey();
+    const credential = await enrolled(key);
+    const device = { key, credential };
+    const sent = [];
+    const watched = createClient({ origin: ORIGIN, fetch: async (url, init) => { const response = await worker.fetch(new Request(url, init), env); sent.push(`${new URL(url).pathname} ${response.status}`); return response; } });
+    env.ACCOUNTS.restart('alice');
+    expect((await watched.request('GET', '/api/v1/whoami', { device })).account).toBe('alice');
+    expect(sent).toEqual(['/api/v1/whoami 401', '/api/v1/whoami 200']);
+    // For curl: one request for the nonce, whether or not the object just started.
+    env.ACCOUNTS.restart('alice'); sent.length = 0;
+    const nonce = await watched.nonceFor(device, `${ORIGIN}/api/v1/whoami`);
+    expect(nonce).toMatch(/^dpn_/);
+    expect(sent).toEqual(['/api/v1/dpop-nonce 401']);
+    expect(await watched.nonceFor(device, `${ORIGIN}/api/v1/whoami`)).toBe(nonce);
+    expect(sent).toEqual(['/api/v1/dpop-nonce 401', '/api/v1/dpop-nonce 200']);
+    // Other sites get no nonce of devicebasedauth.org's.
+    expect(await watched.nonceFor(device, 'https://hashbin.org/api/content')).toBeUndefined();
+  });
+
   it('enrolls, reads whoami, gets an access token, renews with rotation and revokes', async () => {
     const key = await newDeviceKey();
     const credential = await enrolled(key);

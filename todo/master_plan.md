@@ -414,15 +414,15 @@ per-checkout cap, unused credit never expires while the account exists.
 price constant, with rates in `src/utils/cost-policy.js` and prices in `src/utils/pricing.js`
 only. Prices and the cost derivation are in
 [`docs/business/pricing.md`](../docs/business/pricing.md); the owner approved them 2026-11-18
-(decision D6). Summary:
+(decision D6) and raised issue, read, token and sign-in to new floors on 2026-11-22 for DPoP nonces (D15). Summary:
 
 | Operation | Price | Who pays |
 |-----------|-------|----------|
-| Issue or rotate a credential (includes prepaid revocation, 13 months of record storage and their later deletion) | 85 µ$ | Issuing account |
+| Issue or rotate a credential (includes prepaid revocation, 13 months of record storage and their later deletion) | 87 µ$ | Issuing account |
 | Renew (same key) | 25 µ$ | Issuing account |
 | Online authorization decision | 14 µ$ ($14 per million) | Audience account |
-| OpenID Connect sign-in | 12 µ$ | Audience account |
-| Metered API reads (API keys, non-dashboard devices), token exchange, X.509 certificate | 5 µ$ | Caller / issuing account |
+| OpenID Connect sign-in | 14 µ$ | Audience account |
+| Metered API reads (API keys, non-dashboard devices), token exchange, X.509 certificate | 7 µ$ | Caller / issuing account |
 | Register or change an audience | 100 µ$ | Audience account |
 | Offline verification, JWKS, status lists, web UI reads, revocation, dev tools | Free (cached / rate-limited) | — |
 

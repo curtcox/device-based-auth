@@ -43,11 +43,14 @@ public final class DbaClient {
         private static final long serialVersionUID = 1L;
         public final int status;
         public final String code;
+        /** With code "use_dpop_nonce": the nonce to put in a new proof (RFC 9449 §8). */
+        public final String dpopNonce;
 
-        ApiException(int status, String code, String message) {
+        ApiException(int status, String code, String message, String dpopNonce) {
             super(message + " (" + code + ")");
             this.status = status;
             this.code = code;
+            this.dpopNonce = dpopNonce;
         }
     }
 
@@ -113,13 +116,30 @@ public final class DbaClient {
         return (String) body.get("challenge");
     }
 
-    /** Call an API with the credential: Authorization: DBA <credential> plus a fresh DPoP proof. */
+    /**
+     * Call an API with the credential: Authorization: DBA <credential> plus a fresh DPoP proof. An
+     * account object that started less than a minute ago answers 401 use_dpop_nonce with its nonce:
+     * the request is sent once more with it, and the nonce is kept for later proofs.
+     */
     public Object call(String method, String url, String credential, Object body) throws IOException, GeneralSecurityException {
+        try {
+            return send(method, url, body, authHeaders(credential, method, url));
+        } catch (ApiException e) {
+            if (!"use_dpop_nonce".equals(e.code) || e.dpopNonce == null || e.dpopNonce.equals(dpopNonce)) throw e;
+            dpopNonce = e.dpopNonce;
+            return send(method, url, body, authHeaders(credential, method, url));
+        }
+    }
+
+    private Map<String, String> authHeaders(String credential, String method, String url) throws GeneralSecurityException {
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Authorization", "DBA " + credential);
         headers.put("DPoP", dpopProof(credential, method, url));
-        return send(method, url, body, headers);
+        return headers;
     }
+
+    /** The latest DPoP nonce devicebasedauth.org handed out, put in every later proof. */
+    private volatile String dpopNonce;
 
     /** A single-use proof bound to this method, URL (without query or fragment) and credential (ath). */
     public String dpopProof(String credential, String method, String url) throws GeneralSecurityException {
@@ -128,6 +148,8 @@ public final class DbaClient {
         RANDOM.nextBytes(jti);
         byte[] ath = MessageDigest.getInstance("SHA-256").digest(credential.getBytes(StandardCharsets.US_ASCII));
         Map<String, Object> payload = map("jti", b64u(jti), "htm", method.toUpperCase(java.util.Locale.ROOT), "htu", htu, "iat", now(), "ath", b64u(ath));
+        String nonce = dpopNonce;
+        if (nonce != null) payload.put("nonce", nonce);
         return signJws(map("typ", "dpop+jwt", "jwk", publicJwk), payload);
     }
 
@@ -194,7 +216,8 @@ public final class DbaClient {
         Object json = Json.parse(new String(buffer.toByteArray(), StandardCharsets.UTF_8));
         if (status >= 400) {
             Map<String, Object> error = json instanceof Map ? asMap(json) : map();
-            throw new ApiException(status, String.valueOf(error.get("code")), method + " " + url + ": " + error.get("error"));
+            Object nonce = error.get("dpop_nonce");
+            throw new ApiException(status, String.valueOf(error.get("code")), method + " " + url + ": " + error.get("error"), nonce instanceof String ? (String) nonce : null);
         }
         return json;
     }

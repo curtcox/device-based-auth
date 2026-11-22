@@ -16,7 +16,7 @@ describe('API keys, metered reads and delegation', () => {
     const key = await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'ci', scopes: ['credentials:read', 'account:read'] } });
     expect(key.body.secret).toMatch(/^dbak_/);
     const read = await call(env, 'GET', '/api/v1/credentials', { auth: `ApiKey ${key.body.secret}` });
-    expect(read.body.cost_microdollars).toBe(5);
+    expect(read.body.cost_microdollars).toBe(price('read'));
     expect((await call(env, 'GET', '/api/v1/credentials', { auth: 'alice' })).body.cost_microdollars).toBe(0);
     expect((await call(env, 'POST', '/api/v1/revoke-all', { auth: `ApiKey ${key.body.secret}`, body: {} })).status).toBe(403);
     await call(env, 'DELETE', `/api/v1/keys/${key.body.id}`, { auth: 'alice' });
@@ -71,7 +71,7 @@ describe('API keys, metered reads and delegation', () => {
     expect(list.body.cost_microdollars).toBe(0);
     const narrow = await newDevice();
     const readOnly = (await enroll(env, 'alice', narrow, { aud: ['devicebasedauth.org'], grants: [{ actions: ['dba:credentials:read'] }] })).approve.body.credential;
-    expect((await call(env, 'GET', '/api/v1/credentials', { headers: await narrow.headers('GET', '/api/v1/credentials', readOnly) })).body.cost_microdollars).toBe(5);
+    expect((await call(env, 'GET', '/api/v1/credentials', { headers: await narrow.headers('GET', '/api/v1/credentials', readOnly) })).body.cost_microdollars).toBe(price('read'));
     expect((await call(env, 'POST', '/api/v1/revoke-all', { headers: await narrow.headers('POST', '/api/v1/revoke-all', readOnly), body: { confirm: 'revoke-all' } })).status).toBe(403);
   });
 });
@@ -120,7 +120,7 @@ describe('public endpoints', () => {
     expect((await call(env, 'GET', '/.well-known/jwks.json')).body.keys[0]).toMatchObject({ kid: 'test-1', kty: 'EC', crv: 'P-256' });
     expect((await call(env, 'GET', '/.well-known/jwks.json')).body.keys[0].d).toBeUndefined();
     expect((await call(env, 'GET', '/.well-known/openid-configuration')).body.issuer).toBe(ORIGIN);
-    expect((await call(env, 'GET', '/api/v1/quote?op=issue')).body.quote_microdollars).toBe(85);
+    expect((await call(env, 'GET', '/api/v1/quote?op=issue')).body.quote_microdollars).toBe(price('issue'));
     expect((await call(env, 'GET', '/api/v1/audiences?mine=1', { auth: 'operator' })).body.items.map(a => a.name)).toContain('hashbin.org');
     expect((await call(env, 'GET', '/api/v1/audiences?mine=1')).status).toBe(401);
     // The public route checks the scope itself and meters the read like any other.
@@ -130,8 +130,8 @@ describe('public endpoints', () => {
     const reader = await call(env, 'POST', '/api/v1/keys', { auth: 'operator', body: { name: 'r', scopes: ['audiences:read'] } });
     const mine = await call(env, 'GET', '/api/v1/audiences?mine=1', { auth: `ApiKey ${reader.body.secret}` });
     expect(mine.body.items.map(a => a.name)).toContain('hashbin.org');
-    expect(mine.body.cost_microdollars).toBe(5);
-    expect(mine.headers.get('X-DBA-Cost-Microdollars')).toBe('5');
+    expect(mine.body.cost_microdollars).toBe(price('read'));
+    expect(mine.headers.get('X-DBA-Cost-Microdollars')).toBe(String(price('read')));
     const list = await call(env, 'GET', '/status/v1/lists/0');
     expect(list.headers.get('Content-Type')).toBe('application/statuslist+jwt');
     expect((await call(env, 'GET', '/status/v1/lists/99')).status).toBe(404);

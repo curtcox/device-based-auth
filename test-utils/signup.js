@@ -66,4 +66,9 @@ export async function signUp(env, stripe, device, options) {
 }
 
 /** Call the Worker as `device` holding `credential`. */
-export const asDevice = (env, device, credential) => async (method, path, options = {}) => call(env, method, path, { ...options, headers: { ...(options.headers || {}), ...(await device.headers(method, path, credential)) } });
+/** Calls as this device; like the SDK and CLI, it sends once more with the nonce when an account object that just started asks for one. */
+export const asDevice = (env, device, credential) => async (method, path, options = {}) => {
+  const send = async nonce => call(env, method, path, { ...options, headers: { ...(options.headers || {}), ...(await device.headers(method, path, credential, nonce)) } });
+  const first = await send();
+  return first.status === 401 && first.body?.code === 'use_dpop_nonce' ? send(first.body.dpop_nonce) : first;
+};

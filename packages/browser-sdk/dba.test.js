@@ -130,3 +130,44 @@ describe('browser SDK confirmations and gates (STATUS B7 G9)', () => {
     expect(Object.keys(await dba.headers('GET', 'https://hashbin.org/', { confirm: false }))).toEqual(['Authorization', 'DPoP']);
   }, 20000);
 });
+
+describe('browser SDK DPoP nonces (STATUS D15)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('sends a request once more with the nonce a just-started account object asks for, and to sites that ask', async () => {
+    const { testEnv, call, newDevice, enroll, worker, ORIGIN } = await import('../../test-utils/env.js');
+    const { decodeJws } = await import('../verify/src/index.js');
+    const env = await testEnv();
+    await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
+    const laptop = await newDevice();
+    const credential = (await enroll(env, 'alice', laptop)).approve.body.credential;
+    const toDba = []; const toSite = [];
+    vi.stubGlobal('location', { href: 'https://hashbin.org/', origin: 'https://hashbin.org', host: 'hashbin.org' });
+    vi.stubGlobal('fetch', async (input, init) => {
+      const request = new Request(input, init);
+      const nonce = decodeJws(request.headers.get('DPoP') || 'e30.e30.x').payload.nonce;
+      if (request.url.startsWith(ORIGIN)) { toDba.push(nonce); return worker.fetch(request, env); }
+      toSite.push({ nonce, body: await request.text() });
+      // A site that follows RFC 9449 §8 itself.
+      if (nonce !== 'site-nonce-1') return Response.json({ error: 'use_dpop_nonce' }, { status: 401, headers: { 'DPoP-Nonce': 'site-nonce-1', 'WWW-Authenticate': 'DPoP error="use_dpop_nonce"' } });
+      return Response.json({ ok: true });
+    });
+    const dba = new DBA({ origin: ORIGIN });
+    dba.state = { privateKey: laptop.privateKey, publicJwk: laptop.publicJwk, credential };
+    dba.save = async () => {};
+
+    env.ACCOUNTS.restart('alice');
+    expect(await dba.api('/api/v1/whoami', { auth: true })).toMatchObject({ account: 'alice' });
+    expect(toDba).toEqual([undefined, expect.stringMatching(/^dpn_/)]);
+    // The nonce is kept for later proofs to that origin.
+    await dba.api('/api/v1/whoami', { auth: true });
+    expect(toDba[2]).toBe(toDba[1]);
+
+    const response = await dba.fetch('https://hashbin.org/api/content', { method: 'POST', body: 'hello' });
+    expect(await response.json()).toEqual({ ok: true });
+    expect(toSite).toEqual([{ nonce: undefined, body: 'hello' }, { nonce: 'site-nonce-1', body: 'hello' }]);
+    // A 401 that is not a nonce challenge is returned as it is, once.
+    vi.stubGlobal('fetch', async () => Response.json({ code: 'revoked' }, { status: 401 }));
+    expect((await dba.fetch('https://hashbin.org/x')).status).toBe(401);
+  });
+});

@@ -104,12 +104,15 @@ async function authenticateDevice(request, env, credential, { anyAudience, recov
     const verifiedProof = await verifyProof(proof, { method: request.method, url: request.url, credential, jkt: payload.cnf.jkt });
     const now = Math.floor(Date.now() / 1000);
     const dba = payload.aud.includes(appAudience(env));
-    const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid, rate: { id: payload.cid, limit: RATE }, proof_key: `${verifiedProof.jkt}:${verifiedProof.jti}`, proof_exp: now + PROOF_MAX_AGE + 2 * CLOCK_SKEW, ...(dba ? { session: `cid:${payload.cid}` } : {}) });
+    const status = await rpc(env.ACCOUNTS, payload.acct, 'credential-status', { cid: payload.cid, rate: { id: payload.cid, limit: RATE }, proof_key: `${verifiedProof.jkt}:${verifiedProof.jti}`, proof_exp: now + PROOF_MAX_AGE + 2 * CLOCK_SKEW, proof_iat: verifiedProof.iat, proof_nonce: verifiedProof.nonce, ...(dba ? { session: `cid:${payload.cid}` } : {}) });
+    // The account's object started a moment ago and cannot rule this proof out (credentials.js):
+    // make a new proof with this nonce (RFC 9449 §8). The SDK, the CLI and the samples retry once.
+    assert(!status.nonce_required, 'use_dpop_nonce', 'Make a new DPoP proof with the nonce in the DPoP-Nonce header (dpop_nonce) and send the request again', 401, { dpop_nonce: status.dpop_nonce });
     assert(!status.replayed, 'replayed_proof', 'DPoP proof was already used; make a new proof for each request', 401);
     // The account's own record is authoritative and instant; a rotated credential has a new entry.
     assert(status.exists && !status.revoked && sameStatusEntry(status.status, payload.status.status_list), 'revoked', 'Credential has been revoked', 401);
     assert(dba || anyAudience, 'wrong_audience', `Credential is not valid for ${appAudience(env)}`, 401);
-    return { account: payload.acct, session: false, kind: 'device', rated: true, ...(dba ? { session_key: `cid:${payload.cid}`, dashboard: status.dashboard } : {}), device: { payload, credential, proof: verifiedProof, dba, confirmation: { required: !!status.confirm, until: status.confirmed_until ?? 0 }, ...(recovered ? { recovery: true } : {}), ...(status.parent_cid ? { delegated_by: status.parent_cid } : {}), location: { network: networkLocation(request), device: verifiedProof.loc }, signed_in_at: status.signed_in_at ?? null } };
+    return { account: payload.acct, session: false, kind: 'device', rated: true, ...(dba ? { session_key: `cid:${payload.cid}`, dashboard: status.dashboard } : {}), device: { payload, credential, proof: verifiedProof, dba, confirmation: { required: !!status.confirm, until: status.confirmed_until ?? 0 }, ...(recovered ? { recovery: true } : {}), ...(status.parent_cid ? { delegated_by: status.parent_cid } : {}), location: { network: networkLocation(request), device: verifiedProof.loc }, signed_in_at: status.signed_in_at ?? null, dpop_nonce: status.dpop_nonce ?? null } };
   } catch (error) {
     if (error instanceof VerificationError) assert(false, error.code, error.message, 401);
     throw error;

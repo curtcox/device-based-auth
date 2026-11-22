@@ -24,9 +24,11 @@ export function namespace(Class, env) {
   const objects = new Map();
   const make = storage => new Class({ storage, blockConcurrencyWhile: fn => fn() }, env);
   return { objects, idFromName: id => id, get(id) {
-    if (!objects.has(id)) objects.set(id, make(new MemoryStorage()));
+    // A new object here stands for one that has been running for a while: one that just started
+    // asks for a DPoP nonce (AccountDO startedAt), which only restart() and the nonce tests use.
+    if (!objects.has(id)) { const object = make(new MemoryStorage()); if ('startedAt' in object) object.startedAt = 0; objects.set(id, object); }
     return objects.get(id);
   },
-  /** A fresh instance over the same storage, as after an eviction or deploy: anything kept only in memory is gone. */
+  /** A fresh instance over the same storage, as after an eviction or deploy: anything kept only in memory is gone, and it asks for DPoP nonces. */
   restart(id) { objects.set(id, make(this.get(id).storage)); } };
 }

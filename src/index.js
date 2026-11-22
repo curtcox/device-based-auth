@@ -84,6 +84,7 @@ export const API_ROUTES = [
   { method: 'POST', path: `${V1}/revoke-all`, access: 'credentials:revoke', handler: 'revoke-all' },
   { method: 'POST', path: `${V1}/self/revoke`, access: DEVICE, handler: 'revoke-self' },
   { method: 'POST', path: `${V1}/token`, access: DEVICE, handler: 'token', billable: 'token' },
+  { method: 'POST', path: `${V1}/dpop-nonce`, access: DEVICE, handler: 'dpop-nonce', free: true },
   { method: 'POST', path: `${V1}/certificate`, access: DEVICE, handler: 'certificate', billable: 'token' },
   { method: 'POST', path: `${V1}/authorize`, access: 'authorize', handler: 'authorize', billable: 'decision' },
   { method: 'GET', path: `${V1}/step-ups`, access: SESSION, handler: 'step-ups' },
@@ -118,6 +119,7 @@ export const API_ROUTES = [
   { method: 'DELETE', path: `${V1}/keys/:id`, access: SESSION, handler: 'keys' },
   { method: 'POST', path: `${V1}/payments/checkout`, access: SESSION, handler: 'checkout', idempotent: true },
   { method: 'POST', path: `${V1}/dev/deposit`, access: SESSION, handler: 'dev-deposit' },
+  { method: 'POST', path: `${V1}/dev/fresh-object`, access: SESSION, handler: 'dev-fresh-object' },
   { method: 'POST', path: `${V1}/signup`, access: PUBLIC, handler: 'signup', free: true },
   { method: 'POST', path: `${V1}/signup/complete`, access: PUBLIC, handler: 'signup-complete', billable: 'issue' },
   { method: 'POST', path: `${V1}/dev/signup-paid`, access: PUBLIC, handler: 'dev-signup-paid' },
@@ -247,6 +249,15 @@ async function handle(route, request, env, auth) {
     case 'email-verify': return verifyEmail(request, env);
     case 'clerk-link': return clerkLink(request, env, auth);
     case 'account-recovery': return accountRecovery(request, env, auth);
+    // A client that cannot retry (`dba curl`, `dba headers`) asks for the nonce first; free, and
+    // a fresh object answers it with the 401 use_dpop_nonce that carries the same nonce.
+    case 'dpop-nonce': return new Response(JSON.stringify({ dpop_nonce: auth.device.dpop_nonce, cost_microdollars: 0 }), { headers: { 'Content-Type': 'application/json', 'DPoP-Nonce': auth.device.dpop_nonce, ...CORS } });
+    // Local only: make the caller's account object behave as if it had just started (the samples
+    // harness does this before each sample, so every client meets a nonce challenge).
+    case 'dev-fresh-object': {
+      assert(env.ENVIRONMENT === 'local', 'not_found', 'Not found', 404);
+      return rpc(env.ACCOUNTS, auth.account, 'dev-fresh-object', {});
+    }
     case 'dev-deposit': {
       assert(env.ENVIRONMENT === 'local', 'not_found', 'Not found', 404);
       const body = await readJson(request); money(body.amount_microdollars);
@@ -337,6 +348,7 @@ const worker = {
       const response = errorResponse(error);
       for (const [k, v] of Object.entries(CORS)) response.headers.set(k, v);
       if (error.status === 401 && request.headers.get('DPoP')) response.headers.set('WWW-Authenticate', `DPoP error="${error.code || 'invalid_token'}"`);
+      if (error.code === 'use_dpop_nonce' && error.details?.dpop_nonce) response.headers.set('DPoP-Nonce', error.details.dpop_nonce);
       // MCP clients discover how to get a token from this header (MCP authorization, RFC 9728 §5.1).
       else if (error.status === 401 && path === '/mcp') response.headers.set('WWW-Authenticate', `Bearer resource_metadata="${resourceMetadataUrl(env)}"${request.headers.get('Authorization') ? ', error="invalid_token"' : ''}`);
       return response;

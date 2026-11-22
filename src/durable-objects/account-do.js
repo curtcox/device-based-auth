@@ -45,6 +45,11 @@ export class AccountDO {
   constructor(ctx, env) {
     this.ctx = ctx; this.storage = ctx.storage; this.env = env;
     this.proofs = new Map(); this.rates = new Map();
+    // The seen-proof caches above start empty whenever this object starts (an eviction after idle,
+    // a deploy, a move), so it cannot tell whether a proof made before it started was already used.
+    // Until CLOCK_SKEW seconds after the start it asks for its own nonce in each proof (RFC 9449 §8;
+    // account/credentials.js op_credential_status), which no earlier object could have seen.
+    this.startedAt = Date.now(); this.dpopNonce = randomId('dpn', 22);
     // New gate requests per (device, gate) in the last hour (in memory, like the request limit).
     this.gateRates = new Map();
     // Wrong TOTP codes and security-key answers per gate (in memory; a guessing limit).
@@ -166,6 +171,13 @@ export class AccountDO {
       });
       return { audience, items };
     });
+  }
+
+  /** Local development only: forget seen proofs and start a new nonce epoch, as a restart would. */
+  async op_dev_fresh_object(_args, now) {
+    assert(this.env.ENVIRONMENT === 'local', 'not_found', 'Not found', 404);
+    this.proofs = new Map(); this.startedAt = now; this.dpopNonce = randomId('dpn', 22);
+    return { fresh: true };
   }
 
   async op_deposit({ id, amount, kind }, now) { return this.tx(tx => deposit(tx, { id, amount, kind }, now)); }

@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createProof } from '../../packages/verify/src/index.js';
-import { separateVisitors, signIn, fund, uniqueName, startEnrollment, enrollViaApi, asLocal } from './helpers.js';
+import { separateVisitors, signIn, fund, uniqueName, startEnrollment, enrollViaApi, asLocal, sendSigned } from './helpers.js';
 
 separateVisitors();
 
@@ -98,7 +97,7 @@ test('the owner can require periodic confirmation by one of their gates when app
   expect(payload.confirm).toEqual({ gates: [{ any: [gate.id], timeout_s: 300, on_timeout: 'deny' }], every_s: 28800 });
 
   // The laptop asks, the phone allows; the dashboard shows it confirmed and can stop trusting it.
-  const signed = async (device, cred, method, path, data) => request.fetch(path, { method, data, headers: { Authorization: `DBA ${cred}`, DPoP: await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method, url: new URL(path, page.url()).href, credential: cred }) } });
+  const signed = async (device, cred, method, path, data) => sendSigned(request, { privateKey: device.privateKey, publicJwk: device.publicJwk, credential: cred, method, url: new URL(path, page.url()).href, data });
   const path = `/api/v1/credentials/${payload.cid}/confirm`;
   expect((await (await signed(start.device, credential, 'POST', path, {})).json()).status).toBe('pending');
   const [waiting] = (await (await signed(phone.device, phone.credential, 'GET', '/api/v1/gate-requests')).json()).items;
