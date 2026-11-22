@@ -16,6 +16,21 @@ const RECOVERY_TIMEOUT_S = 600;
 const recoveryGates = gates => [...gates.values()].filter(g => gateActive(g) && RECOVERY_KINDS.includes(g.kind));
 
 /**
+ * Recoveries of `kind` ('gate' or 'email') started in the last hour. Anyone may start one, and each
+ * reaches the owner (and may cost them a gate request or an email), so the count is kept on the
+ * profile row, which outlives the object in memory: a Durable Object is evicted after a short idle,
+ * and a count in memory would start again from zero each time.
+ */
+export function recentRecoveryStarts(profile, kind, now) {
+  return (profile?.recovery_starts?.[kind] || []).filter(at => at > now - 3600000);
+}
+
+/** The profile with one more start of `kind` at `now` (older than an hour dropped). */
+export function withRecoveryStart(profile, kind, now) {
+  return { ...profile, recovery_starts: { ...profile.recovery_starts, [kind]: [...recentRecoveryStarts(profile, kind, now), now] } };
+}
+
+/**
  * Getting back into an account after losing every device (done/clerk_free_accounts.md §3.5,
  * STATUS B9): a recovery code puts a new dashboard device on the account, and the owner can see
  * how they could recover, or say they accept that they cannot. Mixed into AccountDO
@@ -49,7 +64,8 @@ export class AccountRecovery {
    * Start (or find) a recovery by gate for the new key `jkt`: one entry any of the account's
    * passkey, security-key or device gates may approve, typing the number the new device shows;
    * denied after RECOVERY_TIMEOUT_S. Anyone who knows the account id can ask, so at most
-   * GATE_RECOVERIES_PER_HOUR new ones an hour, and an unknown account stores nothing. The owner's
+   * GATE_RECOVERIES_PER_HOUR new ones an hour (counted in storage), and an unknown account
+   * stores nothing. The owner's
    * browsers are told (factor gates get a link to the approval page); device gates poll.
    */
   async op_recover_gate_start({ jkt, device_name = null, account }, now) {
@@ -64,11 +80,10 @@ export class AccountRecovery {
       let req = await findRequest(tx, subject, now);
       if (req) await this.refreshed(tx, req, now, []);
       else {
-        this.recoveryStarts = (this.recoveryStarts || []).filter(at => at > now - 3600000);
-        assert(this.recoveryStarts.length < GATE_RECOVERIES_PER_HOUR, 'too_many_attempts', 'Too many recoveries were started for this account this hour; try again later or use a recovery code', 429);
+        assert(recentRecoveryStarts(profile, 'gate', now).length < GATE_RECOVERIES_PER_HOUR, 'too_many_attempts', 'Too many recoveries were started for this account this hour; try again later or use a recovery code', 429);
         req = await this.openGateRequest(tx, { device_id: null, device: { name: device_name || 'A new device' } }, subject, candidate, now, 'recover');
         assert(!req.rate_limited, 'too_many_attempts', 'The account\'s gates were asked too often this hour; try again later or use a recovery code', 429);
-        this.recoveryStarts.push(now);
+        await tx.put('profile', withRecoveryStart(await tx.get('profile'), 'gate', now));
         await this.audit(tx, now, 'recovery.requested', { id: req.id, jkt });
         asked = req;
       }

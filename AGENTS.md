@@ -37,6 +37,7 @@ frontend/            Static site (no build step). frontend/lib/verify/ and front
                      are generated; frontend/openapi.json is generated
 docs/samples/        CI-executed samples (scripts/run-samples.mjs)
 docs/business/ docs/ops/   Pricing model; deployment and incident runbooks
+docs/security/       Security review log (STATUS L12)
 integrations/        Patches/notes for sibling sites (cronly)
 test-utils/          In-memory Durable Object storage, R2, test env and device helpers
 ```

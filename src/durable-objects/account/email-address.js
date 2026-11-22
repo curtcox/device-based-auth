@@ -4,6 +4,7 @@ import { price } from '../../utils/pricing.js';
 import { signToken } from '../../auth/tokens.js';
 import { readBalance } from '../ledger.js';
 import { cleanEmailAddress, emailConfigured, emailLine } from '../../services/email.js';
+import { recentRecoveryStarts, withRecoveryStart } from './recovery.js';
 
 // How long an email recovery waits after its link is used, so the owner's devices and browsers
 // can cancel it (done/clerk_free_accounts.md O1, approved by the owner 2026-11-21).
@@ -101,13 +102,15 @@ export class AccountEmailAddress {
    */
   async op_email_recovery_start({ id, jkt, device_name = null, account }, now) {
     const profile = await this.storage.get('profile');
-    if (!profile?.email || profile.email_source !== 'verified') return { sent: false };
-    this.emailRecoveryStarts = (this.emailRecoveryStarts || []).filter(at => at > now - 3600000);
-    if (this.emailRecoveryStarts.length >= EMAIL_RECOVERIES_PER_HOUR) return { sent: false };
-    this.emailRecoveryStarts.push(now);
+    const limited = p => !p?.email || p.email_source !== 'verified' || recentRecoveryStarts(p, 'email', now).length >= EMAIL_RECOVERIES_PER_HOUR;
+    if (limited(profile)) return { sent: false };
     const token = await signToken('erl_', { a: account, i: id, exp: Math.ceil((now + EMAIL_LINK_MS) / 1000) }, this.env.TOKEN_SIGNING_KEY);
     const name = emailLine(device_name || 'A new device', 80);
-    await this.tx(async tx => {
+    const sent = await this.tx(async tx => {
+      // Checked again inside the transaction, against the count in storage (see recentRecoveryStarts).
+      const current = await tx.get('profile');
+      if (limited(current)) return false;
+      await tx.put('profile', withRecoveryStart(current, 'email', now));
       await tx.put(emailKey(id), { id, jkt, device_name: name, state: 'link_sent', requested_at: now, until: now + EMAIL_LINK_MS });
       await this.queueEmail(tx, { subject: 'Recover your devicebasedauth.org account?', text: [
         `“${name}” asked to be let into your devicebasedauth.org account by email, after losing every other device.`, '',
@@ -117,7 +120,9 @@ export class AccountEmailAddress {
       ].join('\n') }, now, { mustPay: false });
       await this.audit(tx, now, 'recovery.email_requested', { id, jkt });
       await this.scheduleWake(tx, now + EMAIL_LINK_MS);
+      return true;
     });
+    if (!sent) return { sent: false };
     this.notify({ title: 'Someone asked to recover your account by email', body: `“${name}” asked for a recovery link at your security email address. Nothing happens unless the link is used, and you can cancel for ${EMAIL_RECOVERY_WAIT_MS / 3600000} hours after that.`, path: '#account', tag: `email-recovery-${id}` }, now);
     return { sent: true };
   }

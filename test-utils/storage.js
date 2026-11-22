@@ -22,8 +22,11 @@ export class MemoryStorage {
 /** Instantiate real DO classes without contacting providers. */
 export function namespace(Class, env) {
   const objects = new Map();
+  const make = storage => new Class({ storage, blockConcurrencyWhile: fn => fn() }, env);
   return { objects, idFromName: id => id, get(id) {
-    if (!objects.has(id)) { const storage = new MemoryStorage(); objects.set(id, new Class({ storage, blockConcurrencyWhile: fn => fn() }, env)); }
+    if (!objects.has(id)) objects.set(id, make(new MemoryStorage()));
     return objects.get(id);
-  } };
+  },
+  /** A fresh instance over the same storage, as after an eviction or deploy: anything kept only in memory is gone. */
+  restart(id) { objects.set(id, make(this.get(id).storage)); } };
 }

@@ -180,8 +180,15 @@ describe('recovery by passkey or another device (B9, phase A4)', () => {
     // The same key asking again finds the same request.
     expect((await askGate(phone)).body.number).toBe(asked.number);
     expect((await askGate(await newDevice())).status).toBe(200);
+    // Counted in storage: a restart of the account's object (an eviction after a short idle) does not reset it.
+    env.ACCOUNTS.restart(account);
     expect((await askGate(await newDevice())).status).toBe(200);
+    env.ACCOUNTS.restart(account);
     expect((await askGate(await newDevice())).body.code).toBe('too_many_attempts');
+    // An hour later strangers may ask again.
+    t += 61 * MINUTE;
+    expect((await askGate(await newDevice())).status).toBe(200);
+    t -= 61 * MINUTE;
     // Only the key that asked can complete.
     const thief = await newDevice();
     expect((await complete(thief, asked.ticket)).body.code).toBe('key_mismatch');

@@ -137,9 +137,10 @@ describe('recovery by email', () => {
     t += 2 * HOUR;
     expect((await call(env, 'POST', '/api/v1/recover/email-link', { body: { token } })).body.code).toBe('invalid_link');
     expect(asked.status).toBe('pending');
-    // Three emails an hour per account; the fourth request sends nothing.
+    // Three emails an hour per account; the fourth request sends nothing, even when the account's
+    // object restarted in between (it is evicted after a short idle), and the count is on the profile row.
     const before = (await mail()).length;
-    for (let i = 0; i < 4; i++) await askByEmail(await newDevice());
+    for (let i = 0; i < 4; i++) { env.ACCOUNTS.restart(account); await askByEmail(await newDevice()); }
     expect((await mail()).length).toBe(before + 3);
     // Removing the address (back within the sign-up's ten minutes, which count as a recent sign-in) ends recovery by it.
     t -= 2 * HOUR; t += 5 * MINUTE;
