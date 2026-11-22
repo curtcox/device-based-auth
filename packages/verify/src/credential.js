@@ -3,7 +3,7 @@
  * and DPoP proofs (RFC 9449, typ "dpop+jwt"). See spec/credential.md.
  */
 import { decodeJws, verifyJws, jwkThumbprint, sha256b64u, signJws, publicJwk, b64u } from './jose.js';
-import { validateGrants, VOCABULARY_VERSION } from './grants.js';
+import { validateGrants, VOCABULARY_VERSIONS, grantsNeedVersion2 } from './grants.js';
 
 export const CREDENTIAL_TYP = 'dba-device+jwt';
 export const ACCESS_TYP = 'dba-access+jwt';
@@ -37,7 +37,8 @@ export function validateCredentialPayload(payload, { typ = CREDENTIAL_TYP } = {}
   for (const k of ['iat', 'nbf', 'exp']) if (!Number.isSafeInteger(payload[k])) errors.push(`${k} must be a NumericDate`);
   if (!Array.isArray(payload.aud) || payload.aud.length === 0 || payload.aud.some(a => typeof a !== 'string')) errors.push('aud must be a list of audiences');
   if (payload.exp <= payload.nbf) errors.push('exp must be after nbf');
-  if (payload.ver !== VOCABULARY_VERSION) errors.push(`ver must be ${VOCABULARY_VERSION}`);
+  if (!VOCABULARY_VERSIONS.includes(payload.ver)) errors.push('ver must be 1 or 2');
+  else if (payload.ver === 1 && grantsNeedVersion2(payload.grants)) errors.push('ver must be 2 when a grant uses net');
   const status = payload.status?.status_list;
   if (!status || !Number.isSafeInteger(status.idx) || status.idx < 0 || status.idx > MAX_STATUS_INDEX || typeof status.uri !== 'string') errors.push('status.status_list must have idx (0 to 2^31-1) and uri');
   if (typ === CREDENTIAL_TYP && typeof payload.cnf?.jkt !== 'string') errors.push('cnf.jkt is required');

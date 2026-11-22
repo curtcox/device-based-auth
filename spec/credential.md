@@ -41,7 +41,7 @@ base64url-decoding its middle segment.
 | `device` | no | `{ name, kind, key_protection }` for display. `kind` ∈ `browser`, `phone`, `desktop`, `server`, `cli`, `agent`, `iot`, `other`. `key_protection` ∈ `webcrypto-nonextractable`, `secure-enclave`, `android-keystore`, `tpm`, `os-keychain`, `software`. Self-reported unless `device.attestation` is present (§3a). |
 | `grants` | yes | 1–32 grants; see [evaluation.md](evaluation.md). |
 | `status.status_list` | yes | `{ idx, uri }` — the credential's bit in an IETF OAuth Token Status List. |
-| `ver` | yes | Grant vocabulary version, `1`. |
+| `ver` | yes | Grant vocabulary version: `1`, or `2` when any grant has `net` (evaluation.md §3.10; a credential with `net` and `ver` 1 is invalid). Issuers use `1` whenever they can, so older verifiers keep accepting those credentials. |
 | `confirm` | no | `{ gates, every_s }`: the credential authenticates only while the device holds a confirmation (§9) issued within the last `every_s` seconds (300–604 800). `gates` lists the gate entries that confirm it ([evaluation.md](evaluation.md) §3.6). When present, every grant also carries `require.confirmation: true`, so verifiers that predate confirmations deny the credential instead of ignoring this claim. |
 
 Unknown top-level claims MUST be ignored. Unknown **grant** members MUST make that grant deny.

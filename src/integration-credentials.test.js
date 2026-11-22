@@ -11,6 +11,25 @@ let env;
 beforeEach(async () => { env = await testEnv(); });
 
 describe('enrollment and offline verification', () => {
+  it('issues vocabulary 2 only for grants with net, and verifiers enforce net.client offline (B10 N1)', async () => {
+    await fund(env, 'alice');
+    const plain = await enroll(env, 'alice', await newDevice());
+    expect(inspectCredential(plain.approve.body.credential).payload.ver).toBe(1);
+    const device = await newDevice();
+    const grants = [{ actions: ['hashbin:content:write'], net: { client: { addresses: { cidrs: ['203.0.113.0/24'] }, latency: { max_rtt_ms: 40 } } } }];
+    const { approve } = await enroll(env, 'alice', device, { grants });
+    const { payload } = inspectCredential(approve.body.credential);
+    expect(payload).toMatchObject({ ver: 2, grants });
+    const verifier = verifierFor(env);
+    const at = async (ip, rtt_ms) => {
+      const request = await requestWith(device, approve.body.credential);
+      return verifier.verifyRequest(request, { action: 'hashbin:content:write', location: { network: { ip, ...(rtt_ms === undefined ? {} : { rtt_ms }) } } });
+    };
+    expect(await at('203.0.113.7', 12)).toMatchObject({ allow: true });
+    expect(await at('198.51.100.7', 12)).toMatchObject({ allow: false, reasons: [['address_not_allowed']] });
+    expect(await at('203.0.113.7')).toMatchObject({ allow: false, reasons: [['rtt_required']] });
+  });
+
   it('accepts only https origins (or http://localhost) as return_origin', async () => {
     const device = await newDevice();
     const start = async origin => call(env, 'POST', '/api/v1/enrollments', { body: { request: await device.enrollRequest({ aud: ['hashbin.org'], grants: [{ actions: ['hashbin:content:write'] }], return_origin: origin }) } });

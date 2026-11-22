@@ -1,5 +1,7 @@
 // Hand-written conformance cases. Expectations are stated here, never computed from the
 // implementation, so the vectors test the evaluator instead of echoing it.
+import { netCases } from './net-cases.mjs';
+
 const t = iso => Math.floor(Date.parse(iso) / 1000);
 const W = ['hashbin:content:write'];
 const WED_1500Z = t('2026-11-18T15:00:00Z'); // Wednesday 09:00 in America/Chicago (CST, UTC-6)
@@ -127,5 +129,6 @@ export const cases = [
   ['step-up counts as an owner gate for audience policy', [{ actions: W, require: { step_up: true } }], ctx({ online: true, policy: { gates: { require: true, kinds: ['owner'] } } }), true, 0, [[]]],
   ['an audience policy without kinds accepts any gate', [{ actions: W, require: { gates: [{ any: ['gate_TOTPAPP01'] }] } }], ctx({ online: true, policy: { gates: { require: true } }, gate_kinds: KINDS }), true, 0, [[]]],
   ['a gate of unknown kind does not satisfy an audience policy', [{ actions: W, require: { gates: [{ any: ['gate_UNKNOWN01'] }] } }], ctx({ online: true, policy: { gates: { require: true } }, gate_kinds: KINDS }), false, null, [['gate_required']]],
-  ['all failing reasons are reported', [{ actions: ['x:y'], resources: ['other'] }], ctx(), false, null, [['action_not_granted', 'resource_not_granted']]]
+  ['all failing reasons are reported', [{ actions: ['x:y'], resources: ['other'] }], ctx(), false, null, [['action_not_granted', 'resource_not_granted']]],
+  ...netCases
 ].map(([name, grants, context, allow, grant_index, reasons]) => ({ name, grants, context, expected: { allow, grant_index, reasons } }));

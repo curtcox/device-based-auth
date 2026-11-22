@@ -3,12 +3,20 @@
  * Grant vocabulary v1: validation, evaluation, narrowing and plain-English descriptions.
  * The normative description is spec/evaluation.md; spec/vectors/*.json must pass.
  */
+import { parseCidr, ipInCidr } from './ip.js';
+import { validateNet, netUnknownKeys, checkNetClient, describeNet } from './net.js';
 
+export { parseIp, parseCidr, ipInCidr, sameIp } from './ip.js';
+export { validateNet, describeNet, validHostName, NET_LIMITS, ADDRESS_LIST_ID } from './net.js';
+/** Vocabulary 1, or 2 when a grant uses `net` (spec/credential.md). */
 export const VOCABULARY_VERSION = 1;
+export const VOCABULARY_VERSIONS = Object.freeze([1, 2]);
+/** True when any grant needs vocabulary 2. */
+export const grantsNeedVersion2 = grants => Array.isArray(grants) && grants.some(g => isObject(g) && g.net !== undefined);
 export const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 export const USE_PERIODS = ['minute', 'hour', 'day', 'month', 'total'];
 const PERIOD_SECONDS = { minute: 60, hour: 3600, day: 86400, month: 2592000 };
-const GRANT_KEYS = new Set(['actions', 'resources', 'when', 'where', 'limits', 'require']);
+const GRANT_KEYS = new Set(['actions', 'resources', 'when', 'where', 'net', 'limits', 'require']);
 const WHEN_KEYS = new Set(['tz', 'windows', 'not_before', 'not_after']);
 const WINDOW_KEYS = new Set(['days', 'from', 'to']);
 const WHERE_KEYS = new Set(['source', 'countries', 'regions', 'areas', 'networks']);
@@ -42,50 +50,6 @@ const minutes = time => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
 /** True when the IANA zone is known to this runtime. */
 export function validTimeZone(tz) {
   try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return typeof tz === 'string' && tz.length > 0; } catch { return false; }
-}
-
-/** Parse an IPv4 or IPv6 address to a BigInt and its bit width, or null. */
-export function parseIp(ip) {
-  if (typeof ip !== 'string') return null;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
-    const parts = ip.split('.').map(Number);
-    if (parts.some(p => p > 255)) return null;
-    return { bits: 32, value: parts.reduce((acc, p) => (acc << 8n) + BigInt(p), 0n) };
-  }
-  if (!/^[0-9a-fA-F:.]+$/.test(ip) || !ip.includes(':')) return null;
-  let address = ip;
-  const v4 = address.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (v4) {
-    const parsed = parseIp(v4[1]); if (!parsed) return null;
-    address = address.slice(0, -v4[1].length) + ((parsed.value >> 16n).toString(16)) + ':' + ((parsed.value & 0xffffn).toString(16));
-  }
-  const halves = address.split('::');
-  if (halves.length > 2) return null;
-  const head = halves[0] ? halves[0].split(':') : [];
-  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
-  const missing = 8 - head.length - tail.length;
-  if ((halves.length === 1 && missing !== 0) || missing < 0) return null;
-  const groups = [...head, ...Array(halves.length === 2 ? missing : 0).fill('0'), ...tail];
-  if (groups.length !== 8 || groups.some(g => !/^[0-9a-fA-F]{1,4}$/.test(g))) return null;
-  return { bits: 128, value: groups.reduce((acc, g) => (acc << 16n) + BigInt(parseInt(g, 16)), 0n) };
-}
-
-/** Parse a CIDR range, or null when invalid. */
-export function parseCidr(cidr) {
-  if (typeof cidr !== 'string') return null;
-  const [ip, prefixText, extra] = cidr.split('/');
-  if (extra !== undefined || prefixText === undefined || !/^\d{1,3}$/.test(prefixText)) return null;
-  const parsed = parseIp(ip); const prefix = Number(prefixText);
-  if (!parsed || prefix > parsed.bits) return null;
-  return { ...parsed, prefix };
-}
-
-/** True when ip is inside the CIDR range. Address families never match each other. */
-export function ipInCidr(ip, cidr) {
-  const address = parseIp(ip); const range = parseCidr(cidr);
-  if (!address || !range || address.bits !== range.bits) return false;
-  const shift = BigInt(range.bits - range.prefix);
-  return (address.value >> shift) === (range.value >> shift);
 }
 
 /** Great-circle distance in meters. */
@@ -170,6 +134,7 @@ export function validateGrant(grant, path = 'grant') {
     if (w.countries === undefined && w.regions === undefined && w.areas === undefined && w.networks === undefined) errors.push(`${path}.where needs at least one of countries, regions, areas or networks`);
     if (w.source === 'device' && (w.countries || w.regions || w.networks)) errors.push(`${path}.where with source "device" can only use areas (a device reports coordinates, not countries or networks)`);
   }
+  if (grant.net !== undefined) errors.push(...netUnknownKeys(grant.net).map(k => `${path}.${k} is not allowed`), ...validateNet(grant.net, `${path}.net`));
   if (grant.limits !== undefined && checkKeys(grant.limits, LIMIT_KEYS, `${path}.limits`, errors)) {
     const { uses, spend_usd_per_month: spend } = grant.limits;
     if (uses !== undefined && checkKeys(uses, USES_KEYS, `${path}.limits.uses`, errors)) {
@@ -279,6 +244,7 @@ export function evaluateGrant(grant, context) {
     ...Object.keys(grant).filter(k => !GRANT_KEYS.has(k)),
     ...(isObject(grant.when) ? Object.keys(grant.when).filter(k => !WHEN_KEYS.has(k)).map(k => `when.${k}`) : []),
     ...(isObject(grant.where) ? Object.keys(grant.where).filter(k => !WHERE_KEYS.has(k)).map(k => `where.${k}`) : []),
+    ...netUnknownKeys(grant.net),
     ...(isObject(grant.limits) ? Object.keys(grant.limits).filter(k => !LIMIT_KEYS.has(k)).map(k => `limits.${k}`) : []),
     ...(isObject(grant.require) ? Object.keys(grant.require).filter(k => !REQUIRE_KEYS.has(k)).map(k => `require.${k}`) : [])
   ];
@@ -302,6 +268,7 @@ export function evaluateGrant(grant, context) {
     if (where.source === 'network' || where.source === 'both') checkSource(where, location.network, 'network', now, reasons);
     if (where.source === 'device' || where.source === 'both') checkSource(where, location.device, 'device', now, reasons);
   }
+  checkNetClient(grant.net?.client, context, reasons, online);
   // Key attestation is a fact about the credential (device.attestation, signed by the issuer),
   // so it is checked offline like time and place.
   const attestation = isObject(context.attestation) ? context.attestation : null;
@@ -405,7 +372,7 @@ export function isNarrowing(child, parent) {
   if (!child.actions.every(a => patternCovered(a, parent.actions, actionMatches))) return false;
   const parentResources = parent.resources || ['*'];
   if (!(child.resources || ['*']).every(r => patternCovered(r, parentResources, resourceMatches))) return false;
-  for (const key of ['when', 'where', 'limits', 'require']) if (parent[key] !== undefined && !deepEqual(child[key], parent[key])) return false;
+  for (const key of ['when', 'where', 'net', 'limits', 'require']) if (parent[key] !== undefined && !deepEqual(child[key], parent[key])) return false;
   return true;
 }
 
@@ -463,6 +430,7 @@ export function describeGrant(grant) {
     if (places.length) parts.push(`only from ${list(places)} (${source})`);
     if (where.networks) parts.push(`only from network ${list(where.networks)}`);
   }
+  if (isObject(grant.net)) parts.push(...describeNet(grant.net));
   const uses = grant.limits?.uses;
   if (uses) parts.push(uses.per === 'total' ? `at most ${uses.count} time${uses.count === 1 ? '' : 's'} in total` : `at most ${uses.count} time${uses.count === 1 ? '' : 's'} per ${uses.per}`);
   if (grant.limits?.spend_usd_per_month !== undefined) parts.push(`spending at most $${grant.limits.spend_usd_per_month.toFixed(2)} per month`);

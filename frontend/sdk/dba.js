@@ -55,41 +55,7 @@ function decodeJws(jws) {
   }
 }
 
-// packages/verify/src/grants.js
-var DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-var USE_PERIODS = ["minute", "hour", "day", "month", "total"];
-var GRANT_KEYS = /* @__PURE__ */ new Set(["actions", "resources", "when", "where", "limits", "require"]);
-var WHEN_KEYS = /* @__PURE__ */ new Set(["tz", "windows", "not_before", "not_after"]);
-var WINDOW_KEYS = /* @__PURE__ */ new Set(["days", "from", "to"]);
-var WHERE_KEYS = /* @__PURE__ */ new Set(["source", "countries", "regions", "areas", "networks"]);
-var AREA_KEYS = /* @__PURE__ */ new Set(["lat", "lon", "radius_m"]);
-var LIMIT_KEYS = /* @__PURE__ */ new Set(["uses", "spend_usd_per_month"]);
-var USES_KEYS = /* @__PURE__ */ new Set(["count", "per"]);
-var REQUIRE_KEYS = /* @__PURE__ */ new Set(["online", "step_up", "attestation", "verified_boot", "app_ids", "gates", "gates_reuse_s", "confirmation"]);
-var GATE_ENTRY_KEYS = /* @__PURE__ */ new Set(["any", "timeout_s", "on_timeout"]);
-var GATE_ID = /^gate_[A-Za-z0-9]{8,64}$/;
-var GATE_LIMITS = Object.freeze({ entries: 3, gates: 5, minTimeout: 10, maxTimeout: 86400, defaultTimeout: 300, maxReuse: 3600 });
-var GATE_KINDS = Object.freeze(["owner", "dba-device", "totp", "webauthn", "webhook", "duo", "okta-verify"]);
-var STEP_UP_GATES = Object.freeze([Object.freeze({ any: Object.freeze(["owner"]), timeout_s: 600, on_timeout: "deny" })]);
-var CONFIRMATION_SKEW = 60;
-var ATTESTATION_LEVELS = { hardware: ["tee", "strongbox", "secure_enclave", "tpm"], strongbox: ["strongbox"] };
-var APP_ID = /^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
-var ANDROID_APP_ID = /^android:[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+:[0-9a-f]{64}$/;
-var MAX_APP_IDS = 16;
-var ACTION = /^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$/;
-var TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
-var DEVICE_LOCATION_MAX_AGE = 300;
-var LIMITS = Object.freeze({ grants: 32, actions: 64, resources: 64, windows: 16, places: 64, networks: 64, resourceLength: 256 });
-var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var minutes = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
-function validTimeZone(tz) {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return typeof tz === "string" && tz.length > 0;
-  } catch {
-    return false;
-  }
-}
+// packages/verify/src/ip.js
 function parseIp(ip) {
   if (typeof ip !== "string") return null;
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
@@ -131,6 +97,245 @@ function ipInCidr(ip, cidr) {
   const shift = BigInt(range.bits - range.prefix);
   return address.value >> shift === range.value >> shift;
 }
+function sameIp(a, b) {
+  const x = parseIp(a);
+  const y = parseIp(b);
+  return Boolean(x && y) && x.bits === y.bits && x.value === y.value;
+}
+
+// packages/verify/src/net.js
+var NET_KEYS = /* @__PURE__ */ new Set(["client", "server"]);
+var DIRECTION_KEYS = /* @__PURE__ */ new Set(["addresses", "route", "latency"]);
+var ADDRESS_KEYS = /* @__PURE__ */ new Set(["of", "cidrs", "lists", "dns", "webhook"]);
+var LIST_KEYS = /* @__PURE__ */ new Set(["id", "uri"]);
+var DNS_KEYS = /* @__PURE__ */ new Set(["names", "dnssec"]);
+var ROUTE_KEYS = /* @__PURE__ */ new Set(["relays", "min_hops", "max_hops", "require_attested"]);
+var LATENCY_KEYS = /* @__PURE__ */ new Set(["max_rtt_ms", "samples", "reuse_s"]);
+var NET_LIMITS = Object.freeze({ cidrs: 64, lists: 8, names: 16, relays: 16, maxHops: 4, maxRttMs: 5e3, samples: 5, maxReuse: 300, uriLength: 512 });
+var ADDRESS_LIST_ID = /^adl_[A-Za-z0-9]{8,64}$/;
+var DEVICE_ID = /^dev_[A-Za-z0-9]{8,64}$/;
+var GATE_ID = /^gate_[A-Za-z0-9]{8,64}$/;
+var LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+var ROUTE_ERROR = /^[a-z0-9_]{1,64}$/;
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isInt = (value, min, max) => Number.isSafeInteger(value) && value >= min && value <= max;
+function validHostName(name) {
+  if (typeof name !== "string" || name.length > 253) return false;
+  const labels = name.split(".");
+  return labels.length >= 2 && labels.every((l) => LABEL.test(l)) && !/^\d+$/.test(labels[labels.length - 1]);
+}
+var unknownIn = (value, allowed, path) => isObject(value) ? Object.keys(value).filter((k) => !allowed.has(k)).map((k) => `${path}.${k}`) : [];
+function netUnknownKeys(net) {
+  if (!isObject(net)) return [];
+  const paths = unknownIn(net, NET_KEYS, "net");
+  for (const side of ["client", "server"]) {
+    const d = net[side];
+    const p = `net.${side}`;
+    paths.push(...unknownIn(d, DIRECTION_KEYS, p));
+    if (!isObject(d)) continue;
+    paths.push(...unknownIn(d.addresses, ADDRESS_KEYS, `${p}.addresses`), ...unknownIn(d.route, ROUTE_KEYS, `${p}.route`), ...unknownIn(d.latency, LATENCY_KEYS, `${p}.latency`));
+    if (isObject(d.addresses)) {
+      paths.push(...unknownIn(d.addresses.dns, DNS_KEYS, `${p}.addresses.dns`));
+      if (Array.isArray(d.addresses.lists)) d.addresses.lists.forEach((l, i) => paths.push(...unknownIn(l, LIST_KEYS, `${p}.addresses.lists[${i}]`)));
+    }
+  }
+  return paths;
+}
+function checkList(value, path, errors, max, test, message) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > max) {
+    errors.push(`${path} must be a list of 1\u2013${max} entries`);
+    return;
+  }
+  if (new Set(value).size !== value.length) errors.push(`${path} has duplicates`);
+  value.forEach((v, i) => {
+    if (!test(v)) errors.push(`${path}[${i}] ${message}`);
+  });
+}
+function validateAddresses(a, side, hasRoute, path, errors) {
+  if (!isObject(a)) {
+    errors.push(`${path} must be an object`);
+    return;
+  }
+  if (a.of !== void 0 && a.of !== "peer" && a.of !== "origin") errors.push(`${path}.of must be "peer" or "origin"`);
+  if (a.of === "origin" && side === "server") errors.push(`${path}.of "origin" is only for net.client (a device sees the server's address directly)`);
+  if (a.of === "origin" && !hasRoute) errors.push(`${path}.of "origin" needs a route: the first relay records the device's address`);
+  if (a.cidrs !== void 0) checkList(a.cidrs, `${path}.cidrs`, errors, NET_LIMITS.cidrs, (c) => !!parseCidr(c), 'must be a CIDR range like "203.0.113.0/24"');
+  if (a.lists !== void 0) {
+    checkList(a.lists, `${path}.lists`, errors, NET_LIMITS.lists, (l) => isObject(l) && typeof l.id === "string" && ADDRESS_LIST_ID.test(l.id) && typeof l.uri === "string" && l.uri.length <= NET_LIMITS.uriLength && /^https:\/\/[^\s/]+\/\S*$/.test(l.uri), 'must be { id: "adl_\u2026", uri: "https://\u2026" }');
+    if (Array.isArray(a.lists) && new Set(a.lists.map((l) => l?.id)).size !== a.lists.length) errors.push(`${path}.lists names a list twice`);
+  }
+  if (a.dns !== void 0) {
+    if (!isObject(a.dns)) errors.push(`${path}.dns must be an object`);
+    else {
+      checkList(a.dns.names, `${path}.dns.names`, errors, NET_LIMITS.names, validHostName, 'must be a lower-case host name like "vpn.example.com"');
+      if (a.dns.dnssec !== void 0 && typeof a.dns.dnssec !== "boolean") errors.push(`${path}.dns.dnssec must be true or false`);
+    }
+  }
+  if (a.webhook !== void 0) {
+    if (side === "server") errors.push(`${path}.webhook is only for net.client (devicebasedauth.org asks the webhook during online authorization)`);
+    else if (typeof a.webhook !== "string" || !GATE_ID.test(a.webhook)) errors.push(`${path}.webhook must be a webhook gate id like "gate_\u2026"`);
+  }
+  if (a.cidrs === void 0 && a.lists === void 0 && a.dns === void 0 && a.webhook === void 0) errors.push(`${path} needs at least one of cidrs, lists, dns or webhook`);
+}
+function validateRoute(r, path, errors) {
+  if (!isObject(r)) {
+    errors.push(`${path} must be an object`);
+    return;
+  }
+  checkList(r.relays, `${path}.relays`, errors, NET_LIMITS.relays, (id) => typeof id === "string" && DEVICE_ID.test(id), 'must be a relay device id like "dev_\u2026"');
+  const min = r.min_hops ?? 1;
+  const max = r.max_hops ?? NET_LIMITS.maxHops;
+  if (!isInt(min, 1, NET_LIMITS.maxHops)) errors.push(`${path}.min_hops must be an integer 1\u2013${NET_LIMITS.maxHops}`);
+  if (!isInt(max, 1, NET_LIMITS.maxHops)) errors.push(`${path}.max_hops must be an integer 1\u2013${NET_LIMITS.maxHops}`);
+  else if (isInt(min, 1, NET_LIMITS.maxHops) && min > max) errors.push(`${path}.min_hops must not exceed max_hops`);
+  if (r.require_attested !== void 0 && typeof r.require_attested !== "boolean") errors.push(`${path}.require_attested must be true or false`);
+}
+function validateLatency(l, path, errors) {
+  if (!isObject(l)) {
+    errors.push(`${path} must be an object`);
+    return;
+  }
+  if (!isInt(l.max_rtt_ms, 1, NET_LIMITS.maxRttMs)) errors.push(`${path}.max_rtt_ms must be an integer 1\u2013${NET_LIMITS.maxRttMs}`);
+  if (l.samples !== void 0 && !isInt(l.samples, 1, NET_LIMITS.samples)) errors.push(`${path}.samples must be an integer 1\u2013${NET_LIMITS.samples}`);
+  if (l.reuse_s !== void 0 && !isInt(l.reuse_s, 0, NET_LIMITS.maxReuse)) errors.push(`${path}.reuse_s must be an integer 0\u2013${NET_LIMITS.maxReuse}`);
+}
+function validateNet(net, path = "grant.net") {
+  const errors = [];
+  if (!isObject(net)) return [`${path} must be an object`];
+  if (net.client === void 0 && net.server === void 0) errors.push(`${path} needs client or server`);
+  for (const side of ["client", "server"]) {
+    const d = net[side];
+    const p = `${path}.${side}`;
+    if (d === void 0) continue;
+    if (!isObject(d)) {
+      errors.push(`${p} must be an object`);
+      continue;
+    }
+    if (d.addresses === void 0 && d.route === void 0 && d.latency === void 0) errors.push(`${p} needs at least one of addresses, route or latency`);
+    if (d.addresses !== void 0) validateAddresses(d.addresses, side, d.route !== void 0, `${p}.addresses`, errors);
+    if (d.route !== void 0) validateRoute(d.route, `${p}.route`, errors);
+    if (d.latency !== void 0) validateLatency(d.latency, `${p}.latency`, errors);
+  }
+  return errors;
+}
+function checkNetClient(client, context, reasons, online) {
+  if (!client) return;
+  const network = isObject(context.location?.network) ? context.location.network : {};
+  const route = isObject(context.route) && Array.isArray(context.route.relays) ? context.route : null;
+  if (client.addresses) checkAddresses(client.addresses, client.addresses.of === "origin" ? route?.origin : network.ip, context, reasons, online);
+  if (client.route) {
+    const r = client.route;
+    if (typeof context.route_error === "string") reasons.push(`route_invalid:${ROUTE_ERROR.test(context.route_error) ? context.route_error : "malformed"}`);
+    else if (!route) reasons.push("route_required");
+    else {
+      const hops = route.relays.length;
+      if (hops < (r.min_hops ?? 1) || hops > (r.max_hops ?? NET_LIMITS.maxHops)) reasons.push("route_invalid:hop_count");
+      if (r.require_attested && !(Array.isArray(route.attested) && route.attested.length === hops && route.attested.every((a) => a === true))) reasons.push("route_invalid:relay_not_attested");
+      if (!route.relays.every((id) => r.relays.includes(id))) reasons.push("route_relay_not_allowed");
+    }
+  }
+  if (client.latency) {
+    const rtt = network.rtt_ms;
+    if (typeof rtt !== "number" || !Number.isFinite(rtt) || rtt < 0) reasons.push("rtt_required");
+    else if (rtt > client.latency.max_rtt_ms) reasons.push("rtt_exceeded");
+  }
+}
+function checkAddresses(a, address, context, reasons, online) {
+  if (typeof address !== "string" || address === "") {
+    reasons.push("address_unavailable");
+    return;
+  }
+  const lists = isObject(context.address_lists) ? context.address_lists : {};
+  const dns = isObject(context.dns) ? context.dns : {};
+  const listOf = (id) => Object.hasOwn(lists, id) && isObject(lists[id]) && Array.isArray(lists[id].cidrs) ? lists[id] : null;
+  const answerOf = (name) => Object.hasOwn(dns, name) && isObject(dns[name]) && Array.isArray(dns[name].addrs) ? dns[name] : null;
+  const dnsOk = (answer) => answer && (a.dns.dnssec !== true || answer.dnssec === true);
+  const allowed = (a.cidrs || []).some((c) => ipInCidr(address, c)) || (a.lists || []).some((l) => listOf(l.id)?.cidrs.some((c) => ipInCidr(address, c))) || (a.dns?.names || []).some((n) => {
+    const answer = answerOf(n);
+    return dnsOk(answer) && answer.addrs.some((x) => sameIp(address, x));
+  });
+  if (allowed) return;
+  if (a.webhook) {
+    if (!context.online) {
+      online.address_webhook = a.webhook;
+      return;
+    }
+    const answers = isObject(context.address_webhook) ? context.address_webhook : {};
+    if (Object.hasOwn(answers, a.webhook) && answers[a.webhook] === true) return;
+  }
+  reasons.push("address_not_allowed");
+  for (const l of a.lists || []) if (!listOf(l.id)) reasons.push(`address_list_unavailable:${l.id}`);
+  for (const n of a.dns?.names || []) {
+    const answer = answerOf(n);
+    if (!answer) reasons.push(`dns_unresolved:${n}`);
+    else if (!dnsOk(answer)) reasons.push(`dns_unvalidated:${n}`);
+  }
+}
+function joinOr(items) {
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
+}
+function describeAddresses(a) {
+  const sources = [...a.cidrs || []];
+  for (const l of a.lists || []) sources.push(`the addresses in list ${l.id}`);
+  for (const n of a.dns?.names || []) sources.push(`the addresses of ${n}${a.dns.dnssec ? " (DNSSEC-validated)" : ""}`);
+  if (a.webhook) sources.push(`addresses webhook ${a.webhook} allows`);
+  return joinOr(sources);
+}
+function describeRoute(r) {
+  const min = r.min_hops ?? 1;
+  const max = r.max_hops ?? NET_LIMITS.maxHops;
+  const hops = min === max ? `${min} hop${min === 1 ? "" : "s"}` : `${min}\u2013${max} hops`;
+  return `through relay${r.relays.length > 1 ? "s" : ""} ${joinOr(r.relays)} (${hops}${r.require_attested ? ", attested relays only" : ""})`;
+}
+function describeNet(net) {
+  const parts = [];
+  const c = net?.client;
+  if (c?.addresses) parts.push(`only from ${c.addresses.of === "origin" ? "devices at " : ""}${describeAddresses(c.addresses)}`);
+  if (c?.route) parts.push(`only ${describeRoute(c.route)}`);
+  if (c?.latency) parts.push(`only from a device answering within ${c.latency.max_rtt_ms} ms`);
+  const s = net?.server;
+  if (s?.addresses) parts.push(`sending only to servers at ${describeAddresses(s.addresses)}`);
+  if (s?.route) parts.push(`sending only ${describeRoute(s.route)}`);
+  if (s?.latency) parts.push(`sending only to a server answering within ${s.latency.max_rtt_ms} ms`);
+  return parts;
+}
+
+// packages/verify/src/grants.js
+var VOCABULARY_VERSIONS = Object.freeze([1, 2]);
+var DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+var USE_PERIODS = ["minute", "hour", "day", "month", "total"];
+var GRANT_KEYS = /* @__PURE__ */ new Set(["actions", "resources", "when", "where", "net", "limits", "require"]);
+var WHEN_KEYS = /* @__PURE__ */ new Set(["tz", "windows", "not_before", "not_after"]);
+var WINDOW_KEYS = /* @__PURE__ */ new Set(["days", "from", "to"]);
+var WHERE_KEYS = /* @__PURE__ */ new Set(["source", "countries", "regions", "areas", "networks"]);
+var AREA_KEYS = /* @__PURE__ */ new Set(["lat", "lon", "radius_m"]);
+var LIMIT_KEYS = /* @__PURE__ */ new Set(["uses", "spend_usd_per_month"]);
+var USES_KEYS = /* @__PURE__ */ new Set(["count", "per"]);
+var REQUIRE_KEYS = /* @__PURE__ */ new Set(["online", "step_up", "attestation", "verified_boot", "app_ids", "gates", "gates_reuse_s", "confirmation"]);
+var GATE_ENTRY_KEYS = /* @__PURE__ */ new Set(["any", "timeout_s", "on_timeout"]);
+var GATE_ID2 = /^gate_[A-Za-z0-9]{8,64}$/;
+var GATE_LIMITS = Object.freeze({ entries: 3, gates: 5, minTimeout: 10, maxTimeout: 86400, defaultTimeout: 300, maxReuse: 3600 });
+var GATE_KINDS = Object.freeze(["owner", "dba-device", "totp", "webauthn", "webhook", "duo", "okta-verify"]);
+var STEP_UP_GATES = Object.freeze([Object.freeze({ any: Object.freeze(["owner"]), timeout_s: 600, on_timeout: "deny" })]);
+var CONFIRMATION_SKEW = 60;
+var ATTESTATION_LEVELS = { hardware: ["tee", "strongbox", "secure_enclave", "tpm"], strongbox: ["strongbox"] };
+var APP_ID = /^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
+var ANDROID_APP_ID = /^android:[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+:[0-9a-f]{64}$/;
+var MAX_APP_IDS = 16;
+var ACTION = /^[a-z0-9-]{1,32}(?::[a-z0-9_.-]{1,64})*:(?:[a-z0-9_.-]{1,64}|\*)$/;
+var TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
+var DEVICE_LOCATION_MAX_AGE = 300;
+var LIMITS = Object.freeze({ grants: 32, actions: 64, resources: 64, windows: 16, places: 64, networks: 64, resourceLength: 256 });
+var isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var minutes = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
+function validTimeZone(tz) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return typeof tz === "string" && tz.length > 0;
+  } catch {
+    return false;
+  }
+}
 function distanceMeters(a, b) {
   const rad = (d) => d * Math.PI / 180;
   const R = 63710088e-1;
@@ -150,7 +355,7 @@ function resourceMatches(pattern, resource) {
   return pattern === resource;
 }
 function checkKeys(value, allowed, path, errors) {
-  if (!isObject(value)) {
+  if (!isObject2(value)) {
     errors.push(`${path} must be an object`);
     return false;
   }
@@ -207,6 +412,7 @@ function validateGrant(grant, path = "grant") {
     if (w.countries === void 0 && w.regions === void 0 && w.areas === void 0 && w.networks === void 0) errors.push(`${path}.where needs at least one of countries, regions, areas or networks`);
     if (w.source === "device" && (w.countries || w.regions || w.networks)) errors.push(`${path}.where with source "device" can only use areas (a device reports coordinates, not countries or networks)`);
   }
+  if (grant.net !== void 0) errors.push(...netUnknownKeys(grant.net).map((k) => `${path}.${k} is not allowed`), ...validateNet(grant.net, `${path}.net`));
   if (grant.limits !== void 0 && checkKeys(grant.limits, LIMIT_KEYS, `${path}.limits`, errors)) {
     const { uses, spend_usd_per_month: spend } = grant.limits;
     if (uses !== void 0 && checkKeys(uses, USES_KEYS, `${path}.limits.uses`, errors)) {
@@ -233,7 +439,7 @@ function validateGates(require2, path, errors) {
       const ep = `${path}.gates[${i}]`;
       if (!checkKeys(entry, GATE_ENTRY_KEYS, ep, errors)) return;
       const any = entry.any;
-      if (!(Array.isArray(any) && any.length >= 1 && any.length <= GATE_LIMITS.gates && any.every((g) => typeof g === "string" && (g === "owner" || GATE_ID.test(g))) && new Set(any).size === any.length)) errors.push(`${ep}.any must list 1\u2013${GATE_LIMITS.gates} different gates ("owner" or gate ids like "gate_01JE\u2026")`);
+      if (!(Array.isArray(any) && any.length >= 1 && any.length <= GATE_LIMITS.gates && any.every((g) => typeof g === "string" && (g === "owner" || GATE_ID2.test(g))) && new Set(any).size === any.length)) errors.push(`${ep}.any must list 1\u2013${GATE_LIMITS.gates} different gates ("owner" or gate ids like "gate_01JE\u2026")`);
       if (entry.timeout_s !== void 0 && !(Number.isSafeInteger(entry.timeout_s) && entry.timeout_s >= GATE_LIMITS.minTimeout && entry.timeout_s <= GATE_LIMITS.maxTimeout)) errors.push(`${ep}.timeout_s must be an integer from ${GATE_LIMITS.minTimeout} to ${GATE_LIMITS.maxTimeout}`);
       if (entry.on_timeout !== void 0 && entry.on_timeout !== "deny" && entry.on_timeout !== "allow") errors.push(`${ep}.on_timeout must be "deny" or "allow"`);
     });
@@ -245,13 +451,13 @@ function validateGates(require2, path, errors) {
   }
 }
 function grantGates(grant) {
-  const require2 = isObject(grant) ? grant.require : void 0;
+  const require2 = isObject2(grant) ? grant.require : void 0;
   if (Array.isArray(require2?.gates)) return require2.gates.map((e) => ({ any: [...e.any], timeout_s: e.timeout_s ?? GATE_LIMITS.defaultTimeout, on_timeout: e.on_timeout ?? "deny" }));
   if (require2?.step_up === true) return STEP_UP_GATES.map((e) => ({ ...e, any: [...e.any] }));
   return null;
 }
 function gatePolicy(policy) {
-  return isObject(policy) && isObject(policy.gates) ? policy.gates : null;
+  return isObject2(policy) && isObject2(policy.gates) ? policy.gates : null;
 }
 function localTime(nowSeconds, tz) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(nowSeconds * 1e3)).map((p) => [p.type, p.value]));
@@ -293,12 +499,13 @@ function checkSource(where, loc, kind, now, reasons) {
 function evaluateGrant(grant, context) {
   const reasons = [];
   const online = {};
-  const unknown = !isObject(grant) ? ["grant"] : [
+  const unknown = !isObject2(grant) ? ["grant"] : [
     ...Object.keys(grant).filter((k) => !GRANT_KEYS.has(k)),
-    ...isObject(grant.when) ? Object.keys(grant.when).filter((k) => !WHEN_KEYS.has(k)).map((k) => `when.${k}`) : [],
-    ...isObject(grant.where) ? Object.keys(grant.where).filter((k) => !WHERE_KEYS.has(k)).map((k) => `where.${k}`) : [],
-    ...isObject(grant.limits) ? Object.keys(grant.limits).filter((k) => !LIMIT_KEYS.has(k)).map((k) => `limits.${k}`) : [],
-    ...isObject(grant.require) ? Object.keys(grant.require).filter((k) => !REQUIRE_KEYS.has(k)).map((k) => `require.${k}`) : []
+    ...isObject2(grant.when) ? Object.keys(grant.when).filter((k) => !WHEN_KEYS.has(k)).map((k) => `when.${k}`) : [],
+    ...isObject2(grant.where) ? Object.keys(grant.where).filter((k) => !WHERE_KEYS.has(k)).map((k) => `where.${k}`) : [],
+    ...netUnknownKeys(grant.net),
+    ...isObject2(grant.limits) ? Object.keys(grant.limits).filter((k) => !LIMIT_KEYS.has(k)).map((k) => `limits.${k}`) : [],
+    ...isObject2(grant.require) ? Object.keys(grant.require).filter((k) => !REQUIRE_KEYS.has(k)).map((k) => `require.${k}`) : []
   ];
   if (unknown.length) return { ok: false, reasons: unknown.map((k) => `unknown_constraint:${k}`), online };
   if (validateGrant(grant).length) return { ok: false, reasons: ["invalid_grant"], online };
@@ -320,7 +527,8 @@ function evaluateGrant(grant, context) {
     if (where.source === "network" || where.source === "both") checkSource(where, location2.network, "network", now, reasons);
     if (where.source === "device" || where.source === "both") checkSource(where, location2.device, "device", now, reasons);
   }
-  const attestation = isObject(context.attestation) ? context.attestation : null;
+  checkNetClient(grant.net?.client, context, reasons, online);
+  const attestation = isObject2(context.attestation) ? context.attestation : null;
   const apps = grant.require?.app_ids;
   const android = attestation?.format === "android-key";
   const appTrusted = android ? attestation.verified_boot === "verified" && attestation.device_locked === true : true;
@@ -334,7 +542,7 @@ function evaluateGrant(grant, context) {
   const policy = gatePolicy(context.policy);
   if (grant.require?.confirmation) {
     const c = context.confirmation;
-    if (!isObject(c) || !Number.isSafeInteger(c.iat) || !Number.isSafeInteger(c.exp) || now + CONFIRMATION_SKEW < c.iat) reasons.push("confirmation_required");
+    if (!isObject2(c) || !Number.isSafeInteger(c.iat) || !Number.isSafeInteger(c.exp) || now + CONFIRMATION_SKEW < c.iat) reasons.push("confirmation_required");
     else if (now - CONFIRMATION_SKEW >= c.exp) reasons.push("confirmation_expired");
     else if (c.by_timeout !== false && policy?.fail_open === false) reasons.push("confirmation_by_timeout_refused");
   }
@@ -342,7 +550,7 @@ function evaluateGrant(grant, context) {
   if (policy?.require === true) {
     online.gate_policy = true;
     if (context.online) {
-      const kinds = isObject(context.gate_kinds) ? context.gate_kinds : {};
+      const kinds = isObject2(context.gate_kinds) ? context.gate_kinds : {};
       const kindOf = (id) => id === "owner" ? "owner" : Object.hasOwn(kinds, id) ? kinds[id] : void 0;
       const accepted = (kind) => typeof kind === "string" && (!Array.isArray(policy.kinds) || policy.kinds.includes(kind));
       if (!(gates && gates.some((entry) => entry.any.every((id) => accepted(kindOf(id)))))) reasons.push("gate_required");
@@ -405,7 +613,7 @@ function describeGateEntry(entry) {
   return entry.on_timeout === "allow" ? `approved by ${who}, or allowed anyway if nobody answers within ${wait}` : `approved by ${who} within ${wait}`;
 }
 function describeGrant(grant) {
-  if (!isObject(grant) || !Array.isArray(grant.actions)) return "An invalid grant (it allows nothing).";
+  if (!isObject2(grant) || !Array.isArray(grant.actions)) return "An invalid grant (it allows nothing).";
   const parts = [`May ${list(grant.actions.map((a) => `"${a}"`))}`];
   const resources = grant.resources || ["*"];
   parts.push(resources.length === 1 && resources[0] === "*" ? "on any resource" : `on ${list(resources.map((r) => r.endsWith("*") ? `resources starting with "${r.slice(0, -1)}"` : `"${r}"`))}`);
@@ -420,6 +628,7 @@ function describeGrant(grant) {
     if (places.length) parts.push(`only from ${list(places)} (${source})`);
     if (where.networks) parts.push(`only from network ${list(where.networks)}`);
   }
+  if (isObject2(grant.net)) parts.push(...describeNet(grant.net));
   const uses = grant.limits?.uses;
   if (uses) parts.push(uses.per === "total" ? `at most ${uses.count} time${uses.count === 1 ? "" : "s"} in total` : `at most ${uses.count} time${uses.count === 1 ? "" : "s"} per ${uses.per}`);
   if (grant.limits?.spend_usd_per_month !== void 0) parts.push(`spending at most $${grant.limits.spend_usd_per_month.toFixed(2)} per month`);

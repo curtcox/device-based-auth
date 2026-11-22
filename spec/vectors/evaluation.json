@@ -3703,6 +3703,1954 @@
           ]
         ]
       }
+    },
+    {
+      "name": "net: inline CIDR allows the peer address",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "203.0.113.0/24"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.9"
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: inline CIDR denies another address",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "203.0.113.0/24"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "198.51.100.9"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: an IPv4 range never matches an IPv6 peer",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "0.0.0.0/0"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "2001:db8::1"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: no peer address denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "203.0.113.0/24"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_unavailable"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a named list allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "https://status.devicebasedauth.org/v1/addresses/adl_OFFICE0001"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.77"
+          }
+        },
+        "address_lists": {
+          "adl_OFFICE0001": {
+            "cidrs": [
+              "192.0.2.0/25"
+            ],
+            "ver": 4
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: a named list denies an address it does not hold",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "https://status.devicebasedauth.org/v1/addresses/adl_OFFICE0001"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.200"
+          }
+        },
+        "address_lists": {
+          "adl_OFFICE0001": {
+            "cidrs": [
+              "192.0.2.0/25"
+            ],
+            "ver": 4
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: an unavailable list matches nothing",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "https://status.devicebasedauth.org/v1/addresses/adl_OFFICE0001"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.77"
+          }
+        },
+        "address_lists": {
+          "adl_OFFICE0001": "unavailable"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed",
+            "address_list_unavailable:adl_OFFICE0001"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a list the verifier did not resolve is unavailable",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "https://status.devicebasedauth.org/v1/addresses/adl_OFFICE0001"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.77"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed",
+            "address_list_unavailable:adl_OFFICE0001"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a DNS answer allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "dns": {
+                  "names": [
+                    "vpn.example.com"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "2001:db8:42::7"
+          }
+        },
+        "dns": {
+          "vpn.example.com": {
+            "addrs": [
+              "192.0.2.1",
+              "2001:DB8:42:0::7"
+            ],
+            "dnssec": false
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: an unresolved DNS name matches nothing",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "dns": {
+                  "names": [
+                    "vpn.example.com"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.1"
+          }
+        },
+        "dns": {
+          "vpn.example.com": "unresolved"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed",
+            "dns_unresolved:vpn.example.com"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: dnssec refuses an unvalidated answer",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "dns": {
+                  "names": [
+                    "vpn.example.com"
+                  ],
+                  "dnssec": true
+                }
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.1"
+          }
+        },
+        "dns": {
+          "vpn.example.com": {
+            "addrs": [
+              "192.0.2.1"
+            ],
+            "dnssec": false
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed",
+            "dns_unvalidated:vpn.example.com"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: dnssec accepts a validated answer",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "dns": {
+                  "names": [
+                    "vpn.example.com"
+                  ],
+                  "dnssec": true
+                }
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.1"
+          }
+        },
+        "dns": {
+          "vpn.example.com": {
+            "addrs": [
+              "192.0.2.1"
+            ],
+            "dnssec": true
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: sources are a union (the list allows)",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "203.0.113.0/24"
+                ],
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "https://status.devicebasedauth.org/v1/addresses/adl_OFFICE0001"
+                  },
+                  {
+                    "id": "adl_VPNEXIT01",
+                    "uri": "https://status.devicebasedauth.org/v1/addresses/adl_VPNEXIT01"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.5"
+          }
+        },
+        "address_lists": {
+          "adl_OFFICE0001": "unavailable",
+          "adl_VPNEXIT01": {
+            "cidrs": [
+              "192.0.2.0/24"
+            ],
+            "ver": 1
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: every failing source is reported once",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "203.0.113.0/24"
+                ],
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "https://status.devicebasedauth.org/v1/addresses/adl_OFFICE0001"
+                  },
+                  {
+                    "id": "adl_VPNEXIT01",
+                    "uri": "https://status.devicebasedauth.org/v1/addresses/adl_VPNEXIT01"
+                  }
+                ],
+                "dns": {
+                  "names": [
+                    "a.example.com",
+                    "b.example.com"
+                  ],
+                  "dnssec": true
+                }
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.5"
+          }
+        },
+        "address_lists": {
+          "adl_VPNEXIT01": {
+            "cidrs": [
+              "10.0.0.0/8"
+            ],
+            "ver": 1
+          }
+        },
+        "dns": {
+          "b.example.com": {
+            "addrs": [
+              "192.0.2.5"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed",
+            "address_list_unavailable:adl_OFFICE0001",
+            "dns_unresolved:a.example.com",
+            "dns_unvalidated:b.example.com"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: offline, only the webhook could allow: online required",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "203.0.113.0/24"
+                ],
+                "webhook": "gate_ADDRHOOK1"
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.5"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "online_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: offline, another source allows without the webhook",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "203.0.113.0/24"
+                ],
+                "webhook": "gate_ADDRHOOK1"
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.5"
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: online, the webhook allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "webhook": "gate_ADDRHOOK1"
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.5"
+          }
+        },
+        "online": true,
+        "address_webhook": {
+          "gate_ADDRHOOK1": true
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: online, the webhook denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "webhook": "gate_ADDRHOOK1"
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.5"
+          }
+        },
+        "online": true,
+        "address_webhook": {
+          "gate_ADDRHOOK1": false
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: online, no webhook answer denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "webhook": "gate_ADDRHOOK1"
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.5"
+          }
+        },
+        "online": true
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: of origin checks the first relay's record, not the peer",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "of": "origin",
+                "cidrs": [
+                  "10.0.0.0/8"
+                ]
+              },
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "198.51.100.1"
+          }
+        },
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001"
+          ],
+          "origin": "10.1.2.3"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: of origin denies an origin outside the ranges",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "of": "origin",
+                "cidrs": [
+                  "10.0.0.0/8"
+                ]
+              },
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "10.9.9.9"
+          }
+        },
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001"
+          ],
+          "origin": "172.16.0.1"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: of origin without a route",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "of": "origin",
+                "cidrs": [
+                  "10.0.0.0/8"
+                ]
+              },
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "10.9.9.9"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_unavailable",
+            "route_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: of origin needs a route rule",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "of": "origin",
+                "cidrs": [
+                  "10.0.0.0/8"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "10.9.9.9"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a route through a listed relay allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001",
+                  "dev_RELAYEDGE1"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "198.51.100.1"
+          }
+        },
+        "route": {
+          "relays": [
+            "dev_RELAYEDGE1"
+          ],
+          "origin": "10.1.2.3"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: no route denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "198.51.100.1"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "route_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: the verifier's route error is reported",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "198.51.100.1"
+          }
+        },
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001"
+          ],
+          "origin": "10.1.2.3"
+        },
+        "route_error": "egress_mismatch"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "route_invalid:egress_mismatch"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a malformed route error is reported as malformed",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "route_error": "Bad Thing!"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "route_invalid:malformed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: too few hops",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001",
+                  "dev_RELAYEDGE1"
+                ],
+                "min_hops": 2
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001"
+          ],
+          "origin": "10.1.2.3"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "route_invalid:hop_count"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: too many hops",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001",
+                  "dev_RELAYEDGE1"
+                ],
+                "max_hops": 1
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001",
+            "dev_RELAYEDGE1"
+          ],
+          "origin": "10.1.2.3"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "route_invalid:hop_count"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a relay not listed denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001",
+            "dev_ROGUE0001"
+          ],
+          "origin": "10.1.2.3"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "route_relay_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: attested relays required and present",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ],
+                "require_attested": true
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001"
+          ],
+          "origin": "10.1.2.3",
+          "attested": [
+            true
+          ]
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: attested relays required and missing",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001",
+                  "dev_RELAYEDGE1"
+                ],
+                "require_attested": true
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001",
+            "dev_RELAYEDGE1"
+          ],
+          "origin": "10.1.2.3",
+          "attested": [
+            true,
+            false
+          ]
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "route_invalid:relay_not_attested"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: min_hops above max_hops is invalid",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ],
+                "min_hops": 3,
+                "max_hops": 2
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001"
+          ],
+          "origin": "10.1.2.3"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a round trip within the maximum allows",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "latency": {
+                "max_rtt_ms": 40
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.9",
+            "rtt_ms": 40
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: a round trip over the maximum denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "latency": {
+                "max_rtt_ms": 40
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.9",
+            "rtt_ms": 40.5
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "rtt_exceeded"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: no measurement asks for a challenge",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "latency": {
+                "max_rtt_ms": 40,
+                "samples": 3
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.9"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "rtt_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a negative measurement is no measurement",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "latency": {
+                "max_rtt_ms": 40
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.9",
+            "rtt_ms": -1
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "rtt_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: max_rtt_ms out of range is invalid",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "latency": {
+                "max_rtt_ms": 5001
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.9",
+            "rtt_ms": 1
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: address, route and latency all reported in order",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "203.0.113.0/24"
+                ]
+              },
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              },
+              "latency": {
+                "max_rtt_ms": 40
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.1",
+            "rtt_ms": 90
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "address_not_allowed",
+            "route_required",
+            "rtt_exceeded"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: reasons come after where and before online_required",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "countries": [
+              "US"
+            ]
+          },
+          "net": {
+            "client": {
+              "latency": {
+                "max_rtt_ms": 40
+              }
+            }
+          },
+          "require": {
+            "confirmation": true
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.1",
+            "country": "CA",
+            "rtt_ms": 90
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "outside_location:network",
+            "rtt_exceeded",
+            "confirmation_required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: where.networks is unchanged beside net",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "where": {
+            "source": "network",
+            "networks": [
+              "203.0.113.0/24"
+            ]
+          },
+          "net": {
+            "client": {
+              "addresses": {
+                "cidrs": [
+                  "192.0.2.0/24"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.1"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "network_not_allowed"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: server rules are not evaluated by verifiers",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "server": {
+              "addresses": {
+                "cidrs": [
+                  "198.51.100.0/24"
+                ]
+              },
+              "latency": {
+                "max_rtt_ms": 1
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: an unknown member denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "latency": {
+                "max_rtt_ms": 40,
+                "jitter_ms": 5
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "203.0.113.9",
+            "rtt_ms": 1
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "unknown_constraint:net.client.latency.jitter_ms"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: an unknown direction denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "sideways": {}
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "unknown_constraint:net.sideways"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: an empty net is invalid",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {}
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a webhook on the server side is invalid",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "server": {
+              "addresses": {
+                "webhook": "gate_ADDRHOOK1"
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1"
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a host name must be lower case",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "dns": {
+                  "names": [
+                    "VPN.example.com"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.1"
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
     }
   ]
 }

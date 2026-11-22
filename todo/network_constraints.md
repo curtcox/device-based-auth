@@ -414,7 +414,7 @@ STATUS row updated.
 
 | Phase | Deliverable | Exit criteria |
 |-------|-------------|---------------|
-| N1 ⬜ | Spec text and vectors for `net` (addresses inline + context-resolved lists/DNS, route context, rtt); evaluator in JS, Python, Go | Every new vector passes in all three; old `where.networks` vectors unchanged |
+| N1 🚧 | Spec text and vectors for `net` (addresses inline + context-resolved lists/DNS, route context, rtt); evaluator in JS, Python, Go | Every new vector passes in all three; old `where.networks` vectors unchanged |
 | N2 ⬜ | RTT challenge in the verify library (nonce check function, retry, samples, reuse), the account object's RTT nonce standing in for its D15 epoch nonce, SDK/CLI following `samples_left`, `dba headers`/`dba curl` refusing latency grants (§7.1.1) | e2e: a device behind an injected 100 ms delay fails `max_rtt_ms: 40` and passes without it |
 | N3 ⬜ | Named address lists: CRUD, signed publishing on R2, verifier fetch/cache/stale/rollback rules, D17 prices in cost policy | Changing a list changes an offline verifier's decision within 60 s + cache; cost-count test covers the new ops |
 | N4 ⬜ | DNS source (DoH, DNSSEC flag, TTL bounds) | Tested against a stub resolver incl. unvalidated and failing answers |

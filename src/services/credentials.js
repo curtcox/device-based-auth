@@ -2,7 +2,7 @@ import { assert } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { randomId, derivedId } from '../utils/ids.js';
 import { price } from '../utils/pricing.js';
-import { validateGrants, actionNamespace, grantsNarrow, isNarrowing } from '../../packages/verify/src/grants.js';
+import { validateGrants, actionNamespace, grantsNarrow, isNarrowing, grantsNeedVersion2 } from '../../packages/verify/src/grants.js';
 import { jwkThumbprint, publicJwk, verifyJws, decodeJws, sha256b64u } from '../../packages/verify/src/jose.js';
 import { signCredential, signAccessToken } from '../../packages/verify/src/issuer.js';
 import { CREDENTIAL_TYP, inspectCredential } from '../../packages/verify/src/credential.js';
@@ -167,7 +167,7 @@ export async function issueCredential(env, account, request, { source, chargeId,
   const iat = Math.floor(now / 1000);
   const exp = Math.min(iat + lifetime, maxExp ?? Infinity);
   assert(exp > iat + 60, 'parent_expiring', 'The delegating credential expires too soon to issue from', 409);
-  const payload = { iss: issuerName(env), sub: deviceId, acct: account, aud, cid, jti: `${cid}.1`, iat, nbf: iat, exp, cnf: { jkt }, device, grants, status: { status_list: { idx: status.idx, uri: status.uri } }, ver: 1, ...(confirm ? { confirm } : {}) };
+  const payload = { iss: issuerName(env), sub: deviceId, acct: account, aud, cid, jti: `${cid}.1`, iat, nbf: iat, exp, cnf: { jkt }, device, grants, status: { status_list: { idx: status.idx, uri: status.uri } }, ver: grantsNeedVersion2(grants) ? 2 : 1, ...(confirm ? { confirm } : {}) };
   const credential = await signCredential(payload, await activeSigner(env));
   const usageFrom = parentGrants ? sharedUsage(grants, parentGrants) : undefined;
   const record = { cid, jti: payload.jti, version: 1, device_id: deviceId, jkt, aud, grants, lifetime, device, iat, exp, status, jws: credential, source, ...(confirm ? { confirm, confirmed_until: null } : {}), ...(maxExp ? { max_exp: maxExp } : {}), ...(parentCid ? { parent_cid: parentCid } : {}), ...(usageFrom ? { usage_from: usageFrom } : {}) };

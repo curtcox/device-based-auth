@@ -387,7 +387,7 @@ curl --cert ~/.config/dba/default/client.crt --key ~/.config/dba/default/client.
 <tr><td>429</td><td><code>rate_limited</code></td><td>Slow down.</td></tr>
 <tr><td>503</td><td><code>cost_brake</code>, <code>payments_unavailable</code></td><td>A free endpoint is paused by the cost-safety brake, or a dependency is not configured.</td></tr>
 </tbody></table>
-<p>Verifiers report decision reasons per grant, such as <code>action_not_granted</code>, <code>outside_time_window</code>, <code>outside_location:network</code>, <code>network_not_allowed</code>, <code>location_stale:device</code> and <code>online_required</code>; see <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md">spec/evaluation.md</a>.</p>
+<p>Verifiers report decision reasons per grant, such as <code>action_not_granted</code>, <code>outside_time_window</code>, <code>outside_location:network</code>, <code>network_not_allowed</code>, <code>address_not_allowed</code>, <code>rtt_exceeded</code>, <code>location_stale:device</code> and <code>online_required</code>; see <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md">spec/evaluation.md</a>.</p>
 </section>
 
 <section id="pricing">

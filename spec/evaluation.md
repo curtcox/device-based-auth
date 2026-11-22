@@ -1,4 +1,4 @@
-# Grant evaluation, vocabulary version 1
+# Grant evaluation, vocabulary versions 1 and 2
 
 Implemented by `evaluateGrants` in `packages/verify/src/grants.js`. Every implementation MUST
 pass [`vectors/evaluation.json`](vectors/evaluation.json): for each case, evaluating `grants`
@@ -21,6 +21,8 @@ in `context` yields `expected.allow`, `expected.grant_index`, and per-grant `exp
 - `policy` — the audience's action catalog entry for `action`, if any (§3.8).
 - `gate_kinds` — `{ <gate id>: <kind> }` for the issuing account's gates. Only
   devicebasedauth.org knows them, so only online evaluations have it.
+- `location.network.rtt_ms`, `address_lists`, `dns`, `address_webhook`, `route`, `route_error` —
+  what the verifier resolved for the `net` constraint before evaluating (§3.10).
 
 ## 2. Decision
 
@@ -32,7 +34,8 @@ in the order of this document).
 
 ## 3. Grant members
 
-A grant may contain only `actions`, `resources`, `when`, `where`, `limits`, `require`. Any other
+A grant may contain only `actions`, `resources`, `when`, `where`, `net`, `limits`, `require`
+(`net` only in vocabulary 2, spec/credential.md). Any other
 member — at any nesting level listed here — makes the grant fail with
 `unknown_constraint:<path>` and no other reasons. A grant that is otherwise invalid fails with
 `invalid_grant`.
@@ -177,5 +180,93 @@ Account owners can add gates but never remove an audience's requirement.
 
 ### 3.9 Reason order
 
-Reasons are reported in the order of this document; `confirmation_*` come after
+Reasons are reported in the order of this document, except that the `net` reasons of §3.10 come
+right after those of `where` (§3.4) and before `limits`; `confirmation_*` come after
 `verified_boot_required`, then `gate_required`, then `online_required`.
+
+### 3.10 `net` (vocabulary 2)
+
+Rules about the *connection* a request arrives on rather than the place it comes from: from
+which addresses, through which relays, and how far away in round-trip time. Design:
+[todo/network_constraints.md](../todo/network_constraints.md). Network rules are evidence about
+the connection, not proof of identity; the device key still proves who is talking.
+
+```json
+"net": {
+  "client": {
+    "addresses": { "of": "peer", "cidrs": ["203.0.113.0/24"],
+                   "lists": [{ "id": "adl_OFFICE0001", "uri": "https://status.devicebasedauth.org/v1/addresses/adl_OFFICE0001" }],
+                   "dns": { "names": ["vpn-egress.example.com"], "dnssec": true }, "webhook": "gate_ADDRHOOK1" },
+    "route": { "relays": ["dev_RELAYHQ001"], "min_hops": 1, "max_hops": 2, "require_attested": true },
+    "latency": { "max_rtt_ms": 40, "samples": 1, "reuse_s": 60 }
+  },
+  "server": { "addresses": { "cidrs": ["198.51.100.0/24"] }, "latency": { "max_rtt_ms": 80 } }
+}
+```
+
+`net` needs `client` or `server`; each needs at least one of `addresses`, `route`, `latency`, and
+every one present must pass. **Verifiers evaluate only `client`.** `server` binds the device's own
+SDK or CLI (which checks the relying party before sending), is validated like the rest, and is
+ignored by verifiers: a relying party never treats a device's report about the server as a
+reason to allow.
+
+**Shape** (anything else is `invalid_grant`; unknown members at any level are
+`unknown_constraint:net.…`):
+
+- `addresses`: `of` (`"peer"`, the default, or `"origin"`, which needs a `route` in the same
+  direction and is not allowed in `server`) and at least one source: `cidrs` (1–64 CIDR ranges),
+  `lists` (1–8 `{ id, uri }`, `id` = `adl_` + 8–64 letters and digits, `uri` an `https://` URL of
+  at most 512 characters), `dns` (`names`: 1–16 lower-case host names of two or more labels whose
+  last label is not all digits, at most 253 characters; `dnssec`: boolean), `webhook` (a gate id,
+  `client` only). Lists have no duplicates.
+- `route`: `relays` (1–16 device ids `dev_` + 8–64 letters and digits), `min_hops` and
+  `max_hops` (integers 1–4, defaults 1 and 4, `min_hops ≤ max_hops`), `require_attested`
+  (boolean).
+- `latency`: `max_rtt_ms` (integer 1–5000, required), `samples` (1–5), `reuse_s` (0–300).
+  `samples` and `reuse_s` tell the verifier how to measure (the minimum of `samples` timed
+  challenges; a passing measurement reused for `reuse_s` for the same key and peer address); the
+  evaluator compares only the result.
+
+**Context.** The verifier resolves everything that needs I/O first, so evaluation stays pure:
+
+| Field | Meaning |
+|-------|---------|
+| `location.network.ip` | The peer address, from the platform (`CF-Connecting-IP`, the socket), never a header the client sets |
+| `location.network.rtt_ms` | The measured round trip in milliseconds (a number ≥ 0), or absent |
+| `address_lists` | `{ <list id>: { cidrs, ver } }` for lists the verifier holds a current copy of; any other value, or no entry, means unavailable |
+| `dns` | `{ <name>: { addrs, dnssec } }` for names that resolved; any other value, or no entry, means unresolved |
+| `address_webhook` | Online only: `{ <gate id>: true }` when the webhook allowed this address |
+| `route` | `{ relays: [<relay device id>, …] in hop order, origin: <address hop 0 recorded>, attested: [<boolean per hop>] }` after the verifier checked the hops |
+| `route_error` | A reason (`[a-z0-9_]{1,64}`) the verifier could not accept the hops, e.g. `egress_mismatch` |
+
+**Checks on `client`, in this order:**
+
+1. `addresses`. The address is the peer address, or `route.origin` for `of: "origin"`. Missing →
+   `address_unavailable`. Otherwise the sources form a **union**: the address is allowed when it is
+   inside one of `cidrs`; or inside one of the `cidrs` of an available list; or the same address
+   (compared as numbers, so `2001:DB8::1` equals `2001:db8:0::1`; families never match) as one of
+   the `addrs` of a resolved name, whose `dnssec` is `true` when `dns.dnssec` is `true`.
+   If none allows it and there is a `webhook`:
+   offline, the grant becomes online-only (§3.7) instead of failing here; online, the webhook's
+   answer `true` allows. Otherwise `address_not_allowed`, followed by one informational reason
+   per source that could not be consulted: `address_list_unavailable:<id>` for each unavailable
+   list, then for each name `dns_unresolved:<name>` or (resolved but not validated where `dnssec`
+   is required) `dns_unvalidated:<name>`.
+2. `route`. A string `route_error` → `route_invalid:<route_error>` (`route_invalid:malformed` if
+   it is not `[a-z0-9_]{1,64}`). Otherwise no `route` object with a `relays` list →
+   `route_required`. Otherwise, each that applies: hop count outside `min_hops`…`max_hops` →
+   `route_invalid:hop_count`; `require_attested` and `attested` is not one `true` per hop →
+   `route_invalid:relay_not_attested`; a relay not in `relays` → `route_relay_not_allowed`.
+3. `latency`. `rtt_ms` missing, not a number or negative → `rtt_required` (the verifier must
+   challenge the device and try again); greater than `max_rtt_ms` → `rtt_exceeded`.
+
+`where.networks` is unchanged and evaluated with `where`. Old (vocabulary 1) verifiers deny any
+grant with `net` as `unknown_constraint:net`, so `net` fails closed everywhere.
+
+**What each rule is worth.** Address rules are as strong as the address the verifier sees: anyone
+who controls an allowed address, or a VPN exit inside an allowed range, passes. DNS names are as
+strong as the resolver (`dnssec: true` makes an unvalidated answer deny). A route proves the
+request passed the relays, not that the relays are honest; relays are revocable DBA devices.
+Latency bounds distance, not possession: it stops a credential relayed from far away, not a
+stolen key used nearby, and it is only ever an upper bound, because a device can always answer
+later but never sooner.
