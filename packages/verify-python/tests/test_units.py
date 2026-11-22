@@ -117,7 +117,7 @@ class GrantsTest(unittest.TestCase):
         self.assertFalse(validate_grant({"actions": ["a:b"], "limits": {"uses": {"count": 3.0, "per": "day"}}}))
         payload = {"iss": "i", "sub": "dev_ABCDEFGH", "acct": "a", "jti": "j", "cid": "crd_ABCDEFGH", "iat": 1, "nbf": 1, "exp": 2,
                    "aud": ["x"], "ver": True, "status": {"status_list": {"idx": 0, "uri": "u"}}, "cnf": {"jkt": "k"}, "grants": [{"actions": ["a:b"]}]}
-        self.assertEqual(validate_credential_payload(payload), ["ver must be 1"])
+        self.assertEqual(validate_credential_payload(payload), ["ver must be 1 or 2"])
 
     def test_null_is_not_absent(self):
         # A present null fails validation (deny) instead of being read as "no restriction".

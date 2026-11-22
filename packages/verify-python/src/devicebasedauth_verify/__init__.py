@@ -7,9 +7,11 @@ from .credential import (ACCESS_TYP, CLOCK_SKEW, CONFIRMATION_TYP, CREDENTIAL_TY
                          PROOF_TYP, STATUS_LIST_TYP, ReplayCache, VerificationError, create_proof, htu,
                          inspect_credential, validate_credential_payload, verify_confirmation, verify_credential,
                          verify_proof)
-from .grants import (DAYS, GATE_KINDS, GATE_LIMITS, LIMITS, STEP_UP_GATES, USE_PERIODS, VOCABULARY_VERSION, action_matches,
-                     distance_meters, evaluate_grant, evaluate_grants, grant_gates, in_window, ip_in_cidr, local_time, parse_cidr, parse_ip, period_seconds,
-                     resource_matches, valid_time_zone, validate_grant, validate_grants)
+from .grants import (DAYS, GATE_KINDS, GATE_LIMITS, LIMITS, STEP_UP_GATES, USE_PERIODS, VOCABULARY_VERSION, VOCABULARY_VERSIONS,
+                     action_matches, distance_meters, evaluate_grant, evaluate_grants, grant_gates, grants_need_version2, in_window,
+                     local_time, period_seconds, resource_matches, valid_time_zone, validate_grant, validate_grants)
+from .ip import ip_in_cidr, parse_cidr, parse_ip, same_ip
+from .net import ADDRESS_LIST_ID, NET_LIMITS, describe_net, valid_host_name, validate_net
 from .issuer import issuer_signer, jwks_for, sign_access_token, sign_credential, sign_status_list
 from .jose import (b64u, decode_jws, export_public_jwk, generate_key_pair, import_private_key, import_public_key,
                    jwk_thumbprint, public_jwk, sha256_b64u, sign_jws, unb64u, unb64u_json, verify_jws)
@@ -89,4 +91,12 @@ __all__ = [
     "verify_credential",
     "verify_jws",
     "verify_proof",
+    "ADDRESS_LIST_ID",
+    "NET_LIMITS",
+    "VOCABULARY_VERSIONS",
+    "describe_net",
+    "grants_need_version2",
+    "same_ip",
+    "valid_host_name",
+    "validate_net",
 ]

@@ -1,5 +1,5 @@
 """
-Grant vocabulary v1: validation and evaluation (port of packages/verify/src/grants.js).
+Grant vocabulary (1, and 2 with `net`): validation and evaluation (port of packages/verify/src/grants.js).
 
 The normative description is spec/evaluation.md and every case in spec/vectors/evaluation.json
 must pass. The evaluator is deliberately deny-by-default: a grant with a member this version does
@@ -17,12 +17,17 @@ import zoneinfo
 
 from . import _js
 from ._js import MISSING, get, includes, is_finite, is_object, is_safe_integer, present, truthy
+from .ip import ip_in_cidr, parse_cidr, parse_ip, same_ip  # noqa: F401 - re-exported, as grants.js does
+from .net import (ADDRESS_LIST_ID, NET_LIMITS, check_net_client, describe_net, net_unknown_keys,  # noqa: F401
+                  valid_host_name, validate_net)
 
+#: Vocabulary 1, or 2 when a grant uses ``net`` (spec/credential.md).
 VOCABULARY_VERSION = 1
+VOCABULARY_VERSIONS = (1, 2)
 DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
 USE_PERIODS = ["minute", "hour", "day", "month", "total"]
 PERIOD_SECONDS = {"minute": 60, "hour": 3600, "day": 86400, "month": 2592000}
-GRANT_KEYS = {"actions", "resources", "when", "where", "limits", "require"}
+GRANT_KEYS = {"actions", "resources", "when", "where", "net", "limits", "require"}
 WHEN_KEYS = {"tz", "windows", "not_before", "not_after"}
 WINDOW_KEYS = {"days", "from", "to"}
 WHERE_KEYS = {"source", "countries", "regions", "areas", "networks"}
@@ -118,74 +123,6 @@ def valid_time_zone(tz) -> bool:
         return True
     except Exception:
         return False
-
-
-def parse_ip(ip):
-    """
-    Parse an IPv4 or IPv6 address to (bits, value), or None.
-
-    This is the JS parser, not ``ipaddress``: the two disagree on inputs a client controls
-    (``ipaddress`` rejects IPv4 octets with leading zeros and accepts IPv6 ``%zone`` suffixes),
-    and a CIDR check must give the same answer in every implementation.
-    """
-    if not isinstance(ip, str):
-        return None
-    if re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}", ip, re.ASCII):
-        parts = [int(p) for p in ip.split(".")]
-        if any(p > 255 for p in parts):
-            return None
-        value = 0
-        for p in parts:
-            value = (value << 8) + p
-        return 32, value
-    if not re.fullmatch(r"[0-9a-fA-F:.]+", ip, re.ASCII) or ":" not in ip:
-        return None
-    address = ip
-    v4 = re.search(r"([0-9]{1,3}(?:\.[0-9]{1,3}){3})\Z", address, re.ASCII)
-    if v4:
-        parsed = parse_ip(v4.group(1))
-        if not parsed:
-            return None
-        address = address[: -len(v4.group(1))] + format(parsed[1] >> 16, "x") + ":" + format(parsed[1] & 0xFFFF, "x")
-    halves = address.split("::")
-    if len(halves) > 2:
-        return None
-    head = halves[0].split(":") if halves[0] else []
-    tail = halves[1].split(":") if len(halves) == 2 and halves[1] else []
-    missing = 8 - len(head) - len(tail)
-    if (len(halves) == 1 and missing != 0) or missing < 0:
-        return None
-    groups = head + ["0"] * (missing if len(halves) == 2 else 0) + tail
-    if len(groups) != 8 or any(not re.fullmatch(r"[0-9a-fA-F]{1,4}", g, re.ASCII) for g in groups):
-        return None
-    value = 0
-    for g in groups:
-        value = (value << 16) + int(g, 16)
-    return 128, value
-
-
-def parse_cidr(cidr):
-    """Parse a CIDR range to (bits, value, prefix), or None when invalid. Host bits may be set."""
-    if not isinstance(cidr, str):
-        return None
-    parts = cidr.split("/")
-    if len(parts) != 2 or not re.fullmatch(r"[0-9]{1,3}", parts[1], re.ASCII):
-        return None
-    parsed = parse_ip(parts[0])
-    prefix = int(parts[1])
-    if not parsed or prefix > parsed[0]:
-        return None
-    return parsed[0], parsed[1], prefix
-
-
-def ip_in_cidr(ip, cidr) -> bool:
-    """True when ip is inside the CIDR range. Address families never match each other."""
-    address = parse_ip(ip)
-    network = parse_cidr(cidr)
-    if not address or not network or address[0] != network[0]:
-        return False
-    shift = network[0] - network[2]
-    return (address[1] >> shift) == (network[1] >> shift)
 
 
 def distance_meters(a, b) -> float:
@@ -321,6 +258,8 @@ def validate_grant(grant, path: str = "grant") -> list:
             errors.append(f"{path}.where needs at least one of countries, regions, areas or networks")
         if _js.strict_eq(get(w, "source"), "device") and (truthy(get(w, "countries")) or truthy(get(w, "regions")) or truthy(get(w, "networks"))):
             errors.append(f'{path}.where with source "device" can only use areas (a device reports coordinates, not countries or networks)')
+    if present(grant, "net"):
+        errors += [f"{path}.{k} is not allowed" for k in net_unknown_keys(grant["net"])] + validate_net(grant["net"], f"{path}.net")
     if present(grant, "limits") and _check_keys(grant["limits"], LIMIT_KEYS, f"{path}.limits", errors):
         uses, spend = get(grant["limits"], "uses"), get(grant["limits"], "spend_usd_per_month")
         if uses is not MISSING and _check_keys(uses, USES_KEYS, f"{path}.limits.uses", errors):
@@ -407,6 +346,11 @@ def _gate_policy(policy):
     return gates if is_object(gates) else None
 
 
+def grants_need_version2(grants) -> bool:
+    """True when any grant needs vocabulary 2 (it uses ``net``)."""
+    return isinstance(grants, list) and any(is_object(g) and present(g, "net") for g in grants)
+
+
 def validate_grants(grants) -> list:
     """Validate a grant list (1–32 grants)."""
     if not isinstance(grants, list) or len(grants) == 0 or len(grants) > LIMITS["grants"]:
@@ -474,9 +418,11 @@ def _unknown_members(grant) -> list:
     if not is_object(grant):
         return ["grant"]
     unknown = [k for k in _js.keys(grant) if k not in GRANT_KEYS]
-    for member, allowed in (("when", WHEN_KEYS), ("where", WHERE_KEYS), ("limits", LIMIT_KEYS), ("require", REQUIRE_KEYS)):
+    for member, allowed in (("when", WHEN_KEYS), ("where", WHERE_KEYS), ("net", None), ("limits", LIMIT_KEYS), ("require", REQUIRE_KEYS)):
         value = get(grant, member)
-        if is_object(value):
+        if member == "net":
+            unknown += net_unknown_keys(value)
+        elif is_object(value):
             unknown += [f"{member}.{k}" for k in _js.keys(value) if k not in allowed]
     return unknown
 
@@ -519,6 +465,7 @@ def evaluate_grant(grant, context: dict) -> dict:
             _check_source(where, get(location, "network"), "network", now, reasons)
         if where["source"] in ("device", "both"):
             _check_source(where, get(location, "device"), "device", now, reasons)
+    check_net_client(get(get(grant, "net"), "client"), context, reasons, online)
     limits, require = get(grant, "limits"), get(grant, "require")
     # Key attestation is a fact about the credential (device.attestation, signed by the issuer),
     # so it is checked offline like time and place.
@@ -603,8 +550,10 @@ def evaluate_grants(grants, context: dict) -> dict:
     context: {now (seconds, the verifier's clock), action, resource, location: {network, device},
     online, attestation (the credential's device.attestation, if any), confirmation ({iat, exp,
     by_timeout} of a verified confirmation), policy (the audience's catalog entry for the action),
-    gate_kinds ({gate id: kind}, online only)}. Returns {allow, grant_index, grant, online, caveats, reasons, online_required,
-    results}, where reasons has one list per grant.
+    gate_kinds ({gate id: kind}, online only), and for ``net``: route ({relays, attested, origin}),
+    route_error, address_lists ({id: {cidrs}}), dns ({name: {addrs, dnssec}}), address_webhook
+    ({gate id: bool}, online only) and location.network.rtt_ms}. Returns {allow, grant_index,
+    grant, online, caveats, reasons, online_required, results}, where reasons has one list per grant.
     """
     if not isinstance(grants, list):
         return {"allow": False, "grant_index": None, "reasons": [["invalid_grants"]], "online_required": False}

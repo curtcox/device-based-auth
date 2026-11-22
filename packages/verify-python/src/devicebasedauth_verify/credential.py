@@ -13,7 +13,7 @@ from collections import OrderedDict
 
 from . import _js
 from ._js import get, is_safe_integer
-from .grants import VOCABULARY_VERSION, validate_grants
+from .grants import VOCABULARY_VERSIONS, grants_need_version2, validate_grants
 from .status_list import MAX_STATUS_INDEX
 from .jose import b64u, decode_jws, export_public_jwk, jwk_thumbprint, public_jwk, sha256_b64u, sign_jws, verify_jws
 
@@ -80,8 +80,11 @@ def validate_credential_payload(payload: dict, typ: str = CREDENTIAL_TYP) -> lis
     exp, nbf = get(payload, "exp"), get(payload, "nbf")
     if _js.is_number(exp) and _js.is_number(nbf) and exp <= nbf:
         errors.append("exp must be after nbf")
-    if not _js.strict_eq(get(payload, "ver"), VOCABULARY_VERSION):
-        errors.append(f"ver must be {VOCABULARY_VERSION}")
+    ver = get(payload, "ver")
+    if not _js.includes(VOCABULARY_VERSIONS, ver):
+        errors.append("ver must be 1 or 2")
+    elif _js.strict_eq(ver, 1) and grants_need_version2(get(payload, "grants")):
+        errors.append("ver must be 2 when a grant uses net")
     status = get(get(payload, "status"), "status_list")
     idx = get(status, "idx")
     if not _js.truthy(status) or not is_safe_integer(idx) or idx < 0 or idx > MAX_STATUS_INDEX or not isinstance(get(status, "uri"), str):

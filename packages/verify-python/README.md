@@ -53,6 +53,12 @@ Fetching is injectable — `create_verifier(audience, fetch=my_fetch, now=my_clo
 [['action_not_granted']]
 ```
 
+Grants that use the `net` constraint (vocabulary 2: such credentials carry `ver: 2`) are judged
+on facts you resolve first and pass in the context: `location.network.ip` and `rtt_ms`, `route`
+(`{relays, attested, origin}`) or `route_error`, `address_lists` (`{id: {cidrs}}`) and `dns`
+(`{name: {addrs, dnssec}}`). A grant whose address may only be allowed by a webhook is online-only.
+`validate_net` and `describe_net` explain a `net` member; spec/evaluation.md §3.10 has the rules.
+
 ## Fidelity to the JavaScript reference
 
 Decisions must not depend on which language verifies a credential, so JSON values are judged with
