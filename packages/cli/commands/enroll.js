@@ -5,19 +5,27 @@ import { inspectCredential } from '@devicebasedauth/verify';
 import { UsageError, ApiError } from '../errors.js';
 import { secondsOption } from '../args.js';
 import { audiencesFromOption, grantsFromOptions, enrollmentPayload, enrollmentTokenOption, signEnrollmentRequest, rotationProof, pollEnrollment } from '../enrollment.js';
-import { newDeviceKey, tpmKeyFile, loadDeviceKey, keyStoreOption, saveDeviceKey, forgetDeviceKey, credentialMatchesKey } from '../device-key.js';
+import { newDeviceKey, tpmKeyFile, windowsTpmKeyFile, loadDeviceKey, keyStoreOption, saveDeviceKey, forgetDeviceKey, credentialMatchesKey } from '../device-key.js';
 import { describeCredential, shouldRenew, relativeTime } from '../credentials.js';
 import { TPM_BACKEND, TPM_PROTECTION, createTpmKey, tpmAttestation, tpmAvailable } from '../tpm.js';
+import { WINDOWS_TPM_BACKEND } from '../windows-tpm.js';
 import { out, note, readJsonFile, readTextFile, writePrivate, ensureDir, requireDevice, usableDevice, keyWithdrawn, credentialArgument } from './profile.js';
 
 /**
- * A new device key, kept as `mode` says: made in the TPM for "tpm", else in software and saved by
- * saveDeviceKey. Returns { key, saved } like saveDeviceKey's result plus the loaded key.
+ * A new device key, kept as `mode` says: made in the TPM for "tpm" (through tpm2-tools, or on
+ * Windows the Platform Crypto Provider), else in software and saved by saveDeviceKey. Returns
+ * { key, saved } like saveDeviceKey's result plus the loaded key.
  */
 export async function newSavedKey(profile, mode) {
   if (mode !== 'tpm') {
     const key = await newDeviceKey();
     return { key, saved: await saveDeviceKey(key, { mode, secrets: profile.secrets }) };
+  }
+  if (profile.tpm.backend === WINDOWS_TPM_BACKEND) {
+    let made;
+    try { made = await profile.tpm.create(); } catch (error) { throw new UsageError(`Could not make a key in the TPM: ${error.message}. --key-store tpm on Windows needs a TPM 2.0 that Windows uses (tpm.msc shows it ready).`); }
+    const file = windowsTpmKeyFile(made);
+    return { key: await loadDeviceKey(file, { tpm: profile.tpm }), saved: { file, keyProtection: TPM_PROTECTION, store: null } };
   }
   if (!await tpmAvailable(profile.tpm.open)) throw new UsageError('No TPM is reachable: --key-store tpm needs tpm2-tools 5 and access to the TPM (/dev/tpmrm0, usually the "tss" group, or TPM2TOOLS_TCTI).');
   const made = await createTpmKey(profile.tpm.open);
@@ -60,10 +68,11 @@ export async function enroll(profile, { options }) {
   const { key, saved } = await newSavedKey(profile, keyStore);
   await ensureDir(profile.paths.dir);
   await writePrivate(profile.paths.key, `${JSON.stringify(saved.file, null, 2)}\n`);
-  await forgetDeviceKey(previous, { secrets: profile.secrets });
+  await forgetDeviceKey(previous, { secrets: profile.secrets, tpm: profile.tpm });
   const attestation = key.tpm ? await attestTpmKey(profile, key) : undefined;
+  if (key.keyName) note('dba: enrolling without attestation: dba cannot yet ask Windows to prove the key is in its TPM. Grants that require hardware attestation will deny this device.');
   const request = await signEnrollmentRequest(key, enrollmentPayload({ aud, grants, name: options.name || hostname(), kind: options.kind, lifetime, keyProtection: saved.keyProtection, attestation }));
-  if (key.tpm) note(`The private key is in ${profile.tpm.name}; it cannot leave it.`);
+  if (key.tpm || key.keyName) note(`The private key is in ${profile.tpm.name}; it cannot leave it.`);
   else if (saved.store) note(`Keeping the private key in ${profile.secrets.name}.`);
   else if (keyStore === 'auto' && profile.secrets) note(`${profile.secrets.name} is not available; keeping the private key in ${profile.paths.key} (0600).`);
   await rm(profile.paths.credential, { force: true });
@@ -125,7 +134,7 @@ export async function renew(profile, { options }) {
   // its thumbprint, so the old one is untouched); key.json changes only after the server agreed:
   // until then the old key and credential are the good pair. A rotated credential carries no
   // attestation (the server drops it), so a TPM key is not attested again here.
-  const fresh = options.rotate ? await newSavedKey(profile, previous?.key_store === TPM_BACKEND ? 'tpm' : previous?.key_store ? 'os' : 'file') : null;
+  const fresh = options.rotate ? await newSavedKey(profile, [TPM_BACKEND, WINDOWS_TPM_BACKEND].includes(previous?.key_store) ? 'tpm' : previous?.key_store ? 'os' : 'file') : null;
   const next = fresh?.key ?? null;
   const saved = fresh?.saved ?? null;
   const body = next ? { new_key_proof: await rotationProof(next, cid) } : {};
@@ -133,12 +142,12 @@ export async function renew(profile, { options }) {
   try {
     result = await profile.client.request('POST', `/api/v1/credentials/${encodeURIComponent(cid)}/renew`, { device, body });
   } catch (error) {
-    if (saved) await forgetDeviceKey(saved.file, { secrets: profile.secrets });
+    if (saved) await forgetDeviceKey(saved.file, { secrets: profile.secrets, tpm: profile.tpm });
     throw error;
   }
   if (saved) {
     await writePrivate(profile.paths.key, `${JSON.stringify(saved.file, null, 2)}\n`);
-    await forgetDeviceKey(previous, { secrets: profile.secrets });
+    await forgetDeviceKey(previous, { secrets: profile.secrets, tpm: profile.tpm });
   }
   await writePrivate(profile.paths.credential, `${result.credential}\n`);
   out(`${result.rotated ? 'Rotated to a new key and renewed' : 'Renewed'} ${result.cid}${result.recovered ? ' (the issuer withdrew the key that signed it; no charge)' : ''} (now ${result.jti}); expires ${new Date(result.exp * 1000).toISOString()} (${relativeTime(result.exp)}).`);
@@ -156,7 +165,7 @@ export async function revoke(profile) {
     if (!['revoked', 'expired'].includes(error.code)) throw error;
     out(`${cid} was already ${error.code}.`);
   }
-  await forgetDeviceKey(await readJsonFile(profile.paths.key), { secrets: profile.secrets });
+  await forgetDeviceKey(await readJsonFile(profile.paths.key), { secrets: profile.secrets, tpm: profile.tpm });
   for (const path of [profile.paths.credential, profile.paths.confirmation, profile.paths.key, profile.paths.config, profile.paths.certificate, profile.paths.certificateKey, profile.paths.ca]) await rm(path, { force: true });
   await rmdir(profile.paths.dir).catch(() => {});
   out(`Deleted the key and credential in ${profile.paths.dir}.`);

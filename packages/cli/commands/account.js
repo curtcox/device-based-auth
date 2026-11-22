@@ -20,7 +20,7 @@ async function freshKey(profile, options) {
   const { key, saved } = await newSavedKey(profile, keyStoreOption({ flag: options['key-store'], env: process.env }));
   await ensureDir(profile.paths.dir);
   await writePrivate(profile.paths.key, `${JSON.stringify(saved.file, null, 2)}\n`);
-  await forgetDeviceKey(previous, { secrets: profile.secrets });
+  await forgetDeviceKey(previous, { secrets: profile.secrets, tpm: profile.tpm });
   await rm(profile.paths.credential, { force: true });
   await writePrivate(profile.paths.config, `${JSON.stringify({ ...profile.config, origin: profile.origin }, null, 2)}\n`);
   return { key, device: { name: options.name || hostname(), kind: options.kind || 'cli', keyProtection: saved.keyProtection } };

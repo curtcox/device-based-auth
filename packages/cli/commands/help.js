@@ -20,6 +20,8 @@ Enroll this machine:
       dba also proves to the server that the key is in a genuine TPM (EK credential
       activation), so the credential says attestation "tpm" and satisfies grants that require
       hardware; key_protection "tpm". \`dba certificate\` cannot export a TPM key.
+      On Windows, tpm makes the key through the Microsoft Platform Crypto Provider (no
+      tools to install); such keys are not attested yet, so grants requiring hardware deny them.
   dba enroll --token dbae_… [--aud …] [--action …] [--name …]
       Enroll with an enrollment token the owner created for a fleet: no approval link, the
       credential is issued at once. The token's audiences and grants apply unless you narrow

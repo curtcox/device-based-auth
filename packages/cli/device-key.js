@@ -5,6 +5,8 @@
 import { generateKeyPair, exportPublicJwk, importJwk, publicJwk, jwkThumbprint, createProof, inspectCredential, unb64u } from '@devicebasedauth/verify';
 import { UsageError } from './errors.js';
 import { TPM_BACKEND, TPM_PROTECTION, TPM_NAME, TPM_PARENT, tpmPublicJwk, tpmSigner } from './tpm.js';
+import { WINDOWS_TPM_BACKEND, WINDOWS_TPM_NAME } from './windows-tpm.js';
+import { powershellEncoded } from './powershell.js';
 
 /** Keys in a 0600 file say so in the credential; approvers see it. */
 export const KEY_PROTECTION = 'software';
@@ -39,6 +41,7 @@ export function keyFile(key, now = new Date(), store = null) {
  */
 export async function loadDeviceKey(file, { secrets, tpm } = {}) {
   if (file?.key_store === TPM_BACKEND) return loadTpmKey(file, tpm);
+  if (file?.key_store === WINDOWS_TPM_BACKEND) return loadWindowsTpmKey(file, tpm);
   if (file?.key_store) {
     if (!secrets || secrets.backend !== file.key_store) throw new UsageError(`key.json says the private key is in ${STORE_NAMES[file.key_store] || file.key_store}, which this system cannot reach.`);
     const d = await secrets.load(file.key_store_account);
@@ -74,6 +77,22 @@ function loadTpmKey(file, tpm) {
   return { privateKey: tpmSigner(tpm.open, blobs), publicJwk: publicJwk(jwk), privateJwk: null, tpm: blobs };
 }
 
+/**
+ * The contents of key.json for a key made in the TPM on Windows (windows-tpm.js): the public key
+ * and the key's name in the Platform Crypto Provider, which keeps it.
+ */
+export function windowsTpmKeyFile(key, now = new Date()) {
+  return { public_jwk: key.publicJwk, key_protection: TPM_PROTECTION, key_store: WINDOWS_TPM_BACKEND, key_name: key.keyName, created_at: now.toISOString() };
+}
+
+/** A key.json naming a Windows TPM key: a signer that asks the TPM (each signature checks the public key). */
+function loadWindowsTpmKey(file, tpm) {
+  if (tpm?.backend !== WINDOWS_TPM_BACKEND) throw new UsageError(`key.json says the private key is in ${WINDOWS_TPM_NAME}, which this system cannot reach.`);
+  if (typeof file.key_name !== 'string' || typeof file.public_jwk?.x !== 'string' || typeof file.public_jwk?.y !== 'string') throw new UsageError('key.json names a Windows TPM key this version of dba cannot load.');
+  const jwk = publicJwk(file.public_jwk);
+  return { privateKey: tpm.signer(file.key_name, jwk), publicJwk: jwk, privateJwk: null, keyName: file.key_name };
+}
+
 /** Does the private key sign for the public key? (not every runtime checks that x, y match d on import) */
 async function keyPairMatches(key) {
   const data = crypto.getRandomValues(new Uint8Array(32));
@@ -87,7 +106,7 @@ async function keyPairMatches(key) {
 /** Where `dba enroll` keeps the private key: `auto` (the OS secret store when it works, else a file), `os` (fail without one), `file`, or `tpm` (made in the TPM; see tpm.js). */
 export const KEY_STORES = ['auto', 'os', 'file', 'tpm'];
 export const SECRET_SERVICE = 'org.devicebasedauth.dba';
-const STORE_NAMES = { 'macos-keychain': 'the macOS Keychain', 'secret-service': 'the Secret Service keyring (secret-tool)', 'windows-dpapi': 'Windows DPAPI (your Windows account)', [TPM_BACKEND]: TPM_NAME };
+const STORE_NAMES = { 'macos-keychain': 'the macOS Keychain', 'secret-service': 'the Secret Service keyring (secret-tool)', 'windows-dpapi': 'Windows DPAPI (your Windows account)', [TPM_BACKEND]: TPM_NAME, [WINDOWS_TPM_BACKEND]: WINDOWS_TPM_NAME };
 
 /** --key-store, else DBA_KEY_STORE, else auto. */
 export function keyStoreOption({ flag, env = {} } = {}) {
@@ -151,14 +170,7 @@ export function osSecretStore({ platform, run, files, dir }) {
   return null;
 }
 
-/** PowerShell's -EncodedCommand: the script as base64 of UTF-16LE. */
-export function powershellEncoded(script) {
-  const bytes = new Uint8Array(script.length * 2);
-  for (let i = 0; i < script.length; i++) { const code = script.charCodeAt(i); bytes[2 * i] = code & 0xff; bytes[2 * i + 1] = code >> 8; }
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
+export { powershellEncoded };
 
 /**
  * The DPAPI script for one entry: reads stdin, and writes base64 of the sealed blob ("protect")
@@ -235,8 +247,12 @@ export async function saveDeviceKey(key, { mode = 'auto', secrets, now = new Dat
   return { file: keyFile(key, now), keyProtection: KEY_PROTECTION, store: null };
 }
 
-/** Remove a key.json's private part from the OS secret store, if it is there. Never throws. */
-export async function forgetDeviceKey(file, { secrets } = {}) {
+/**
+ * Remove a key.json's private part from the OS secret store or the Windows TPM, if it is there
+ * (a tpm2-tools key lives only in key.json's blobs). Never throws.
+ */
+export async function forgetDeviceKey(file, { secrets, tpm } = {}) {
+  if (file?.key_store === WINDOWS_TPM_BACKEND) { if (tpm?.backend === WINDOWS_TPM_BACKEND) await tpm.remove(file.key_name).catch(() => {}); return; }
   if (!file?.key_store || !secrets || secrets.backend !== file.key_store) return;
   await secrets.remove(file.key_store_account).catch(() => {});
 }

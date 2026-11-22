@@ -13,6 +13,7 @@ import { createClient } from '../client.js';
 import { shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn } from '../credentials.js';
 import { TPM_BACKEND, TPM_NAME } from '../tpm.js';
 import { nodeTpmSessions } from '../tpm-node.js';
+import { windowsTpm } from '../windows-tpm.js';
 
 /** Print a line of the command's output (stdout). */
 export const out = line => process.stdout.write(`${line}\n`);
@@ -81,7 +82,8 @@ export async function loadProfile(globals) {
   // DPAPI blobs live in the profile directory, which a first enrollment has not made yet.
   const files = { read: readTextFile, write: async (path, text) => { await ensureDir(paths.dir); await writePrivate(path, text); }, remove: path => rm(path, { force: true }) };
   const secrets = osSecretStore({ platform: process.platform, run: runProgram, files, dir: paths.dir });
-  const tpm = { backend: TPM_BACKEND, name: TPM_NAME, open: nodeTpmSessions() };
+  // Windows has no tpm2-tools; its TPM is reached through CNG (windows-tpm.js).
+  const tpm = process.platform === 'win32' ? windowsTpm({ run: runProgram }) : { backend: TPM_BACKEND, name: TPM_NAME, open: nodeTpmSessions() };
   return { paths, config, origin, secrets, tpm, client: createClient({ origin }), autoRenew: autoRenewEnabled({ flag: globals['no-renew'], env: process.env }) };
 }
 

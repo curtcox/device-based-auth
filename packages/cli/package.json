@@ -4,7 +4,7 @@
   "description": "dba: enroll devices, inspect, revoke and use devicebasedauth.org credentials from the command line",
   "type": "module",
   "bin": { "dba": "dba.js" },
-  "files": ["dba.js", "lib.js", "errors.js", "args.js", "enrollment.js", "device-key.js", "client.js", "credentials.js", "gates.js", "curl.js", "tpm.js", "tpm-node.js", "commands/"],
+  "files": ["dba.js", "lib.js", "errors.js", "args.js", "enrollment.js", "device-key.js", "client.js", "credentials.js", "gates.js", "curl.js", "account.js", "powershell.js", "tpm.js", "tpm-node.js", "windows-tpm.js", "commands/"],
   "engines": { "node": ">=22" },
   "dependencies": { "@devicebasedauth/verify": "0.1.0" },
   "license": "MIT"
