@@ -47,6 +47,20 @@ export class AccountClerkLink {
   }
 
   /**
+   * On a Clerk user's own account: its sign-in no longer opens `from`. Forgotten, so the sign-in
+   * can be linked to another account later (op_clerk_history counts a link elsewhere as history).
+   */
+  async op_clerk_unmark_linked({ from }) {
+    await this.tx(async tx => {
+      const profile = await tx.get('profile');
+      if (!profile || profile.linked_to !== from) return;
+      const { linked_to: _gone, ...rest } = profile;
+      await tx.put('profile', rest);
+    });
+    return { ok: true };
+  }
+
+  /**
    * Stop letting the linked Clerk user sign in. Refused unless the owner keeps another way in: a
    * live dashboard device, recovery codes, a passkey or device gate, or an address verified here.
    */

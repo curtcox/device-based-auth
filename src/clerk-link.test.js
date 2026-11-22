@@ -94,6 +94,19 @@ describe('linking a password sign-in to an account made without Clerk (B9, phase
     expect(clerkCalls.at(-1)).toMatchObject({ url: 'https://api.clerk.com/v1/users/user_new/metadata', body: { public_metadata: { dba_account: null } } });
     expect((await call(env, 'GET', '/api/v1/whoami', { auth: clerk })).body.code).toBe('invalid_auth');
   });
+
+  it('lets an unlinked sign-in be linked to another account', async () => {
+    await link();
+    expect((await as('POST', '/api/v1/settings/recovery-codes')).status).toBe(200);
+    expect((await as('DELETE', '/api/v1/account/clerk-link')).body).toMatchObject({ linked: false });
+    const other = await newDevice();
+    const signed = await signUp(env, stripe, other);
+    const asOther = asDevice(env, other, signed.credential);
+    expect((await asOther('POST', '/api/v1/account/clerk-link', { body: { session_token: session('user_new') } })).body).toMatchObject({ linked: true });
+    expect((await call(env, 'GET', '/api/v1/whoami', { auth: bearer('user_new', { dba_account: signed.account }) })).body.account).toBe(signed.account);
+    // The first account no longer opens with it.
+    expect((await call(env, 'GET', '/api/v1/whoami', { auth: bearer('user_new', { dba_account: account }) })).body.code).toBe('invalid_auth');
+  });
 });
 
 describe('Clerk webhooks and linked or Clerk-free accounts', () => {

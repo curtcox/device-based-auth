@@ -15,6 +15,7 @@ export async function clerkLink(request, env, auth) {
   if (request.method === 'DELETE') {
     requireRecentSignIn(auth, 'unlink a sign-in from your account');
     const { sub } = await rpc(env.ACCOUNTS, auth.account, 'clerk-unlink', {});
+    await rpc(env.ACCOUNTS, sub, 'clerk-unmark-linked', { from: auth.account });
     await setClerkAccountLink(env, sub, null);
     return { linked: false };
   }
