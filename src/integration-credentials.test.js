@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { price } from './utils/pricing.js';
 import { testEnv, call, newDevice, enroll, runAlarms, ORIGIN } from '../test-utils/env.js';
-import { signJws, inspectCredential } from '../packages/verify/src/index.js';
+import { signJws, inspectCredential, createProof } from '../packages/verify/src/index.js';
 import { fund, verifierFor, requestWith } from '../test-utils/integration.js';
 
 // End to end through the Worker: a credential's life from enrollment and offline verification
@@ -28,6 +28,53 @@ describe('enrollment and offline verification', () => {
     expect(await at('203.0.113.7', 12)).toMatchObject({ allow: true });
     expect(await at('198.51.100.7', 12)).toMatchObject({ allow: false, reasons: [['address_not_allowed']] });
     expect(await at('203.0.113.7')).toMatchObject({ allow: false, reasons: [['rtt_required']] });
+  });
+
+  it('a verifier with rtt challenges the device, times its retry, and keeps the best sample (B10 N2)', async () => {
+    await fund(env, 'alice');
+    const device = await newDevice();
+    const grants = [{ actions: ['hashbin:content:write'], net: { client: { latency: { max_rtt_ms: 40, samples: 2, reuse_s: 60 } } } }];
+    const { approve } = await enroll(env, 'alice', device, { grants });
+    const credential = approve.body.credential;
+    let ms = Date.now();
+    const verifier = verifierFor(env, 'hashbin.org', { rtt: { secret: 'r'.repeat(32), now: () => ms } });
+    const location = { network: { ip: '203.0.113.7' } };
+    const send = async nonce => {
+      const url = 'https://hashbin.org/api/content';
+      const proof = await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url, credential, nonce });
+      return verifier.verifyRequest(new Request(url, { method: 'POST', headers: { Authorization: `DBA ${credential}`, DPoP: proof } }), { action: 'hashbin:content:write', location });
+    };
+    const first = await send();
+    expect(first).toMatchObject({ allow: false, status: 401, code: 'use_dpop_nonce', rtt: { samples_left: 2 }, reasons: [['rtt_required']] });
+    expect(first.headers).toEqual({ 'WWW-Authenticate': 'DPoP error="use_dpop_nonce", algs="ES256"', 'DPoP-Nonce': first.dpop_nonce });
+    ms += 90; // a slow first sample: one more is allowed
+    const second = await send(first.dpop_nonce);
+    expect(second).toMatchObject({ allow: false, status: 401, code: 'use_dpop_nonce', rtt: { samples_left: 1 }, reasons: [['rtt_exceeded']] });
+    ms += 25;
+    expect(await send(second.dpop_nonce)).toMatchObject({ allow: true });
+    ms += 1000; // within reuse_s, for the same key and address, no new challenge
+    expect(await send()).toMatchObject({ allow: true });
+    location.network.ip = '203.0.113.8';
+    expect(await send()).toMatchObject({ allow: false, code: 'use_dpop_nonce' });
+  });
+
+  it('a verifier with rtt denies once every sample was too slow, and never times a nonce for another address (B10 N2)', async () => {
+    await fund(env, 'alice');
+    const device = await newDevice();
+    const { approve } = await enroll(env, 'alice', device, { grants: [{ actions: ['hashbin:content:write'], net: { client: { latency: { max_rtt_ms: 40 } } } }] });
+    const credential = approve.body.credential;
+    let ms = Date.now();
+    const verifier = verifierFor(env, 'hashbin.org', { rtt: { secret: 'r'.repeat(32), now: () => ms } });
+    const send = async (nonce, ip = '203.0.113.7') => {
+      const url = 'https://hashbin.org/api/content';
+      const proof = await createProof({ privateKey: device.privateKey, publicJwk: device.publicJwk, method: 'POST', url, credential, nonce });
+      return verifier.verifyRequest(new Request(url, { method: 'POST', headers: { Authorization: `DBA ${credential}`, DPoP: proof } }), { action: 'hashbin:content:write', location: { network: { ip } } });
+    };
+    const challenge = await send();
+    ms += 41;
+    expect(await send(challenge.dpop_nonce)).toMatchObject({ allow: false, status: 403, code: 'forbidden', reasons: [['rtt_exceeded']] });
+    const again = await send(); ms += 3;
+    expect(await send(again.dpop_nonce, '198.51.100.1')).toMatchObject({ allow: false, code: 'use_dpop_nonce', reasons: [['rtt_required']] });
   });
 
   it('accepts only https origins (or http://localhost) as return_origin', async () => {

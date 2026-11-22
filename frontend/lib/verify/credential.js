@@ -129,8 +129,9 @@ export class ReplayCache {
 /**
  * Verify a DPoP proof for a request.
  * options: { method, url, credential (compact string; checks ath), jkt (expected thumbprint),
- *            now, nonce (required value, if any), replay (ReplayCache or { check(key, now) → boolean | Promise<boolean> }) }
- * Returns the proof payload (including any device-reported loc).
+ *            now, nonce (the required value, or a check `value => ({ ok, rtt_ms? })` such as a
+ *            stateless timed nonce, todo/network_constraints.md §7.1.1), replay (ReplayCache or { check(key, now) → boolean | Promise<boolean> }) }
+ * Returns the proof payload (including any device-reported loc, and rtt_ms from a nonce check).
  */
 export async function verifyProof(proof, { method, url, credential, jkt, now = Math.floor(Date.now() / 1000), nonce, replay }) {
   let decoded;
@@ -150,8 +151,14 @@ export async function verifyProof(proof, { method, url, credential, jkt, now = M
   if (!Number.isSafeInteger(payload.iat) || payload.iat > now + CLOCK_SKEW || payload.iat < now - PROOF_MAX_AGE - CLOCK_SKEW) fail('stale_proof', 'DPoP proof iat is outside the allowed window');
   if (typeof payload.jti !== 'string' || payload.jti.length < 8 || payload.jti.length > 128) fail('invalid_proof', 'DPoP proof jti is missing');
   if (credential !== undefined && payload.ath !== await sha256b64u(credential)) fail('invalid_proof', 'DPoP proof ath does not match the credential');
-  if (nonce !== undefined && payload.nonce !== nonce) fail('use_dpop_nonce', 'DPoP nonce required');
+  let measured;
+  if (typeof nonce === 'function') {
+    const answer = await nonce(payload.nonce);
+    if (!answer?.ok) fail('use_dpop_nonce', 'DPoP nonce required');
+    if (Number.isFinite(answer.rtt_ms)) measured = answer.rtt_ms;
+  } else if (nonce !== undefined && payload.nonce !== nonce) fail('use_dpop_nonce', 'DPoP nonce required');
   // check may be async (a shared cache such as durableReplayCache).
   if (replay && !(await replay.check(`${thumbprint}:${payload.jti}`, now))) fail('replayed_proof', 'DPoP proof was already used');
-  return { ...payload, jkt: thumbprint };
+  // rtt_ms is only ever the verifier's own measurement, never a claim the device put in its proof.
+  return { ...payload, jkt: thumbprint, rtt_ms: measured };
 }
