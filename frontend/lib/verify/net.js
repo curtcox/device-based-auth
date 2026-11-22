@@ -130,7 +130,9 @@ export function checkNetClient(client, context, reasons, online) {
   if (client.addresses) checkAddresses(client.addresses, client.addresses.of === 'origin' ? route?.origin : network.ip, context, reasons, online);
   if (client.route) {
     const r = client.route;
-    if (typeof context.route_error === 'string') reasons.push(`route_invalid:${ROUTE_ERROR.test(context.route_error) ? context.route_error : 'malformed'}`);
+    // Any route error at all denies (null means none): a verifier that reports one in the wrong
+    // type has still not accepted the hops.
+    if (context.route_error !== undefined && context.route_error !== null) reasons.push(`route_invalid:${typeof context.route_error === 'string' && ROUTE_ERROR.test(context.route_error) ? context.route_error : 'malformed'}`);
     else if (!route) reasons.push('route_required');
     else {
       const hops = route.relays.length;

@@ -44,6 +44,7 @@ export const netCases = [
   ['net: no route denies', net({ route: { relays: [HQ] } }), ctx(peer('198.51.100.1')), false, null, [['route_required']]],
   ['net: the verifier\'s route error is reported', net({ route: { relays: [HQ] } }), ctx({ ...peer('198.51.100.1'), ...route([HQ]), route_error: 'egress_mismatch' }), false, null, [['route_invalid:egress_mismatch']]],
   ['net: a malformed route error is reported as malformed', net({ route: { relays: [HQ] } }), ctx({ route_error: 'Bad Thing!' }), false, null, [['route_invalid:malformed']]],
+  ['net: a route error of another type still denies', net({ route: { relays: [HQ] } }), ctx({ ...route([HQ]), route_error: 5 }), false, null, [['route_invalid:malformed']]],
   ['net: too few hops', net({ route: { relays: [HQ, EDGE], min_hops: 2 } }), ctx(route([HQ])), false, null, [['route_invalid:hop_count']]],
   ['net: too many hops', net({ route: { relays: [HQ, EDGE], max_hops: 1 } }), ctx(route([HQ, EDGE])), false, null, [['route_invalid:hop_count']]],
   ['net: a relay not listed denies', net({ route: { relays: [HQ] } }), ctx(route([HQ, ROGUE])), false, null, [['route_relay_not_allowed']]],

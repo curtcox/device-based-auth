@@ -232,8 +232,9 @@ def check_net_client(client, context, reasons: list, online: dict) -> None:
     r = get(client, "route")
     if truthy(r):
         route_error = get(context, "route_error")
-        if isinstance(route_error, str):
-            reasons.append(f"route_invalid:{route_error if _ROUTE_ERROR.fullmatch(route_error) else 'malformed'}")
+        if route_error is not MISSING and route_error is not None:
+            ok = isinstance(route_error, str) and _ROUTE_ERROR.fullmatch(route_error)
+            reasons.append(f"route_invalid:{route_error if ok else 'malformed'}")
         elif route is None:
             reasons.append("route_required")
         else:

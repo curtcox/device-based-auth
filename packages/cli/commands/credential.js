@@ -8,7 +8,7 @@ import { inspectCredential, createProof } from '@devicebasedauth/verify';
 import { UsageError } from '../errors.js';
 import { secondsOption } from '../args.js';
 import { deviceHeaders } from '../device-key.js';
-import { describeCredential, shouldRenew, relativeTime, listQuery, formatCredentialList } from '../credentials.js';
+import { describeCredential, timedGrantProblem, shouldRenew, relativeTime, listQuery, formatCredentialList } from '../credentials.js';
 import { curlRequest, curlArgs, curlHeaderFile, curlWaitOption } from '../curl.js';
 import { confirmationHeaders, waitThroughGates, describePendingGate } from '../gates.js';
 import { out, note, writePrivate, requireDevice, usableDevice, credentialArgument } from './profile.js';
@@ -48,10 +48,18 @@ function requestTarget(positionals, command) {
   return { method: method.toUpperCase(), url };
 }
 
+/** Refuse (or warn about) a credential whose grants need a timed challenge (see timedGrantProblem). */
+function checkUntimed(credential, command) {
+  const problem = timedGrantProblem(inspectCredential(credential).payload, command);
+  if (problem?.refuse) throw new UsageError(problem.refuse);
+  if (problem?.warn) note(problem.warn);
+}
+
 /** `dba headers`: Authorization and DPoP (and DBA-Confirmation) headers for one request. */
 export async function headers(profile, { positionals }) {
   const { method, url } = requestTarget(positionals, 'headers');
   const device = await usableDevice(profile);
+  checkUntimed(device.credential, 'headers');
   const nonce = await profile.client.nonceFor(device, url);
   const all = { ...await deviceHeaders({ ...device, method, url, nonce }), ...confirmationHeaders(await usableConfirmation(profile, device)) };
   for (const [name, value] of Object.entries(all)) out(`${name}: ${value}`);
@@ -61,6 +69,7 @@ export async function headers(profile, { positionals }) {
 export async function sign(profile, { positionals }) {
   const { method, url } = requestTarget(positionals, 'sign');
   const device = await usableDevice(profile);
+  checkUntimed(device.credential, 'sign');
   const { key, credential } = device;
   out(await createProof({ privateKey: key.privateKey, publicJwk: key.publicJwk, method, url, credential, nonce: await profile.client.nonceFor(device, url) }));
 }
@@ -81,6 +90,7 @@ export async function curl(profile, allArgs) {
   const { args, waitSeconds } = curlWaitOption(allArgs);
   const { method, url } = curlRequest(args);
   const device = await usableDevice(profile);
+  checkUntimed(device.credential, 'curl');
   // The headers go to curl in a file only this user can read (see curlArgs), removed afterwards.
   const dir = await mkdtemp(join(tmpdir(), 'dba-curl-'));
   try {

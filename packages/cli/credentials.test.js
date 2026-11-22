@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { price } from '../../src/utils/pricing.js';
 import { ApiError } from './errors.js';
 import { splitCommand } from './args.js';
-import { describeCredential, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList } from './credentials.js';
+import { describeCredential, timedGrantProblem, shouldRenew, relativeTime, autoRenewEnabled, renewIfDue, issuerKeyWithdrawn, listQuery, formatCredentialList } from './credentials.js';
 import { createClient } from './client.js';
 import { enrollmentPayload, signEnrollmentRequest, pollEnrollment } from './enrollment.js';
 import { newDeviceKey } from './device-key.js';
@@ -145,5 +145,39 @@ describe('dba list', () => {
     const byDevice = await client.request('GET', listQuery(), { device: { key: reader, credential: issued.body.credential } });
     expect(byDevice.items).toHaveLength(1);
     await expect(client.request('GET', listQuery(), { apiKey: 'dbak_nonsense' })).rejects.toMatchObject({ code: 'invalid_auth', status: 401 });
+  });
+});
+
+describe('timed grants and commands that hand a proof to another program (B10 N2)', () => {
+  const timed = { actions: ['hashbin:content:write'], net: { client: { latency: { max_rtt_ms: 40 } } } };
+  it('refuses when every grant is timed, warns when some are, and is quiet otherwise', () => {
+    expect(timedGrantProblem({ grants: [timed] }, 'curl').refuse).toMatch(/all limit the round-trip time: .*dba curl cannot answer/);
+    expect(timedGrantProblem({ grants: [timed, { actions: ['hashbin:content:read'] }] }, 'headers').warn).toMatch(/^Warning: 1 of this credential's 2 grants/);
+    expect(timedGrantProblem({ grants: [{ actions: ['x:y'], net: { client: { addresses: { cidrs: ['10.0.0.0/8'] } } } }] }, 'sign')).toBe(null);
+  });
+});
+
+describe('the client answers timed challenges (B10 N2)', () => {
+  const challenge = (nonce, samples_left) => new Response(JSON.stringify({ error: 'nonce', code: 'use_dpop_nonce', dpop_nonce: nonce, rtt: { samples_left } }), { status: 401, headers: { 'DPoP-Nonce': nonce } });
+  async function run(responses) {
+    const key = await newDeviceKey(); const nonces = [];
+    const client = createClient({ origin: ORIGIN, fetch: async (url, init) => { nonces.push(JSON.parse(atob(init.headers.DPoP.split('.')[1].replaceAll('-', '+').replaceAll('_', '/'))).nonce); return responses.shift(); } });
+    const outcome = await client.request('GET', '/api/v1/account', { device: { key, credential: 'x.y.z' } }).then(body => body, error => error.code);
+    return { outcome, nonces };
+  }
+  it('sends again for each sample the verifier still wants', async () => {
+    const { outcome, nonces } = await run([challenge('rtt1.a', 2), challenge('rtt1.b', 1), new Response('{"ok":true}', { status: 200 })]);
+    expect(outcome).toEqual({ ok: true });
+    expect(nonces).toEqual([undefined, 'rtt1.a', 'rtt1.b']);
+  });
+  it('stops after three retries', async () => {
+    const { outcome, nonces } = await run([challenge('n1', 5), challenge('n2', 5), challenge('n3', 5), challenge('n4', 5), challenge('n5', 5)]);
+    expect(outcome).toBe('use_dpop_nonce');
+    expect(nonces).toEqual([undefined, 'n1', 'n2', 'n3']);
+  });
+  it('retries a plain nonce challenge once', async () => {
+    const { outcome, nonces } = await run([challenge('dpn_1'), challenge('dpn_2'), new Response('{}', { status: 200 })]);
+    expect(outcome).toBe('use_dpop_nonce');
+    expect(nonces).toEqual([undefined, 'dpn_1']);
   });
 });

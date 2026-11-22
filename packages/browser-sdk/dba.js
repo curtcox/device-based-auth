@@ -62,8 +62,10 @@ export class DBA {
    * Keep the DPoP nonce a response hands out (header DPoP-Nonce) for its origin, and say whether
    * the response is a nonce challenge (401 use_dpop_nonce): then send the request again, with new
    * headers. devicebasedauth.org asks for one in the first minute after an account's object
-   * starts; api(), fetch() and fetchWithGates() retry once by themselves.
-   * @returns {Promise<boolean>}
+   * starts; api(), fetch() and fetchWithGates() retry once by themselves. A timed challenge
+   * (net.client.latency: the body has rtt.samples_left) returns 'timed'; those are answered at
+   * once, up to 3 times.
+   * @returns {Promise<boolean|'timed'>}
    */
   async nonceChallenge(url, response) {
     const origin = new URL(url, location.href).origin;
@@ -74,7 +76,24 @@ export class DBA {
     const nonce = header || (typeof body?.dpop_nonce === 'string' ? body.dpop_nonce : null);
     if (!asked || !nonce || nonce === this.nonces.get(origin)) return false;
     this.nonces.set(origin, nonce);
-    return true;
+    return Number.isSafeInteger(body?.rtt?.samples_left) ? 'timed' : true;
+  }
+
+  /**
+   * Send again while the response is a nonce challenge (see nonceChallenge). A timed nonce is
+   * used once: kept, it would time the next request from this one.
+   */
+  async answerNonces(url, response, send) {
+    let timed = false;
+    for (let tries = 0; ; tries++) {
+      const asked = await this.nonceChallenge(url, response);
+      timed ||= asked === 'timed';
+      if (!asked || tries >= (asked === 'timed' ? 3 : 1)) {
+        if (timed) this.nonces.delete(new URL(url, location.href).origin);
+        return response;
+      }
+      response = await send();
+    }
   }
 
   /** Load the stored key and credential. Returns true when a usable (unexpired) credential exists. */
@@ -116,7 +135,7 @@ export class DBA {
     const url = `${this.origin}${path}`;
     const send = async () => fetch(url, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(auth ? await this.headers(method, url, { confirm }) : {}) }, body: body ? JSON.stringify(body) : undefined });
     let response = await send();
-    if (auth && await this.nonceChallenge(url, response)) response = await send();
+    if (auth) response = await this.answerNonces(url, response, send);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new DBAError(data.error || `HTTP ${response.status}`, data.code || 'http_error', { status: response.status, details: data });
     return data;
@@ -258,8 +277,8 @@ export class DBA {
   }
 
   /**
-   * fetch() with the credential and a proof attached. init.dba: { location, confirm }. Sent once
-   * more with a fresh proof when the server answers with a DPoP nonce challenge.
+   * fetch() with the credential and a proof attached. init.dba: { location, confirm }. Sent again
+   * with a fresh proof when the server answers with a DPoP nonce challenge (see answerNonces).
    */
   async fetch(input, init = {}) {
     const original = new Request(input, init);
@@ -269,8 +288,7 @@ export class DBA {
       for (const [k, v] of Object.entries(await this.headers(request.method, request.url, init.dba || {}))) headers.set(k, v);
       return fetch(new Request(request, { headers }));
     };
-    const response = await send();
-    return await this.nonceChallenge(original.url, response) ? send() : response;
+    return this.answerNonces(original.url, await send(), send);
   }
 
   /**

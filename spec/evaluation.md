@@ -252,8 +252,8 @@ reason to allow.
    per source that could not be consulted: `address_list_unavailable:<id>` for each unavailable
    list, then for each name `dns_unresolved:<name>` or (resolved but not validated where `dnssec`
    is required) `dns_unvalidated:<name>`.
-2. `route`. A string `route_error` → `route_invalid:<route_error>` (`route_invalid:malformed` if
-   it is not `[a-z0-9_]{1,64}`). Otherwise no `route` object with a `relays` list →
+2. `route`. A `route_error` other than absent or `null` → `route_invalid:<route_error>`
+   (`route_invalid:malformed` if it is not a string matching `[a-z0-9_]{1,64}`). Otherwise no `route` object with a `relays` list →
    `route_required`. Otherwise, each that applies: hop count outside `min_hops`…`max_hops` →
    `route_invalid:hop_count`; `require_attested` and `attested` is not one `true` per hop →
    `route_invalid:relay_not_attested`; a relay not in `relays` → `route_relay_not_allowed`.

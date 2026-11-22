@@ -123,3 +123,17 @@ export async function renewIfDue({ client, device, save, withdrawn = false, now 
   await save(result);
   return { renewed: true, result };
 }
+
+/**
+ * Commands that hand a proof to another program (`dba headers`, `dba sign`, `dba curl`) cannot
+ * answer a timed challenge for it (todo/network_constraints.md §7.1.1). Returns { refuse } when
+ * every grant limits the round-trip time, { warn } when some do, or null.
+ */
+export function timedGrantProblem(payload, command) {
+  const grants = Array.isArray(payload?.grants) ? payload.grants : [];
+  const timed = grants.filter(g => g?.net?.client?.latency);
+  if (!timed.length) return null;
+  const why = `the site measures a round trip (net.client.latency) by challenging the request and timing its retry, and dba ${command} cannot answer for the program that sends it`;
+  if (timed.length === grants.length) return { refuse: `This credential's grants all limit the round-trip time: ${why}. Send the request with a client that answers DPoP nonce challenges itself, such as the browser SDK.` };
+  return { warn: `Warning: ${timed.length} of this credential's ${grants.length} grants limit the round-trip time and will be refused: ${why}.` };
+}

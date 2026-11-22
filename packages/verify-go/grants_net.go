@@ -387,8 +387,9 @@ func checkNetClient(client any, ctx Context, reasons *[]string, online *Online) 
 		checkAddresses(a, address, ctx, reasons, online)
 	}
 	if r, _ := get(client, "route"); truthy(r) {
-		if e, isString := ctx.RouteError.(string); isString {
-			if !routeErrorPattern.MatchString(e) {
+		if ctx.RouteError != nil {
+			e, isString := ctx.RouteError.(string)
+			if !isString || !routeErrorPattern.MatchString(e) {
 				e = "malformed"
 			}
 			*reasons = append(*reasons, "route_invalid:"+e)

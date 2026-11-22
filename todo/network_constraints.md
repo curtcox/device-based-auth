@@ -289,6 +289,9 @@ proof replay after a restart, and sends `DPoP-Nonce` on its responses. The two m
 - **Clients.** The SDK and CLI keep the last `DPoP-Nonce` per origin, put it in every later
   proof, and retry once, and only for a nonce different from the one kept. RTT nonces are
   always new, so they pass that test, but two things change in N2:
+  - Clients use an RTT nonce once (a challenge whose body has `rtt.samples_left`) and drop it
+    after the exchange: kept for the next proof, it would time that request from this one, and
+    the verifier cannot tell a reused nonce from a slow answer.
   - A kept RTT nonce is stale by the next request. The verifier answers it with a new
     challenge, not a denial, until `samples` attempts have failed, then denies
     `rtt_exceeded`. Clients follow `rtt.samples_left` (at most 3 retries), not just one.
@@ -414,14 +417,14 @@ STATUS row updated.
 
 | Phase | Deliverable | Exit criteria |
 |-------|-------------|---------------|
-| N1 🚧 | Spec text and vectors for `net` (addresses inline + context-resolved lists/DNS, route context, rtt); evaluator in JS, Python, Go | Every new vector passes in all three; old `where.networks` vectors unchanged |
-| N2 ⬜ | RTT challenge in the verify library (nonce check function, retry, samples, reuse), the account object's RTT nonce standing in for its D15 epoch nonce, SDK/CLI following `samples_left`, `dba headers`/`dba curl` refusing latency grants (§7.1.1) | e2e: a device behind an injected 100 ms delay fails `max_rtt_ms: 40` and passes without it |
+| N1 ✅ | Spec text and vectors for `net` (addresses inline + context-resolved lists/DNS, route context, rtt); evaluator in JS, Python, Go | Every new vector passes in all three; old `where.networks` vectors unchanged |
+| N2 ✅ | RTT challenge in the verify library (nonce check function, retry, samples, reuse), the account object's RTT nonce standing in for its D15 epoch nonce, SDK/CLI following `samples_left`, `dba headers`/`dba curl` refusing latency grants (§7.1.1) | e2e: a device behind an injected 100 ms delay fails `max_rtt_ms: 40` and passes without it |
 | N3 ⬜ | Named address lists: CRUD, signed publishing on R2, verifier fetch/cache/stale/rollback rules, D17 prices in cost policy | Changing a list changes an offline verifier's decision within 60 s + cache; cost-count test covers the new ops |
 | N4 ⬜ | DNS source (DoH, DNSSEC flag, TTL bounds) | Tested against a stub resolver incl. unvalidated and failing answers |
 | N5 ⬜ | Relays: `dba:relay:forward`, egress at enrollment, `dba-hop+jwt`, inline and tunnel modes, `dba relay`, route verification | e2e through a local inline relay and a CONNECT relay; direct send with replayed hops denied by the egress check |
 | N6 ⬜ | Webhook address check on `/authorize` (gate registry `purpose: "address"`, cache) | CI sample service allows and denies; unreachable and unpaid deny |
 | N7 ⬜ | Server direction: audience `server_keys`, `rttEcho`, SDK/CLI `net.server` (addresses, route, latency) | CLI refuses a server outside its ranges; browser SDK times a signed echo and refuses unenforceable grants |
-| N8 ⬜ | Sign-in and confirmation `net` settings; ID token `dba_net` | Playwright: sign-in refused from an address outside the account's setting |
+| N8 ⬜ | Sign-in and confirmation `net` settings; ID token `dba_net`; the account object's RTT nonce standing in for its D15 epoch nonce (moved from N2: DBA's own API has no latency rule before this phase) | Playwright: sign-in refused from an address outside the account's setting |
 | N9 ⬜ | Tools and docs (§12) not already done per phase; SDK release | Every docs sample runs in CI |
 
 ## 14. Open questions for later

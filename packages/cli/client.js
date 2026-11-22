@@ -9,8 +9,11 @@ import { deviceHeaders } from './device-key.js';
  *
  * DPoP nonces (RFC 9449 §8, STATUS D15): an account object that started less than a minute ago
  * answers 401 use_dpop_nonce with its nonce; the request is sent once more with it, and the nonce
- * goes into later proofs to the same origin.
+ * goes into later proofs to the same origin. A timed challenge (net.client.latency,
+ * todo/network_constraints.md §7.1.1, with `rtt.samples_left`) is answered at once each time it
+ * comes, at most MAX_TIMED_RETRIES times.
  */
+export const MAX_TIMED_RETRIES = 3;
 export function createClient({ origin, fetch = (...args) => globalThis.fetch(...args) }) {
   const nonces = new Map();
   async function send(method, url, { body, device, apiKey }) {
@@ -33,7 +36,17 @@ export function createClient({ origin, fetch = (...args) => globalThis.fetch(...
   async function request(method, path, { body, device, apiKey, retryNonce = true } = {}) {
     const url = new URL(path, origin).toString();
     let { response, json, challenged } = await send(method, url, { body, device, apiKey });
-    if (challenged && retryNonce) ({ response, json } = await send(method, url, { body, device, apiKey }));
+    if (challenged && retryNonce) {
+      // Every timed challenge wants one more sample; a plain nonce challenge is answered once.
+      let retries = 0; let timed = false;
+      const timedChallenge = () => Number.isSafeInteger(json?.rtt?.samples_left);
+      while (challenged && retries < (timedChallenge() ? MAX_TIMED_RETRIES : 1)) {
+        timed ||= timedChallenge(); retries++;
+        ({ response, json, challenged } = await send(method, url, { body, device, apiKey }));
+      }
+      // A timed nonce is used once: kept, it would time the next request from this one.
+      if (timed) nonces.delete(new URL(url).origin);
+    }
     if (!response.ok) throw new ApiError(json?.error || `HTTP ${response.status}`, json?.code || 'http_error', response.status, json);
     if (json === null) throw new ApiError(`Expected JSON from ${url}`, 'invalid_response', response.status);
     return json;

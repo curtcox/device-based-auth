@@ -4882,6 +4882,46 @@
       }
     },
     {
+      "name": "net: a route error of another type still denies",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "route": {
+                "relays": [
+                  "dev_RELAYHQ001"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "route": {
+          "relays": [
+            "dev_RELAYHQ001"
+          ],
+          "origin": "10.1.2.3"
+        },
+        "route_error": 5
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "route_invalid:malformed"
+          ]
+        ]
+      }
+    },
+    {
       "name": "net: too few hops",
       "grants": [
         {

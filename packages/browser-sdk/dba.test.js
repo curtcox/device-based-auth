@@ -170,4 +170,55 @@ describe('browser SDK DPoP nonces (STATUS D15)', () => {
     vi.stubGlobal('fetch', async () => Response.json({ code: 'revoked' }, { status: 401 }));
     expect((await dba.fetch('https://hashbin.org/x')).status).toBe(401);
   });
+
+  it('answers a site\'s timed challenges at once, as many as it asks for (B10 N2)', async () => {
+    const { testEnv, call, newDevice, enroll, worker, ORIGIN } = await import('../../test-utils/env.js');
+    const { createVerifier } = await import('../verify/src/index.js');
+    const env = await testEnv();
+    await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
+    const laptop = await newDevice();
+    const grants = [{ actions: ['hashbin:content:write'], net: { client: { latency: { max_rtt_ms: 40, samples: 2 } } } }];
+    const credential = (await enroll(env, 'alice', laptop, { grants })).approve.body.credential;
+    let ms = Date.now(); const delays = [90, 20]; let sent = 0;
+    const verifier = createVerifier({ issuer: ORIGIN, audience: 'hashbin.org', fetch: (url, init) => worker.fetch(new Request(url, init), env), rtt: { secret: 's'.repeat(32), now: () => ms } });
+    vi.stubGlobal('location', { href: 'https://hashbin.org/', origin: 'https://hashbin.org', host: 'hashbin.org' });
+    vi.stubGlobal('fetch', async (input, init) => {
+      const request = new Request(input, init);
+      if (sent++) ms += delays.shift() ?? 0;
+      const result = await verifier.verifyRequest(request, { action: 'hashbin:content:write', location: { network: { ip: '203.0.113.7' } } });
+      return Response.json({ allow: result.allow, code: result.code, ...(result.dpop_nonce ? { dpop_nonce: result.dpop_nonce, rtt: result.rtt } : {}) }, { status: result.allow ? 200 : result.status, headers: result.headers || {} });
+    });
+    const dba = new DBA({ origin: ORIGIN });
+    dba.state = { privateKey: laptop.privateKey, publicJwk: laptop.publicJwk, credential };
+    const response = await dba.fetch('https://hashbin.org/api/content', { method: 'POST', body: 'hello' });
+    expect(await response.json()).toEqual({ allow: true, code: 'ok' });
+    expect(sent).toBe(3); // the first request, a slow sample, then a fast one
+  });
+
+  it('on a real clock, a device behind an injected delay fails the round-trip rule and passes without it (B10 N2)', async () => {
+    const { testEnv, call, newDevice, enroll, worker, ORIGIN } = await import('../../test-utils/env.js');
+    const { createVerifier } = await import('../verify/src/index.js');
+    const env = await testEnv();
+    await call(env, 'POST', '/api/v1/dev/deposit', { auth: 'alice', body: { amount_microdollars: 1_000_000 } });
+    const laptop = await newDevice();
+    const grants = [{ actions: ['hashbin:content:write'], net: { client: { latency: { max_rtt_ms: 60 } } } }];
+    const credential = (await enroll(env, 'alice', laptop, { grants })).approve.body.credential;
+    const verifier = createVerifier({ issuer: ORIGIN, audience: 'hashbin.org', fetch: (url, init) => worker.fetch(new Request(url, init), env), rtt: { secret: 's'.repeat(32) } });
+    let delay = 0;
+    vi.stubGlobal('location', { href: 'https://hashbin.org/', origin: 'https://hashbin.org', host: 'hashbin.org' });
+    vi.stubGlobal('fetch', async (input, init) => {
+      const request = new Request(input, init);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      const result = await verifier.verifyRequest(request, { action: 'hashbin:content:write', location: { network: { ip: '203.0.113.7' } } });
+      return Response.json({ code: result.code, reasons: result.reasons, ...(result.dpop_nonce ? { dpop_nonce: result.dpop_nonce, rtt: result.rtt } : {}) }, { status: result.allow ? 200 : result.status, headers: result.headers || {} });
+    });
+    const dba = new DBA({ origin: ORIGIN });
+    dba.state = { privateKey: laptop.privateKey, publicJwk: laptop.publicJwk, credential };
+    const post = () => dba.fetch('https://hashbin.org/api/content', { method: 'POST', body: 'hello' });
+    await post(); // warm the verifier's JWKS and status list caches
+    delay = 150;
+    expect(await (await post()).json()).toEqual({ code: 'forbidden', reasons: [['rtt_exceeded']] });
+    delay = 0;
+    expect((await post()).status).toBe(200);
+  });
 });
