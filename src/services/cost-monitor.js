@@ -42,6 +42,18 @@ export async function runCostMonitor(env, now = Date.now()) {
   return report;
 }
 
+/**
+ * Whether the hourly cron should run the monitor: always in the daily hour, and in any other hour
+ * when the last report is missing, stale or failed. Without the retry, a deploy made after 02:00
+ * UTC or one failed analytics query would keep the free endpoints braked for a day.
+ */
+export async function costMonitorDue(env, daily) {
+  if (daily) return true;
+  if (env.ENVIRONMENT === 'local' || !env.SAFETY) return false;
+  const status = await rpc(env.SAFETY, 'global', 'status');
+  return !!(status.stale || status.reason);
+}
+
 let cached = { until: 0, brake: false };
 /** Cached (60 s per isolate) brake status. */
 export async function brakeActive(env, now = Date.now()) {

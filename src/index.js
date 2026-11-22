@@ -23,7 +23,7 @@ import { inspect } from './api/inspect.js';
 import { oidcConfiguration, oidcAuthorize, oidcToken, oidcUserinfo } from './api/oidc.js';
 import { mcp } from './api/mcp.js';
 import { protectedResourceMetadata, registerClient, describeClient, resourceMetadataUrl } from './api/mcp-oauth.js';
-import { runCostMonitor, brakeActive } from './services/cost-monitor.js';
+import { runCostMonitor, costMonitorDue, brakeActive } from './services/cost-monitor.js';
 import { jwks, issuerName, appAudience } from './services/issuer.js';
 import { money } from './durable-objects/ledger.js';
 import { errorResponse, assert, readJson } from './utils/errors.js';
@@ -289,7 +289,7 @@ const worker = {
   async scheduled(event, env, ctx) {
     const daily = new Date(event.scheduledTime ?? Date.now()).getUTCHours() === 2;
     ctx.waitUntil(republishStatusLists(env).then(capacity => daily ? alertStatusCapacity(env, capacity) : false));
-    if (daily) ctx.waitUntil(runCostMonitor(env));
+    ctx.waitUntil(costMonitorDue(env, daily).then(due => due ? runCostMonitor(env) : null));
   },
   async fetch(request, env) {
     const url = new URL(request.url); const path = url.pathname;
