@@ -32,4 +32,18 @@ Self-review done (delegation fixes in 8c68a50); budget guards (daily issuance li
 ## Known limits
 
 - A stolen `dba:session` device can still issue itself a new non-`dba:` credential without step-up (only `dba:*` issuance needs a recent sign-in), so `dba:session` remains as strong as the owner's session.
+- **Replay caches live in memory.** The DPoP replay checks for DBA's own API and for online
+  `/authorize` keep seen proofs in the account's Durable Object memory. A proof is accepted for up
+  to 120 s after its `iat` (`PROOF_MAX_AGE` 60 s plus `CLOCK_SKEW` 60 s), so if the object is
+  evicted (after about a minute or two of idle) or restarted (a deploy) inside that time, a
+  captured proof and credential could be used once more, with another body, before the proof
+  ages out. It needs a captured proof and an otherwise idle account. Storing each proof would add a
+  row write and its deletion to every authenticated request, past the read and issue price floors,
+  so the options are owner decisions: (a) DPoP server nonces (RFC 9449 §8) demanded by a freshly
+  started object for proofs it cannot rule out, which needs `use_dpop_nonce` retries in the SDK,
+  CLI and samples; (b) a shorter window on DBA's own API (for example 60 s in all), which closes the
+  gap for clients with accurate clocks but refuses clients more than a minute slow; (c) storing
+  proofs only for requests that already write, with the row counted in their prices. Rate limits,
+  gate request limits and wrong-answer counters are in memory on purpose (their callers are the
+  owner's own devices or are paid for); the anonymous recovery caps no longer are (fixed above).
 - An independent review is still needed (STATUS L12).
