@@ -11,7 +11,7 @@
 import { h, replace, notice } from './html.js';
 
 const LOCAL_KEY = 'dba-local-user';
-const CLERK_SRC = 'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js';
+const CLERK_SRC = 'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@6/dist/clerk.browser.js';
 /** The SDK slot that holds the dashboard's own device credential. */
 export const DEVICE_SLOT = 'dashboard';
 export const SESSION_ACTION = 'dba:session';
