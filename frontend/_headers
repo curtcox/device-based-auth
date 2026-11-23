@@ -12,9 +12,10 @@
   Access-Control-Allow-Origin: *
 
 # Released SDK versions never change (scripts/build-sdk.mjs refuses to overwrite one): cache forever.
+# Access-Control-Allow-Origin comes from /sdk/* above: Cloudflare applies every matching rule, and
+# a second copy is sent as "*, *", which browsers refuse for cross-origin module scripts.
 /sdk/:version/*
   Cache-Control: public, max-age=31536000, immutable
-  Access-Control-Allow-Origin: *
 
 /lib/*
   Access-Control-Allow-Origin: *
