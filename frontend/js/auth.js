@@ -11,7 +11,10 @@
 import { h, replace, notice } from './html.js';
 
 const LOCAL_KEY = 'dba-local-user';
+// Clerk refuses sign-in from clerk-js versions it calls outdated (v5 stopped working in November
+// 2026). Since v6 the sign-in UI is a separate package that registers its constructor on window.
 const CLERK_SRC = 'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@6/dist/clerk.browser.js';
+const CLERK_UI_SRC = 'https://cdn.jsdelivr.net/npm/@clerk/ui@1/dist/ui.browser.js';
 /** The SDK slot that holds the dashboard's own device credential. */
 export const DEVICE_SLOT = 'dashboard';
 export const SESSION_ACTION = 'dba:session';
@@ -77,17 +80,22 @@ async function loadDevice(config) {
   } catch { return null; }
 }
 
+function loadScript(src, data = {}) {
+  const script = document.createElement('script');
+  script.src = src; script.crossOrigin = 'anonymous'; script.async = true;
+  Object.assign(script.dataset, data);
+  return new Promise((resolve, reject) => {
+    script.onload = resolve; script.onerror = () => reject(new Error('Could not load the sign-in service'));
+    document.head.append(script);
+  });
+}
+
 async function loadClerk(key) {
-  if (!window.Clerk) {
-    const script = document.createElement('script');
-    script.src = CLERK_SRC; script.crossOrigin = 'anonymous'; script.async = true;
-    script.dataset.clerkPublishableKey = key;
-    await new Promise((resolve, reject) => {
-      script.onload = resolve; script.onerror = () => reject(new Error('Could not load the sign-in service'));
-      document.head.append(script);
-    });
-  }
-  await window.Clerk.load();
+  await Promise.all([
+    window.Clerk ? null : loadScript(CLERK_SRC, { clerkPublishableKey: key }),
+    window.__internal_ClerkUICtor ? null : loadScript(CLERK_UI_SRC),
+  ]);
+  await window.Clerk.load({ ui: { ClerkUI: window.__internal_ClerkUICtor } });
   return window.Clerk;
 }
 
