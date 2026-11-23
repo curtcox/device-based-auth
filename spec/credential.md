@@ -301,6 +301,34 @@ A credential's `idx` is an integer from 0 to 2³¹−1; any other value makes th
 `invalid_claims`. Verifiers compute the byte and bit with integer arithmetic, never with 32-bit
 bitwise operators, and read bits past the end of a list as 0.
 
+## 7a. Named address lists
+
+A grant's `net.client.addresses.lists` (spec/evaluation.md §3.10) names lists by `id` (`adl_…`)
+and `uri`. The issuer publishes each list at its `uri` as a compact JWS signed with an issuer key
+(header `typ: "dba-addresses+jwt"`, `kid`), served as `application/jwt` with
+`Cache-Control: public, max-age=60`:
+
+```json
+{ "iss": "https://devicebasedauth.org", "sub": "https://status.devicebasedauth.org/v1/addresses/adl_…",
+  "id": "adl_…", "ver": 7, "iat": 1795000000, "exp": 1795086400,
+  "cidrs": ["192.0.2.0/24", "2001:db8:42::/48"] }
+```
+
+- `cidrs` holds up to 10,000 IPv4 or IPv6 ranges, sorted and without duplicates.
+- `ver` grows by one with every change. A verifier never replaces a copy it holds with one of a
+  lower `ver` (no rollback to a wider list).
+- `exp` is `iat` + 24 hours; the issuer re-signs a list every 20 hours for 13 months after its
+  last change, after which it expires. A deleted list is published as a tombstone
+  (`"deleted": true`, `"cidrs": []`, a higher `ver`) that matches nothing, and is removed two
+  days later.
+- A verifier accepts the document only if the signature verifies with an issuer key, `iss` is the
+  issuer, `sub` is the URI it fetched and `id` the id the grant names, and `exp` has not passed.
+  It uses a copy for at most `max-age` (60 s), may keep using it for up to 10 minutes more while
+  fetches fail, and otherwise treats the list as unavailable (`address_list_unavailable:<id>`).
+
+devicebasedauth.org issues grants only for lists of the issuing account, at their canonical URI.
+Lists are readable by anyone who holds the URI, which every audience shown the credential has.
+
 ## 8. Online authorization
 
 Constraints that need state (`limits.uses`, `require.step_up`, `require.online`) cannot be checked

@@ -74,8 +74,8 @@ export async function signJws(header, payload, privateKey) {
  * Split and decode a compact JWS without verifying it. Use this to read a credential;
  * never trust what it says until verifyJws succeeds.
  */
-export function decodeJws(jws) {
-  if (typeof jws !== 'string' || jws.length > 65536) throw new Error('invalid_format');
+export function decodeJws(jws, maxLength = 65536) {
+  if (typeof jws !== 'string' || jws.length > maxLength) throw new Error('invalid_format');
   const parts = jws.split('.');
   if (parts.length !== 3) throw new Error('invalid_format');
   try {
@@ -86,9 +86,9 @@ export function decodeJws(jws) {
 }
 
 /** Verify a compact JWS against a public key (CryptoKey or JWK). Returns the decoded parts or null. */
-export async function verifyJws(jws, key) {
+export async function verifyJws(jws, key, maxLength) {
   let decoded;
-  try { decoded = decodeJws(jws); } catch { return null; }
+  try { decoded = decodeJws(jws, maxLength); } catch { return null; }
   if (decoded.header.alg !== 'ES256' || decoded.signature.length !== 64) return null;
   const cryptoKey = key?.type ? key : await importJwk(key, 'verify');
   const ok = await crypto.subtle.verify(SIGN, cryptoKey, decoded.signature, encoder.encode(decoded.signingInput));

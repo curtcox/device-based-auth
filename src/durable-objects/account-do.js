@@ -16,6 +16,7 @@ import { AccountEmailAddress } from './account/email-address.js';
 import { AccountClerkLink } from './account/clerk-link.js';
 import { AccountCompaction } from './account/compaction.js';
 import { AccountEmail, SECURITY_EMAIL_LEVELS } from './account/email.js';
+import { AccountAddressLists } from './account/address-lists.js';
 import { cleanEmailAddress } from '../services/email.js';
 
 export { RECORD_RETENTION_MS, EXPIRED_VISIBLE_MS, COMPACTION_INTERVAL_MS, enrollmentTokenState } from './account/shared.js';
@@ -225,6 +226,7 @@ export class AccountDO {
     const compactAt = await this.compact(now);
     const { next_at: outboxAt } = await this.deliverOutbox(now);
     const mailAt = await this.deliverEmail(now);
+    const listsAt = await this.publishDueLists(now);
     let more = false;
     // Prune expired decisions, usage windows, step-ups and authorization codes.
     for (const [key, value] of await this.storage.list({ prefix: 'decision:', limit: 500 })) {
@@ -248,7 +250,7 @@ export class AccountDO {
     more = usage.size === 1000;
     const hasWork = (await this.storage.list({ prefix: 'decision:', limit: 1 })).size || (await this.storage.list({ prefix: 'outbox:', limit: 1 })).size;
     // The outbox's retry time wins over the daily pruning pass.
-    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt, mailAt, shortLived === null ? null : Math.max(shortLived, now + 60000), pollAt].filter(t => t !== null);
+    const next = [hasWork || more ? now + (more ? 60000 : 86400000) : null, outboxAt, compactAt, mailAt, shortLived === null ? null : Math.max(shortLived, now + 60000), pollAt, listsAt].filter(t => t !== null);
     if (next.length) await this.storage.setAlarm(Math.min(...next));
   }
 }
@@ -258,7 +260,7 @@ export class AccountDO {
  * `this` bound to the AccountDO, as when they were written in one class: they are copied onto its
  * prototype so op_* dispatch, the alarm and tests find them on the object itself.
  */
-const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountReverify, AccountRecovery, AccountEmailAddress, AccountClerkLink, AccountCompaction, AccountEmail];
+const OPERATION_GROUPS = [AccountKeys, AccountCredentials, AccountNotices, AccountAuthorize, AccountGates, AccountGateDelivery, AccountSignIn, AccountReverify, AccountRecovery, AccountEmailAddress, AccountClerkLink, AccountCompaction, AccountEmail, AccountAddressLists];
 for (const group of OPERATION_GROUPS) {
   for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(group.prototype))) {
     if (name === 'constructor') continue;

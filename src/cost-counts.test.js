@@ -264,6 +264,37 @@ describe('cost policy matches the code', () => {
     let n = 0;
     within('audience', await measured(() => call(env, 'PATCH', '/api/v1/audiences/hashbin.org', { auth: 'operator', body: { description: `v${n++}` } })), later(0, 3));
   });
+
+  it('address lists (B10 N3): create, replace, debounced publish, delete and purge; re-signing', async () => {
+    const cidrs = Array.from({ length: 1000 }, (_, i) => `10.${i >> 8 & 255}.${i & 255}.0/24`);
+    const created = await measured(() => call(env, 'POST', '/api/v1/address-lists', { auth: 'alice', body: { name: 'Office', cidrs } }));
+    expect(created.result.status).toBe(200);
+    const id = created.result.body.id;
+    // Compaction later deletes the charge's ledger row and the audit row (2 rows).
+    const create = { doRequests: created.doRequests, rowWrites: created.rowWrites + 2 };
+    // A replace within a minute of the last publish is published by the alarm (1 DO request).
+    m.reset();
+    expect((await call(env, 'PUT', `/api/v1/address-lists/${id}`, { auth: 'alice', body: { cidrs } })).status).toBe(200);
+    t += 61000; await runAlarms(env);
+    const replaced = m.read();
+    within('address_list', replaced, later(1, 2));
+    // Delete (free, prepaid by the create): its request, tombstone published by the alarm, purge.
+    m.reset();
+    await call(env, 'DELETE', `/api/v1/address-lists/${id}`, { auth: 'alice' });
+    t += 61000; await runAlarms(env);
+    t += 3 * DAY; await runAlarms(env);
+    const deleted = m.read();
+    within('address_list', { doRequests: create.doRequests + deleted.doRequests, rowWrites: create.rowWrites + deleted.rowWrites, ops: [...created.ops, ...deleted.ops] }, later(1 + 2, 2));
+    expect(env.STATUS_BUCKET.objects.has(`v1/addresses/${id}`)).toBe(false);
+
+    // Re-signing: per re-sign one alarm wake-up and at most 2 rows; 1.2 re-signs a day are prepaid.
+    const kept = (await call(env, 'POST', '/api/v1/address-lists', { auth: 'alice', body: { name: 'Kept', cidrs } })).body.id;
+    const first = env.STATUS_BUCKET.objects.get(`v1/addresses/${kept}`).value;
+    m.reset();
+    t += 20 * 3600000 + 1000; await runAlarms(env);
+    expect(env.STATUS_BUCKET.objects.get(`v1/addresses/${kept}`).value).not.toBe(first);
+    expect(m.read().rowWrites).toBeLessThanOrEqual(OPERATIONS.address_list_day.rowWrites / 1.2);
+  });
 });
 
 function newDeviceSync() { return newDevicePromise; }

@@ -9,6 +9,7 @@ import { decodeStatusList, getBit } from './status-list.js';
 import { verifyEvent } from './events.js';
 import { createRttChallenger, rttChallengeNeeded } from './rtt.js';
 import { createDohResolver, grantDnsNames } from './dns.js';
+import { createAddressListResolver, grantAddressLists } from './address-lists.js';
 
 /** Bitwise OR of two status lists (the longer length). */
 function unionBits(a, b) {
@@ -64,6 +65,11 @@ export function credentialFromRequest(request) {
  *               1.1.1.1 through this verifier's fetch), { endpoint, … } for another resolver
  *               (see createDohResolver), or a resolver of your own ({ resolveAll(names) }).
  *               Without it, such names are unresolved and match nothing.
+ *   addressLists — named address lists in net.client.addresses.lists are fetched from the URI the
+ *               grant names, checked against the issuer's keys and cached (createAddressListResolver:
+ *               60 s fresh, 10 minutes stale while fetches fail, never an older ver). Pass options
+ *               ({ maxAge, staleFor }), a resolver of your own ({ resolveAll(refs) }), or false to
+ *               not fetch them (they then match nothing).
  */
 export function createVerifier(options = {}) {
   const issuer = options.issuer || DEFAULT_ISSUER;
@@ -84,6 +90,9 @@ export function createVerifier(options = {}) {
   const rttReuse = new Map(); const RTT_REUSE_MAX = 10_000;
   const dns = !options.dns ? null : typeof options.dns.resolveAll === 'function' ? options.dns
     : createDohResolver({ fetch: fetcher, now: clock, ...(options.dns === true ? {} : options.dns) });
+  // Named address lists are fetched (signed by the issuer) unless turned off; then they match nothing.
+  const addressLists = options.addressLists === false ? null : typeof options.addressLists?.resolveAll === 'function' ? options.addressLists
+    : createAddressListResolver({ issuer, fetch: fetcher, now: clock, jwks: force => jwks(force), ...(typeof options.addressLists === 'object' ? options.addressLists : {}) });
 
   let jwksFailure = null; const statusFailures = new Map();
   const FAILURE_BACKOFF = options.failureBackoff ?? 30;
@@ -233,7 +242,9 @@ export function createVerifier(options = {}) {
     const auth = await authenticateRequest(request);
     if (!auth.ok) return { allow: false, status: auth.status, code: auth.code, message: auth.message, reasons: [] };
     const names = dns ? grantDnsNames(auth.payload.grants) : [];
-    const resolved = names.length ? { dns: await dns.resolveAll(names) } : {};
+    const lists = addressLists ? grantAddressLists(auth.payload.grants) : [];
+    const [dnsAnswers, listCopies] = await Promise.all([names.length ? dns.resolveAll(names) : null, lists.length ? addressLists.resolveAll(lists) : null]);
+    const resolved = { ...(dnsAnswers ? { dns: dnsAnswers } : {}), ...(listCopies ? { address_lists: listCopies } : {}) };
     if (!rtt || auth.kind !== 'device') return decide(auth.payload, check, { request, proof: auth.proof, confirmation: auth.confirmation, resolved });
     return decideTimed(auth, check, request, resolved);
   }

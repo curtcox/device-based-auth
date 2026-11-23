@@ -4,6 +4,7 @@ import { price } from '../utils/pricing.js';
 import { verifyCredential, verifyProof, VerificationError } from '../../packages/verify/src/credential.js';
 import { evaluateGrants, actionNamespace } from '../../packages/verify/src/grants.js';
 import { jwks, issuerName } from '../services/issuer.js';
+import { resolveAddressLists } from '../services/address-lists.js';
 
 // Per environment (a Worker has one; tests make many), so a cached record never crosses registries.
 const audienceCaches = new WeakMap();
@@ -69,7 +70,8 @@ export async function authorize(request, env, auth) {
   // A credential with confirm is checked against the account's record of its last confirmation
   // (in the account, below); the evaluator gets a stand-in so it checks everything else.
   const confirmation = payload.confirm ? { iat: now, exp: now + 120, by_timeout: false } : undefined;
-  const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true, attestation: payload.device?.attestation, confirmation, policy: policy?.fail_open === false ? { gates: { fail_open: false } } : undefined });
+  const address_lists = await resolveAddressLists(env, payload.grants);
+  const evaluation = evaluateGrants(payload.grants, { now, action: body.action, resource: body.resource, location, online: true, address_lists, attestation: payload.device?.attestation, confirmation, policy: policy?.fail_open === false ? { gates: { fail_open: false } } : undefined });
   // Gates (step-up is the owner gate) are decided by the account's gate engine.
   const candidates = evaluation.results.map((r, index) => ({ index, ok: r.ok, uses: r.online.uses, step_up: r.online.step_up, gates: r.online.gates, gates_reuse_s: r.online.gates_reuse_s, fail_open: policy?.fail_open === false ? false : r.online.fail_open, confirmation: payload.grants[index]?.require?.confirmation === true })).filter(c => c.ok).map(({ ok: _ok, ...c }) => c);
   const decision = await rpc(env.ACCOUNTS, payload.acct, 'authorize', { account: payload.acct, cid: payload.cid, jti: payload.jti, status_list: payload.status.status_list, proof_jti: proof ? `${proof.jkt}:${proof.jti}` : null, proof_exp: now + 180, candidates, action: body.action, resource: body.resource, audience: body.audience, caller: auth.account, country: coarseCountry(location), token_namespace: payload.cnf ? null : registered.namespace, gate_policy: policy?.require ? { require: true, kinds: policy.kinds ?? null } : null });

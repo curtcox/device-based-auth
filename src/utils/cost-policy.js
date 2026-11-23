@@ -47,6 +47,7 @@ export const OPERATIONS = Object.freeze({
   // not lock the owner out); each costs one code, ten per sheet, and a sheet needs a recent sign-in.
   // Recovering by gate is a gate request (charged as one, D13) plus such an issue, at most three an
   // hour per account.
+  // Named address lists a grant names (B10 N3) are looked up among the account's rows (reads only).
   issue: withNonceChallenge({ workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 }),
   // Credential status (auth, with the rate limit), credential status (renew), funds check, renew; later
   // compaction deletes its ledger, receipt and audit rows.
@@ -113,6 +114,21 @@ export const OPERATIONS = Object.freeze({
   notice: { workerRequests: 0, doRequests: 3, rowWrites: 15, cpuMs: 10, storageKBMonths: 0.5 * 13, r2ClassA: 0, emails: 1 },
   // Authentication (with the rate limit), registry read, charge, registry write; 4 KB of catalog kept 13 months; compaction later deletes
   // the charge's ledger and receipt rows and the audit row.
+  // Named address lists (STATUS B10 N3, D17), per started 1,000 ranges of a create or replace:
+  // the request (authentication with the rate limit, the account's operation) and, worst case, a
+  // debounced publish from the account's alarm (1 DO request); rows: the list's row, its chunk of
+  // ranges, the charge (balance, ledger, receipt) and the audit row, each deleted later by
+  // compaction, the alarm and the row update after publishing; ~10 ms to check and sort 1,000
+  // ranges and sign; 44 KB of ranges kept 13 months; one R2 put. Also prepays the list's later
+  // delete, which is free: its request (Worker, 2 DO requests), chunk deletes, the tombstone put
+  // and the purge two days later (2 alarm wake-ups), audit row (8 rows).
+  // Online decisions read named lists from R2 through a per-isolate 60-second cache; misses are
+  // class-B reads counted, like status-list fetches, in the cost brake's free-path budget (plan §11).
+  address_list: withNonceChallenge({ workerRequests: 2, doRequests: 7, rowWrites: 20, cpuMs: 13, storageKBMonths: 44 * 13 + 0.5 * 13, r2ClassA: 2 }),
+  // One day of a list's published life: its copy (valid 24 h) is re-signed after 20 h, so 1.2 times
+  // a day, each an alarm wake-up of the account (1 DO request), reading its chunks and signing up
+  // to 600 KB (~5 ms), the row update and the next alarm (2 rows) and one R2 put.
+  address_list_day: { workerRequests: 0, doRequests: 1.2, rowWrites: 2.4, cpuMs: 6, storageKBMonths: 0, r2ClassA: 1.2 },
   audience: withNonceChallenge({ workerRequests: 1, doRequests: 4, rowWrites: 8, cpuMs: 5, storageKBMonths: 4 * 13, r2ClassA: 0 })
 });
 
@@ -121,7 +137,7 @@ export function worstCaseCost(op) {
   const o = OPERATIONS[op];
   if (!o) throw new Error(`unknown operation ${op}`);
   const r = RATES;
-  return o.workerRequests * r.workerRequest + o.doRequests * r.doRequest + o.rowWrites * r.rowWritten + o.cpuMs * r.workerCpuMs + o.storageKBMonths * r.storageKBMonth + o.r2ClassA * r.r2ClassA + (o.emails || 0) * r.emailMessage;
+  return o.workerRequests * r.workerRequest + o.doRequests * r.doRequest + o.rowWrites * r.rowWritten + o.cpuMs * r.workerCpuMs + o.storageKBMonths * r.storageKBMonth + o.r2ClassA * r.r2ClassA + (o.r2ClassB || 0) * r.r2ClassB + (o.emails || 0) * r.emailMessage;
 }
 
 /** Gross up the credit to itemize card payment costs (hashbin/cronly). */

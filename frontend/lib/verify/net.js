@@ -20,6 +20,8 @@ const LATENCY_KEYS = new Set(['max_rtt_ms', 'samples', 'reuse_s']);
 
 export const NET_LIMITS = Object.freeze({ cidrs: 64, lists: 8, names: 16, relays: 16, maxHops: 4, maxRttMs: 5000, samples: 5, maxReuse: 300, uriLength: 512 });
 export const ADDRESS_LIST_ID = /^adl_[A-Za-z0-9]{8,64}$/;
+// An https URL, or http on this machine's loopback for local development (a local issuer's lists).
+const LIST_URI = /^(?:https:\/\/[^\s/]+|http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?)\/\S*$/;
 const DEVICE_ID = /^dev_[A-Za-z0-9]{8,64}$/;
 const GATE_ID = /^gate_[A-Za-z0-9]{8,64}$/;
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -68,7 +70,7 @@ function validateAddresses(a, side, hasRoute, path, errors) {
   if (a.cidrs !== undefined) checkList(a.cidrs, `${path}.cidrs`, errors, NET_LIMITS.cidrs, c => !!parseCidr(c), 'must be a CIDR range like "203.0.113.0/24"');
   if (a.lists !== undefined) {
     checkList(a.lists, `${path}.lists`, errors, NET_LIMITS.lists, l => isObject(l) && typeof l.id === 'string' && ADDRESS_LIST_ID.test(l.id)
-      && typeof l.uri === 'string' && l.uri.length <= NET_LIMITS.uriLength && /^https:\/\/[^\s/]+\/\S*$/.test(l.uri), 'must be { id: "adl_…", uri: "https://…" }');
+      && typeof l.uri === 'string' && l.uri.length <= NET_LIMITS.uriLength && LIST_URI.test(l.uri), 'must be { id: "adl_…", uri: "https://…" }');
     if (Array.isArray(a.lists) && new Set(a.lists.map(l => l?.id)).size !== a.lists.length) errors.push(`${path}.lists names a list twice`);
   }
   if (a.dns !== undefined) {

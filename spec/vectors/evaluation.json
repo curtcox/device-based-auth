@@ -5622,6 +5622,151 @@
       }
     },
     {
+      "name": "net: a list at a loopback http URI is valid (local development)",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "http://localhost:8787/status/v1/addresses/adl_OFFICE0001"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.77"
+          }
+        },
+        "address_lists": {
+          "adl_OFFICE0001": {
+            "cidrs": [
+              "192.0.2.0/25"
+            ],
+            "ver": 1
+          }
+        }
+      },
+      "expected": {
+        "allow": true,
+        "grant_index": 0,
+        "reasons": [
+          []
+        ]
+      }
+    },
+    {
+      "name": "net: a list at a non-loopback http URI is invalid",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "http://status.example.com/v1/addresses/adl_OFFICE0001"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.77"
+          }
+        },
+        "address_lists": {
+          "adl_OFFICE0001": {
+            "cidrs": [
+              "192.0.2.0/25"
+            ],
+            "ver": 1
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "net: a list at http on a lookalike of localhost is invalid",
+      "grants": [
+        {
+          "actions": [
+            "hashbin:content:write"
+          ],
+          "net": {
+            "client": {
+              "addresses": {
+                "lists": [
+                  {
+                    "id": "adl_OFFICE0001",
+                    "uri": "http://localhost.example.com/v1/addresses/adl_OFFICE0001"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "context": {
+        "now": 1795014000,
+        "action": "hashbin:content:write",
+        "resource": "doc-1",
+        "location": {
+          "network": {
+            "ip": "192.0.2.77"
+          }
+        },
+        "address_lists": {
+          "adl_OFFICE0001": {
+            "cidrs": [
+              "192.0.2.0/25"
+            ],
+            "ver": 1
+          }
+        }
+      },
+      "expected": {
+        "allow": false,
+        "grant_index": null,
+        "reasons": [
+          [
+            "invalid_grant"
+          ]
+        ]
+      }
+    },
+    {
       "name": "net: a webhook on the server side is invalid",
       "grants": [
         {

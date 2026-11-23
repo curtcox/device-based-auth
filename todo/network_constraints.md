@@ -419,13 +419,22 @@ STATUS row updated.
 |-------|-------------|---------------|
 | N1 ✅ | Spec text and vectors for `net` (addresses inline + context-resolved lists/DNS, route context, rtt); evaluator in JS, Python, Go | Every new vector passes in all three; old `where.networks` vectors unchanged |
 | N2 ✅ | RTT challenge in the verify library (nonce check function, retry, samples, reuse), the account object's RTT nonce standing in for its D15 epoch nonce, SDK/CLI following `samples_left`, `dba headers`/`dba curl` refusing latency grants (§7.1.1) | e2e: a device behind an injected 100 ms delay fails `max_rtt_ms: 40` and passes without it |
-| N3 ⬜ | Named address lists: CRUD, signed publishing on R2, verifier fetch/cache/stale/rollback rules, D17 prices in cost policy | Changing a list changes an offline verifier's decision within 60 s + cache; cost-count test covers the new ops |
+| N3 ✅ | Named address lists: CRUD, signed publishing on R2, verifier fetch/cache/stale/rollback rules, D17 prices in cost policy | Changing a list changes an offline verifier's decision within 60 s + cache; cost-count test covers the new ops |
 | N4 ✅ | DNS source (DoH, DNSSEC flag, TTL bounds) | Tested against a stub resolver incl. unvalidated and failing answers |
 | N5 ⬜ | Relays: `dba:relay:forward`, egress at enrollment, `dba-hop+jwt`, inline and tunnel modes, `dba relay`, route verification | e2e through a local inline relay and a CONNECT relay; direct send with replayed hops denied by the egress check |
 | N6 ⬜ | Webhook address check on `/authorize` (gate registry `purpose: "address"`, cache) | CI sample service allows and denies; unreachable and unpaid deny |
 | N7 ⬜ | Server direction: audience `server_keys`, `rttEcho`, SDK/CLI `net.server` (addresses, route, latency) | CLI refuses a server outside its ranges; browser SDK times a signed echo and refuses unenforceable grants |
 | N8 ⬜ | Sign-in and confirmation `net` settings; ID token `dba_net`; the account object's RTT nonce standing in for its D15 epoch nonce (moved from N2: DBA's own API has no latency rule before this phase) | Playwright: sign-in refused from an address outside the account's setting |
 | N9 ⬜ | Tools and docs (§12) not already done per phase; SDK release | Every docs sample runs in CI |
+
+## 13a. Progress (moved from STATUS B10)
+
+- N1 ✅ (2026-11-22): `net` in spec/evaluation.md §3.10, 49 vectors, the evaluator in JS (`packages/verify/src/net.js`, `ip.js`), Python and Go; credential `ver` 2 only for grants with `net`.
+- N2 ✅ (2026-11-22): stateless timed DPoP nonces (`rtt.js`), `createVerifier({ rtt })` challenging, timing, keeping the best of `samples` and reusing a pass for `reuse_s`; CLI and browser SDK answer timed challenges (up to 3) and use each timed nonce once; `dba headers`/`sign`/`curl` refuse credentials whose every grant is timed. Checked with a real-clock test (150 ms injected delay fails `max_rtt_ms` 60) rather than Playwright; the account object's own RTT nonce moved to N8, where DBA's API first gets a latency rule.
+- N4 ✅ (2026-11-22): `createDohResolver` (`dns.js`: DoH JSON API, A and AAAA, DNSSEC only when both answers carry AD, TTL bounded to 30–300 s, failures cached 5 s, at most 16 names per request) and `createVerifier({ dns })`.
+- N3 ✅ (2026-11-23): named address lists (`/api/v1/address-lists`, scopes `networks:read`/`networks:write`, replace and delete need a recent sign-in; up to 10,000 ranges, 50 lists per account; stored in the account object in 1,000-range chunks), published as signed `dba-addresses+jwt` (spec/credential.md §7a) on R2 at `status…/v1/addresses/{id}`, at most once a minute (debounced on the account's alarm), re-signed every 20 h for 13 months after the last change, tombstone on delete (purged two days later); issuance accepts only the account's own live lists at their canonical URI (other accounts' and audience lists, §4 `kind: audience`, not yet); online decisions read lists from R2 through a 60 s per-isolate cache; `createVerifier` fetches, verifies and caches them (`createAddressListResolver`: 60 s fresh, 10 min stale, no rollback, tombstones and expired copies match nothing); list URIs may be `http://` on loopback for local development (spec, vectors and all three verifiers); proposed prices in D17. DBA's own API (dba:* grants) does not resolve lists yet (they deny there) — N8. Next: N5 relays or N6 webhook address check (N6 prices also wait on D17); no CLI or dashboard editor for lists yet (N9).
+
+**SDK bundle is 65,446 of its 65,536-byte limit**: the next SDK change needs room first (minify whitespace in scripts/build-sdk.mjs, about 47 KB, or keep `describeGrant` out of the bundle); SDK release not cut yet (N9).
 
 ## 14. Open questions for later
 

@@ -10,3 +10,4 @@ export * from './events.js';
 export * from './replay-do.js';
 export * from './rtt.js';
 export * from './dns.js';
+export * from './address-lists.js';

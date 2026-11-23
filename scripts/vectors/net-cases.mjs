@@ -66,6 +66,9 @@ export const netCases = [
   ['net: an unknown member denies', net({ latency: { max_rtt_ms: 40, jitter_ms: 5 } }), ctx(peer('203.0.113.9', { rtt_ms: 1 })), false, null, [['unknown_constraint:net.client.latency.jitter_ms']]],
   ['net: an unknown direction denies', [{ actions: W, net: { sideways: {} } }], ctx(), false, null, [['unknown_constraint:net.sideways']]],
   ['net: an empty net is invalid', [{ actions: W, net: {} }], ctx(), false, null, [['invalid_grant']]],
+  ['net: a list at a loopback http URI is valid (local development)', net({ addresses: { lists: [{ id: OFFICE, uri: `http://localhost:8787/status/v1/addresses/${OFFICE}` }] } }), ctx({ ...peer('192.0.2.77'), address_lists: { [OFFICE]: { cidrs: ['192.0.2.0/25'], ver: 1 } } }), true, 0, [[]]],
+  ['net: a list at a non-loopback http URI is invalid', net({ addresses: { lists: [{ id: OFFICE, uri: `http://status.example.com/v1/addresses/${OFFICE}` }] } }), ctx({ ...peer('192.0.2.77'), address_lists: { [OFFICE]: { cidrs: ['192.0.2.0/25'], ver: 1 } } }), false, null, [['invalid_grant']]],
+  ['net: a list at http on a lookalike of localhost is invalid', net({ addresses: { lists: [{ id: OFFICE, uri: `http://localhost.example.com/v1/addresses/${OFFICE}` }] } }), ctx({ ...peer('192.0.2.77'), address_lists: { [OFFICE]: { cidrs: ['192.0.2.0/25'], ver: 1 } } }), false, null, [['invalid_grant']]],
   ['net: a webhook on the server side is invalid', [{ actions: W, net: { server: { addresses: { webhook: HOOK } } } }], ctx(), false, null, [['invalid_grant']]],
   ['net: a host name must be lower case', net({ addresses: { dns: { names: ['VPN.example.com'] } } }), ctx(peer('192.0.2.1')), false, null, [['invalid_grant']]]
 ];

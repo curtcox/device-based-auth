@@ -19,6 +19,7 @@ import { signInGates, dashboardSession, recoveryCodes, sessionReverify } from '.
 import { pushSubscriptions, pushPublicKey } from './api/push.js';
 import { emailConfigured } from './services/email.js';
 import { statusList, republishStatusLists, alertStatusCapacity } from './api/status.js';
+import { addressLists, publishedAddressList } from './api/address-lists.js';
 import { inspect } from './api/inspect.js';
 import { oidcConfiguration, oidcAuthorize, oidcToken, oidcUserinfo } from './api/oidc.js';
 import { mcp } from './api/mcp.js';
@@ -47,6 +48,7 @@ export const API_ROUTES = [
   { method: 'GET', path: '/.well-known/openid-configuration', access: PUBLIC, handler: 'oidc-configuration' },
   { method: 'GET', path: '/.well-known/dba-ca.pem', access: PUBLIC, handler: 'ca-bundle' },
   { method: 'GET', path: '/status/v1/lists/:shard', access: PUBLIC, handler: 'status-list' },
+  { method: 'GET', path: '/status/v1/addresses/:id', access: PUBLIC, handler: 'published-address-list' },
   { method: 'GET', path: '/api/public/config', access: PUBLIC, handler: 'public-config' },
   { method: 'GET', path: `${V1}/quote`, access: PUBLIC, handler: 'quote' },
   { method: 'POST', path: `${V1}/inspect`, access: PUBLIC, handler: 'inspect', free: true },
@@ -90,6 +92,11 @@ export const API_ROUTES = [
   { method: 'GET', path: `${V1}/step-ups`, access: SESSION, handler: 'step-ups' },
   { method: 'POST', path: `${V1}/step-ups/:id/approve`, access: SESSION, handler: 'step-up-decide' },
   { method: 'POST', path: `${V1}/step-ups/:id/deny`, access: SESSION, handler: 'step-up-decide' },
+  { method: 'GET', path: `${V1}/address-lists`, access: 'networks:read', handler: 'address-lists' },
+  { method: 'POST', path: `${V1}/address-lists`, access: 'networks:write', handler: 'address-lists' },
+  { method: 'GET', path: `${V1}/address-lists/:id`, access: 'networks:read', handler: 'address-lists' },
+  { method: 'PUT', path: `${V1}/address-lists/:id`, access: 'networks:write', handler: 'address-lists' },
+  { method: 'DELETE', path: `${V1}/address-lists/:id`, access: 'networks:write', handler: 'address-lists' },
   { method: 'GET', path: `${V1}/gates`, access: 'gates:read', handler: 'gates' },
   { method: 'POST', path: `${V1}/gates`, access: 'gates:write', handler: 'gates' },
   { method: 'POST', path: `${V1}/gates/:id/activate`, access: 'gates:write', handler: 'gates' },
@@ -188,6 +195,7 @@ async function handle(route, request, env, auth) {
     case 'health': return { status: 'ok', environment: env.ENVIRONMENT, git_sha: env.GIT_SHA || 'local' };
     case 'jwks': return new Response(JSON.stringify(jwks(env)), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600', ...CORS } });
     case 'status-list': return statusList(route, env);
+    case 'published-address-list': return publishedAddressList(route, env);
     case 'public-config': return { local: env.ENVIRONMENT === 'local', environment: env.ENVIRONMENT, issuer: issuerName(env), audience: appAudience(env), app_origin: env.APP_ORIGIN, status_origin: env.STATUS_ORIGIN, clerk_publishable_key: env.CLERK_PUBLISHABLE_KEY || null, prices: PRICES, price_table: priceTable(), minimum_deposit_cents: MINIMUM_DEPOSIT_CENTS, push_public_key: await pushPublicKey(env), security_email: emailConfigured(env) };
     case 'quote': {
       const op = url.searchParams.get('op');
@@ -225,6 +233,7 @@ async function handle(route, request, env, auth) {
     case 'authorize': return authorize(request, env, auth);
     case 'step-ups': return rpc(env.ACCOUNTS, auth.account, 'list-step-ups');
     case 'step-up-decide': return rpc(env.ACCOUNTS, auth.account, 'decide-step-up', { id: route.params.id, approve: url.pathname.endsWith('/approve'), approver_device: auth.device?.payload.sub });
+    case 'address-lists': return addressLists(route, request, env, auth);
     case 'gates': return gates(route, request, env, auth);
     case 'gate-requests': return gateRequests(route, request, env, auth);
     case 'gate-links': return gateLinks(route, request, env);

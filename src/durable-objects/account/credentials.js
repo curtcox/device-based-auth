@@ -1,3 +1,4 @@
+import { checkListsForIssue } from './address-lists.js';
 import { assert } from '../../utils/errors.js';
 import { CLOCK_SKEW } from '../../../packages/verify/src/credential.js';
 import { rpc } from '../../utils/rpc.js';
@@ -40,6 +41,7 @@ export class AccountCredentials {
         assert(token && token.hash === enrollment_token.hash, 'invalid_enrollment_token', 'Enrollment token is invalid', 401);
       }
       await checkGatesForIssue(tx, [...record.grants, ...(extra_gates.length ? [{ require: { gates: [{ any: extra_gates }] } }] : [])], record.device_id, gate_policies);
+      await checkListsForIssue(tx, record.grants, now);
       const issuedToday = (await readBalance(tx, now, { flush: false })).day.counts?.issue || 0; // before this charge counts
       const paid = await charge(tx, { id: charge_id, kind: 'issue', amount: price, detail: { cid: record.cid }, receipt: { cid: record.cid, ...(fingerprint ? { fingerprint } : {}) }, annotate: subscribed ? state => { announce = nextNotice(state, now, urgent); } : undefined }, now);
       // The same charge id again (an Idempotency-Key retry, two approvals of one enrollment racing):

@@ -215,8 +215,8 @@ reason to allow.
 
 - `addresses`: `of` (`"peer"`, the default, or `"origin"`, which needs a `route` in the same
   direction and is not allowed in `server`) and at least one source: `cidrs` (1–64 CIDR ranges),
-  `lists` (1–8 `{ id, uri }`, `id` = `adl_` + 8–64 letters and digits, `uri` an `https://` URL of
-  at most 512 characters), `dns` (`names`: 1–16 lower-case host names of two or more labels whose
+  `lists` (1–8 `{ id, uri }`, `id` = `adl_` + 8–64 letters and digits, `uri` an `https://` URL, or
+  `http://` on `localhost`, `127.0.0.1` or `[::1]` for local development, of at most 512 characters), `dns` (`names`: 1–16 lower-case host names of two or more labels whose
   last label is not all digits, at most 253 characters; `dnssec`: boolean), `webhook` (a gate id,
   `client` only). Lists have no duplicates.
 - `route`: `relays` (1–16 device ids `dev_` + 8–64 letters and digits), `min_hops` and

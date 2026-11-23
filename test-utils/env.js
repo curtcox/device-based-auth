@@ -12,7 +12,7 @@ export const ORIGIN = 'http://localhost:8787';
 /** An in-memory R2 bucket. */
 export function memoryBucket() {
   const objects = new Map();
-  return { objects, async put(key, value, options = {}) { objects.set(key, { value: String(value), httpMetadata: options.httpMetadata }); }, async get(key) { const o = objects.get(key); return o ? { text: async () => o.value, httpMetadata: o.httpMetadata } : null; } };
+  return { objects, async put(key, value, options = {}) { objects.set(key, { value: String(value), httpMetadata: options.httpMetadata }); }, async get(key) { const o = objects.get(key); return o ? { text: async () => o.value, httpMetadata: o.httpMetadata } : null; }, async delete(key) { objects.delete(key); } };
 }
 
 let issuerKeysJson;

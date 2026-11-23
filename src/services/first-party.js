@@ -13,6 +13,8 @@ export const DBA_SCOPES = Object.freeze({
   'audiences:read': 'Read registered audiences.',
   'audiences:write': 'Register and change audiences you own.',
   'authorize': 'Ask for online authorization decisions for audiences you own (paid from the balance).',
+  'networks:read': 'List and read the account\'s named address lists.',
+  'networks:write': 'Create, replace and delete named address lists (replacing and deleting need a recent sign-in).',
   'gates:read': 'List the account\'s gates (devices and services that approve requests).',
   'gates:write': 'Add and remove gates (needs a recent sign-in).',
   'approvals:answer': 'Answer gate requests as a DBA device gate (devices only: a device answers for the gates that name it).'

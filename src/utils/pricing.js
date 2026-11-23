@@ -1,7 +1,7 @@
 import { worstCaseCost, COST_POLICY, OPERATIONS } from './cost-policy.js';
 
 /** Prices in integer micro-dollars. The only place prices live. */
-export const PRICES = Object.freeze({ issue: 87, renew: 25, decision: 14, read: 7, token: 7, login: 14, audience: 100, gate: 22, gate_webhook: 23, gate_vendor: 30, confirm: 14, notice: 200 });
+export const PRICES = Object.freeze({ issue: 87, renew: 25, decision: 14, read: 7, token: 7, login: 14, audience: 100, gate: 22, gate_webhook: 23, gate_vendor: 30, confirm: 14, notice: 200, address_list: 242, address_list_day: 15 });
 export const MINIMUM_DEPOSIT_CENTS = 500;
 export const MAXIMUM_DEPOSIT_CENTS = 100000;
 

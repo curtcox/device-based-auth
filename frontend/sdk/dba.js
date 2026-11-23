@@ -40,8 +40,8 @@ async function signJws(header, payload, privateKey) {
   if (raw.length !== 64) throw new Error("an ES256 signature is 64 bytes (r \u2016 s)");
   return `${input}.${b64u(raw)}`;
 }
-function decodeJws(jws) {
-  if (typeof jws !== "string" || jws.length > 65536) throw new Error("invalid_format");
+function decodeJws(jws, maxLength = 65536) {
+  if (typeof jws !== "string" || jws.length > maxLength) throw new Error("invalid_format");
   const parts = jws.split(".");
   if (parts.length !== 3) throw new Error("invalid_format");
   try {
@@ -113,6 +113,7 @@ var ROUTE_KEYS = /* @__PURE__ */ new Set(["relays", "min_hops", "max_hops", "req
 var LATENCY_KEYS = /* @__PURE__ */ new Set(["max_rtt_ms", "samples", "reuse_s"]);
 var NET_LIMITS = Object.freeze({ cidrs: 64, lists: 8, names: 16, relays: 16, maxHops: 4, maxRttMs: 5e3, samples: 5, maxReuse: 300, uriLength: 512 });
 var ADDRESS_LIST_ID = /^adl_[A-Za-z0-9]{8,64}$/;
+var LIST_URI = /^(?:https:\/\/[^\s/]+|http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?)\/\S*$/;
 var DEVICE_ID = /^dev_[A-Za-z0-9]{8,64}$/;
 var GATE_ID = /^gate_[A-Za-z0-9]{8,64}$/;
 var LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -161,7 +162,7 @@ function validateAddresses(a, side, hasRoute, path, errors) {
   if (a.of === "origin" && !hasRoute) errors.push(`${path}.of "origin" needs a route: the first relay records the device's address`);
   if (a.cidrs !== void 0) checkList(a.cidrs, `${path}.cidrs`, errors, NET_LIMITS.cidrs, (c) => !!parseCidr(c), 'must be a CIDR range like "203.0.113.0/24"');
   if (a.lists !== void 0) {
-    checkList(a.lists, `${path}.lists`, errors, NET_LIMITS.lists, (l) => isObject(l) && typeof l.id === "string" && ADDRESS_LIST_ID.test(l.id) && typeof l.uri === "string" && l.uri.length <= NET_LIMITS.uriLength && /^https:\/\/[^\s/]+\/\S*$/.test(l.uri), 'must be { id: "adl_\u2026", uri: "https://\u2026" }');
+    checkList(a.lists, `${path}.lists`, errors, NET_LIMITS.lists, (l) => isObject(l) && typeof l.id === "string" && ADDRESS_LIST_ID.test(l.id) && typeof l.uri === "string" && l.uri.length <= NET_LIMITS.uriLength && LIST_URI.test(l.uri), 'must be { id: "adl_\u2026", uri: "https://\u2026" }');
     if (Array.isArray(a.lists) && new Set(a.lists.map((l) => l?.id)).size !== a.lists.length) errors.push(`${path}.lists names a list twice`);
   }
   if (a.dns !== void 0) {

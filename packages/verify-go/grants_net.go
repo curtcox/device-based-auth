@@ -33,8 +33,9 @@ var (
 	labelPattern         = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 	digitsPattern        = regexp.MustCompile(`^\d+$`)
 	routeErrorPattern    = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
-	// /^https:\/\/[^\s/]+\/\S*$/ with JavaScript's \s, which unlike Go's includes Unicode spaces.
-	listURIPattern = regexp.MustCompile(`^https://[^` + jsSpace + `/]+/[^` + jsSpace + `]*$`)
+	// The JavaScript LIST_URI (an https URL, or http on loopback for local development), with
+	// JavaScript's \s, which unlike Go's includes Unicode spaces.
+	listURIPattern = regexp.MustCompile(`^(?:https://[^` + jsSpace + `/]+|http://(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?)/[^` + jsSpace + `]*$`)
 )
 
 const jsSpace = `\t\n\v\f\r \x{00a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}`

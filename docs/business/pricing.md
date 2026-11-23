@@ -45,6 +45,8 @@ handler adds a Durable Object call or a storage write.
 | Webhook gate request, per webhook gate contacted (**proposed, D13**) | Same | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 14 | 23 | **23** |
 | Duo or Okta Verify gate request, per vendor gate contacted (**proposed, D13**) | Account that owns the gates | As a gate request, plus starting the push (signed subrequest, 1 row) and up to 24 status polls, each an alarm wake-up (24 DO req, ~2 ms each) | 18 | 30 | **30** |
 | Confirmation issued (periodic confirmation, **proposed, D13**) | Account that issued the credential (its gates are charged as gate requests) | 2 Worker req, 3 DO req, 5 rows (credential row, balance and daily aggregate row, an audit row and its later deletion), 5 ms (signing), 0.5 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 8 | 14 | **14** |
+| Named address list, create or replace, per started 1,000 ranges (**proposed, D17**) | Account that owns the list | 3 Worker req, 8 DO req (the request; a debounced publish from the alarm; the list's later free delete with its tombstone and purge), 20 rows (list row, chunk of ranges, charge rows, audit rows, alarm, publish bookkeeping, and their later deletion), 15 ms, 44 KB × 13 months, 2 R2 writes (the publish and the delete's tombstone) — includes a **DPoP nonce challenge** | 148 | 242 | **242** |
+| Named address list, each day its published life is extended to 13 months after a create or replace (**proposed, D17**) | Account that owns the list | Re-signing every 20 hours (1.2 a day): an alarm wake-up, 2 rows, ~5 ms to sign up to 600 KB, one R2 write | 9 | 15 | **15** |
 | Security email (D9) | Account it is sent to, when it is queued | 3 DO req (up to 3 alarm wake-ups, one per attempt), 15 rows (charge: balance, ledger and receipt rows and their later deletion; queue row and alarm; attempts' rewrites or deletion and next alarms; an audit row and its deletion; the digest's last-sent row), 10 ms (SigV4 signing per attempt), 0.5 KB × 13 months, **1 SES email** (100 µ$; retried only when SES answered that it did not take it, so at most one is billed) | 117 | 191 | **200** |
 | Metered API read (API key or non-dashboard device) | Caller | 2 Worker req, 5 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 4 | 7 | **7** |
 | Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 2 Worker req, 5 DO req, 2 rows (balance, daily aggregate row) — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 4 | 7 | **7** |
@@ -85,6 +87,18 @@ are now paid by the gate price, and the decision price is unchanged.
 
 A `dba-device` gate learns of requests by polling `GET /api/v1/gate-requests`, a free read like
 the dashboard's own lists (rate-limited per account).
+
+### Named address lists (proposed, STATUS D17)
+
+A grant can name address lists (`net.client.addresses.lists`, STATUS B10 N3). Each list is
+published as a signed document beside the status lists and re-signed about daily, so offline
+verifiers can enforce it. A create or replace is charged once per started 1,000 ranges, plus one
+day of publishing for each day it extends the list's published life to 13 months from now: a new
+list prepays 395 days (about $0.006 for up to 1,000 ranges), and changing it a day later pays one
+more day. Deleting is free (prepaid). A list not changed for 13 months stops being re-signed and
+expires, which denies every grant naming it. Online decisions read lists through a per-isolate
+one-minute cache; the R2 reads on a miss are counted with the other free-path reads under the
+cost brake, and the decision price is unchanged.
 
 ### Why records are deleted after 13 months
 

@@ -1,3 +1,4 @@
+import { checkGrantAddressListUris } from './address-lists.js';
 import { assert } from '../utils/errors.js';
 import { rpc } from '../utils/rpc.js';
 import { randomId, derivedId } from '../utils/ids.js';
@@ -65,6 +66,7 @@ export async function validateIssue(env, { aud, grants, lifetime_seconds, confir
   const audiences = await rpc(env.REGISTRY, 'global', 'get-many', { names: [...new Set(aud)] });
   const problems = validateGrants(grants);
   assert(!problems.length, 'invalid_grants', problems.join('; '));
+  checkGrantAddressListUris(env, grants);
   // require.confirmation is set by issuance from the credential's confirm block, never by hand.
   for (const [i, grant] of grants.entries()) {
     assert(grant.require?.confirmation === undefined, 'invalid_grants', `grants[${i}]: require.confirmation is set from the credential's confirm block; send confirm: { gates, every_s } instead`);

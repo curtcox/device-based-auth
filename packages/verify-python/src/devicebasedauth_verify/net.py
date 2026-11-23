@@ -33,7 +33,8 @@ _NUMERIC = re.compile(r"[0-9]+", re.ASCII)
 _ROUTE_ERROR = re.compile(r"[a-z0-9_]{1,64}", re.ASCII)
 # JS \s (WhiteSpace and LineTerminator), which differs from Python's Unicode \s.
 _WS = "\t\n\v\f\r    -     　﻿"
-_LIST_URI = re.compile(f"https://[^{_WS}/]+/[^{_WS}]*")
+# An https URL, or http on this machine's loopback for local development (a local issuer's lists).
+_LIST_URI = re.compile(f"(?:https://[^{_WS}/]+|http://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]{{1,5}})?)/[^{_WS}]*")
 
 
 def _is_int(value, low, high) -> bool:
