@@ -14,7 +14,8 @@ Sibling of [hashbin.org](https://github.com/curtcox/hashbin.org) and
 [cronly.org](https://github.com/curtcox/cronly): Cloudflare Workers, Durable Objects and R2, Clerk
 (optional), Stripe, a prepaid balance and no subscription.
 
-**Status:** implemented and tested locally; not yet deployed. See [STATUS.md](STATUS.md).
+**Status:** live at https://devicebasedauth.org since 2026-11-22, with payments open. What is done and
+what is left: [STATUS.md](STATUS.md).
 
 ## What's here
 
@@ -23,12 +24,14 @@ Sibling of [hashbin.org](https://github.com/curtcox/hashbin.org) and
 | Credential format and evaluation rules, with conformance vectors | [spec/](spec/) |
 | The service (Cloudflare Worker + Durable Objects) | [src/](src/) |
 | `@devicebasedauth/verify` — zero-dependency verifier and site helpers | [packages/verify/](packages/verify/) |
-| Browser SDK (`/sdk/v1.3.0/dba.js`, SRI-pinnable) | [packages/browser-sdk/](packages/browser-sdk/) |
+| Python and Go verifiers (same vectors) | [packages/verify-python/](packages/verify-python/), [packages/verify-go/](packages/verify-go/) |
+| Browser SDK (`/sdk/v1.4.0/dba.js`, SRI-pinnable) | [packages/browser-sdk/](packages/browser-sdk/) |
 | `dba` command-line tool | [packages/cli/](packages/cli/) |
 | Website: dashboard, approval page, developer tools, docs, pricing | [frontend/](frontend/) |
 | Samples run in CI (shell, Node, Worker, Python, Go) | [docs/samples/](docs/samples/) |
 | Pricing model and runbooks | [docs/business/](docs/business/), [docs/ops/](docs/ops/) |
 | cronly integration patches | [integrations/cronly/](integrations/cronly/) |
+| Security review log | [docs/security/](docs/security/) |
 | Design | [todo/master_plan.md](todo/master_plan.md) |
 
 ## Try it locally
@@ -49,7 +52,7 @@ DBA_ORIGIN=http://localhost:8787 node packages/cli/dba.js enroll --aud hashbin.o
 ```
 
 Open the printed approval link, approve, and the CLI saves its credential. `node packages/cli/dba.js status`
-shows what it may do; `dba headers POST https://hashbin.org/api/content` prints the headers a server
+shows what it may do; `node packages/cli/dba.js headers POST https://hashbin.org/api/content` prints the headers a server
 would verify.
 
 ## Verify on a server

@@ -24,22 +24,27 @@ rewriting it.
 ## Repository map
 
 ```
-src/                 Worker: index.js (API_ROUTES, the only dispatch table), api/, auth/,
-                     durable-objects/ (AccountDO, its operations by area in account/, StatusListDO, RegistryDO,
-                     EnrollmentDO, SafetyDO; gates.js and gate-requests.js),
-                     services/ (issuance, issuer keys, first-party audiences, OpenAPI, cost monitor),
-                     utils/ (pricing.js = prices, cost-policy.js = rates and op counts)
-packages/verify/     @devicebasedauth/verify: JOSE, grants, DPoP, status lists, verifier, site helpers
+src/                 Worker: index.js (API_ROUTES, the only dispatch table), api/ (route handlers),
+                     auth/ (Clerk, scopes, tokens, re-verification), durable-objects/ (AccountDO
+                     with its operations by area in account/, StatusListDO, RegistryDO, EnrollmentDO,
+                     SafetyDO; gates.js and gate-requests.js), services/ (issuance, issuer keys,
+                     first-party audiences, attestation, email, push, address lists, OpenAPI, cost
+                     monitor), utils/ (pricing.js = prices, cost-policy.js = rates and op counts)
+packages/verify/     @devicebasedauth/verify: JOSE, grants, net constraints, DPoP, status lists,
+                     address lists, verifier, site helpers, ReplayCacheDO
+packages/verify-python/ packages/verify-go/   Ports of the verifier; pass the same vectors
 packages/browser-sdk/ Browser SDK source (bundled to frontend/sdk/dba.js by scripts/build-sdk.mjs)
 packages/cli/        dba CLI: lib.js re-exports the testable modules beside it; commands/ does the I/O
-spec/                Credential format, evaluation rules, conformance vectors
-frontend/            Static site (no build step). frontend/lib/verify/ and frontend/sdk/dba.js
-                     are generated; frontend/openapi.json is generated
+spec/                Credential format, evaluation rules, events, conformance vectors
+frontend/            Static site (no build step). frontend/lib/verify/, frontend/sdk/dba.js,
+                     frontend/openapi.json and frontend/llms-full.txt are generated
 docs/samples/        CI-executed samples (scripts/run-samples.mjs)
 docs/business/ docs/ops/   Pricing model; deployment and incident runbooks
 docs/security/       Security review log (STATUS L12)
 integrations/        Patches/notes for sibling sites (cronly)
+scripts/             Generators, the file-size check, deploy helpers, verify-production
 test-utils/          In-memory Durable Object storage, R2, test env and device helpers
+todo/ done/          Plans in progress and finished plans
 ```
 
 ## Commands
@@ -55,10 +60,12 @@ Node 22+. `npm install` (an `.npmrc` sets `legacy-peer-deps`).
 | `npm run test:samples` | Runs docs/samples against a fresh local server on port 8788 (needs python3 with cryptography+requests, and go). |
 | `npm run test:e2e` | Playwright browser tests (starts the local server). |
 | `npm run docs:generate` | Regenerate openapi.json, the browser copy of verify, and the SDK bundle. Tests fail on drift. |
-| `node scripts/build-sdk.mjs --release` | Cut an immutable `frontend/sdk/vX.Y.Z/` release (bump VERSION first). |
+| `node scripts/build-sdk.mjs --release` | Cut an immutable `frontend/sdk/vX.Y.Z/` release (bump `VERSION` in `packages/browser-sdk/dba.js` first). |
 | `npm run vectors:generate` | Rewrite evaluation vectors (signature vectors only with `--resign`). |
 
-Pushing to `main` deploys production only when the owner sets `DBA_DEPLOY_ENABLED` (STATUS L9).
+Pushing to `main` deploys production (the GitHub variable `DBA_DEPLOY_ENABLED` is `true`; see
+[`docs/ops/deployment.md`](docs/ops/deployment.md)). Production has real customers and money: keep
+`main` green.
 
 ## Conventions
 
@@ -67,9 +74,11 @@ Pushing to `main` deploys production only when the owner sets `DBA_DEPLOY_ENABLE
 - **Tests sit beside the code** as `name.test.js` (Vitest). Durable Objects are tested by
   constructing the class with an in-memory storage stub.
 - **Every API route declares its access** in `API_ROUTES` (`src/index.js`): `PUBLIC`, `SESSION`,
-  or scopes. A test fails for any undeclared route.
+  `DEVICE`, `AUTHENTICATED`, or scopes; billable routes also declare `billable` (which gives them
+  `?dry_run=1`). A test fails for any undeclared route.
 - **Money is integer micro-dollars (µ$).** Rates only in `src/utils/cost-policy.js`, prices only in
-  `src/utils/pricing.js`. Reserve the maximum price before doing billable work.
+  `src/utils/pricing.js`. Reserve the maximum price before doing billable work. A new or changed
+  operation updates its counts in `OPERATIONS` and `src/cost-counts.test.js`.
 - **Every price must pass the price-floor test** (`price × 0.92 ≥ 1.5 × worst-case cost`).
 - **Device private keys never reach the server**, its logs, or its storage.
 - **The credential evaluator has one implementation** (`packages/verify`) used by the Worker,
