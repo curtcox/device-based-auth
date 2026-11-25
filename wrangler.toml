@@ -26,8 +26,10 @@ STATUS_SHARDS = "16"
 WORKER_NAME = "dba-worker-prod"
 
 # Secrets, pushed by .github/workflows/deploy.yml (see docs/ops/deployment.md):
-# ISSUER_KEYS            JSON [{ "kid", "jwk" (private P-256), "retired"? }]; first non-retired signs
-# TOKEN_SIGNING_KEY      HMAC key for API keys, enrollment tickets, poll tokens and OIDC codes
+# ISSUER_KEYS            JSON [{ "kid", "jwk" (private P-256), "retired"?, "withdrawn"? }]; the first
+#                        neither retired nor withdrawn signs (docs/ops/issuer-key-compromise.md)
+# TOKEN_SIGNING_KEY      HMAC key for API keys, enrollment, sign-up and recovery tickets, poll tokens, OIDC
+#                        codes, MCP client ids and refresh tokens, gate and email links
 # CLERK_SECRET_KEY, CLERK_PUBLISHABLE_KEY, CLERK_WEBHOOK_SECRET
 # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (+ vars STRIPE_CREDIT_PRODUCT_ID, STRIPE_CARD_COST_PRODUCT_ID)
 # OPERATOR_ACCOUNT       Clerk user id that owns the first-party audiences (and pays their decisions/logins)
@@ -37,7 +39,7 @@ WORKER_NAME = "dba-worker-prod"
 #                        all open); without it TOTP gates cannot be added
 # EMAIL_PROVIDER=ses, SES_REGION, EMAIL_FROM, SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY
 #                        security email through Amazon SES (STATUS S8, D9); without them none is sent
-# Optional: ALERT_WEBHOOK_URL, COST_SAFETY_BRAKE_CENTS, COST_SAFETY_HARD_STOP=true, LAUNCH_APPROVED=true, GIT_SHA
+# Optional: ALERT_WEBHOOK_URL, COST_SAFETY_BRAKE_CENTS, COST_SAFETY_FAIL_OPEN, COST_SAFETY_HARD_STOP=true, LAUNCH_APPROVED=true, GIT_SHA
 
 [[durable_objects.bindings]]
 name = "ACCOUNTS"

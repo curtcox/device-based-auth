@@ -445,7 +445,7 @@
 		"/api/v1/quote": {
 			"get": {
 				"operationId": "get_api_v1_quote",
-				"summary": "Price of an operation (op = issue, renew, decision, read, token, login, audience).",
+				"summary": "Price of an operation (op = issue, renew, decision, read, token, login, audience, gate, gate_webhook, gate_vendor, confirm, notice, address_list, address_list_day).",
 				"x-access": "public",
 				"security": [],
 				"parameters": [

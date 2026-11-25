@@ -9,7 +9,8 @@ contain no test hooks.
 | Sample | Side | Shows |
 |--------|------|-------|
 | [`enroll-and-call.sh`](enroll-and-call.sh) | device (shell) | `dba enroll` for hashbin.org, `dba status`, `dba headers`, `dba curl`, and `dba token` for curl-only scripts. |
-| [`device.mjs`](device.mjs) | device (JavaScript) | Make a non-extractable WebCrypto key, send a signed enrollment request, poll for approval, sign requests with a DPoP proof. Used by the two samples below. |
+| [`signup-and-recover.sh`](signup-and-recover.sh) | device (shell) | An account made with only this machine and a deposit, no sign-in provider: `dba signup` (prints a recovery sheet), `dba curl` for `whoami` and the balance, then `dba recover` with a recovery code onto a second profile, as if the first machine were lost. |
+| [`device.mjs`](device.mjs) | device (JavaScript) | Make a non-extractable WebCrypto key, send a signed enrollment request, poll for approval, sign requests with a DPoP proof. Used by `verify-request.mjs` and by the harness. |
 | [`verify-request.mjs`](verify-request.mjs) | relying party (Node) | `createVerifier({ issuer, audience: 'hashbin.org' })` allowing a granted action and denying a replayed proof, an action that was not granted, and a request with no credential. |
 | [`worker-middleware.mjs`](worker-middleware.mjs) | relying party (Cloudflare Worker) | An `export default { fetch }` Worker that guards routes by action, returning 401/403 with reasons, and the account, device and caveats on success, and applies revocation webhooks. The harness imports it, calls `fetch` with `Request`s, and points hashbin.org's webhook at it to check a revocation arrives. |
 | [`gate-webhook.mjs`](gate-webhook.mjs) | approval service (Node) | A webhook gate: an HTTP service that verifies devicebasedauth.org's signed gate requests (`dba-gate+jwt`, issuer JWKS) and answers allow or deny at once, or `202` and later a signed answer (`dba-gate-answer+jwt`) to the request's callback. The harness registers it as a gate, enrolls a device whose grants need it, and asks hashbin.org's online check for an action it approves, one it refuses and one it answers late. |
@@ -19,6 +20,7 @@ contain no test hooks.
 | [`android/`](android/) | device (Android, Java) | `AndroidKeystoreKeys` makes a non-exportable P-256 key in the Android Keystore (StrongBox when present) with an attestation challenge and returns its certificate chain for key attestation; `DbaClient` (JDK + Android API 26 classes only, no dependencies) fetches an attestation challenge, enrolls, polls, signs DPoP proofs and renews. CI runs `DbaClient` on a JVM with a software key (`Main.java`, via `run.sh`) and type-checks the Keystore class against stubs of the Android API in `jvm-stubs/`. |
 | [`ios/`](ios/) | device (iOS, Swift) | A Swift package (iOS 15+; Foundation, CryptoKit, DeviceCheck): `SecureEnclaveKeys` makes the P-256 key in the Secure Enclave and keeps only its encrypted handle in the Keychain (this device only); `AppAttest` binds the key's thumbprint into an Apple App Attest attestation; `DbaClient` fetches an attestation challenge, enrolls, polls, signs DPoP proofs and renews. A CI job on macOS builds it, type-checks the library for iOS, and runs `DbaClient` with a software key (`Sources/dba-sample/main.swift`, via `run.sh`). |
 | [`tpm/`](tpm/enroll-tpm.sh) | device (Linux shell, TPM 2.0) | With tpm2-tools: a P-256 key generated in the TPM, EK credential activation as key attestation (`POST /api/v1/enrollments/tpm-activation`, `tpm2_activatecredential`), enrollment with `format: "tpm-ek"`, then `whoami` with a DPoP proof. Every signature is `tpm2_sign`; the key never leaves the TPM. CI runs it on swtpm (`swtpm.sh`) with an EK certificate from a throwaway CA the local server trusts (`TPM_EK_TEST_CA`). |
+| [`tpm/dba-cli.sh`](tpm/dba-cli.sh) | device (CLI, TPM 2.0) | The same with the `dba` CLI: `dba enroll --key-store tpm` (key made in the TPM, attested by EK credential activation, key.json holding only the TPM's blobs), then `dba curl` with the TPM signing each proof. Also run on swtpm in CI. |
 | [`os-keychain.sh`](os-keychain.sh) | device (shell, macOS or Linux desktop) | `dba enroll --key-store os`: the private key in the macOS Keychain or the Secret Service (GNOME Keyring), key.json with only the public key and the entry's name, `dba curl` signing with the stored key, `dba renew --rotate` moving it to a new entry and `dba revoke` removing it; each step checked with `security` or `secret-tool` directly. It writes to your real keychain, so the harness runs it only with `DBA_SAMPLES_OS_KEYCHAIN=1` (CI does, on both systems). |
 | [`go_verify/`](go_verify/main.go) | relying party (Go, standard library) | Verify a credential's ES256 signature against the JWKS, check issuer and expiry, print its grants. (Signature and claims only: proofs and revocation are left to the spec.) |
 
@@ -30,14 +32,16 @@ All samples read `DBA_ORIGIN` (default `https://devicebasedauth.org`).
 npm run test:samples                      # all of them, against a fresh local server on :8788
 DBA_SAMPLES_VERBOSE=1 npm run test:samples   # also print each sample's output
 DBA_SAMPLES_STRICT=1 npm run test:samples    # fail, rather than skip, when python3, go, a JDK or swtpm/tpm2-tools is missing
+DBA_SAMPLES_ONLY=verify-request.mjs,go_verify npm run test:samples   # only these (names as in run-samples.mjs)
 ```
 
 To run one by hand, start the local server (`npm run dev:local`, port 8787), then for example
 `DBA_ORIGIN=http://localhost:8787 node docs/samples/verify-request.mjs`, and approve the printed
 link while signed in to the local site.
 
-The Python sample needs `pip install cryptography requests`; the Go sample needs Go 1.24+; the Android
-sample needs a JDK 17+ (`bash docs/samples/android/run.sh`); the iOS sample needs macOS with Xcode 15+
+The Python samples need `pip install cryptography requests`; the Go sample needs Go 1.24+; the Android
+sample needs a JDK 17+ (`bash docs/samples/android/run.sh`); the TPM samples need tpm2-tools 5, jq
+and openssl, and access to a TPM (in the harness: swtpm and swtpm-tools instead); the iOS sample needs macOS with Xcode 15+
 (`bash docs/samples/ios/run.sh`; elsewhere it is skipped, and CI runs it alone with `DBA_SAMPLES_ONLY=ios`).
 The keychain sample needs `security` (macOS) or `secret-tool` with an unlocked keyring (Linux):
 `DBA_SAMPLES_OS_KEYCHAIN=1 DBA_SAMPLES_ONLY=os-keychain.sh npm run test:samples`.

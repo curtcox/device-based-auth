@@ -1,6 +1,7 @@
 # Grant evaluation, vocabulary versions 1 and 2
 
-Implemented by `evaluateGrants` in `packages/verify/src/grants.js`. Every implementation MUST
+Implemented by `evaluateGrants` in `packages/verify/src/grants.js` (ported as `evaluate_grants` in
+`packages/verify-python` and `EvaluateGrants` in `packages/verify-go`). Every implementation MUST
 pass [`vectors/evaluation.json`](vectors/evaluation.json): for each case, evaluating `grants`
 in `context` yields `expected.allow`, `expected.grant_index`, and per-grant `expected.reasons`.
 
@@ -30,15 +31,18 @@ The request is allowed when **at least one grant passes**. A grant passes when e
 passes. Otherwise it is denied. Nothing is allowed by default.
 
 Each failing check adds a reason code to that grant's reason list (all applicable reasons,
-in the order of this document).
+in the order of this document). A `grants` value that is not a list denies with the single reason
+list `[["invalid_grants"]]`.
 
 ## 3. Grant members
 
 A grant may contain only `actions`, `resources`, `when`, `where`, `net`, `limits`, `require`
-(`net` only in vocabulary 2, spec/credential.md). Any other
-member — at any nesting level listed here — makes the grant fail with
-`unknown_constraint:<path>` and no other reasons. A grant that is otherwise invalid fails with
-`invalid_grant`.
+(`net` only in vocabulary 2, spec/credential.md). An unknown member of the grant, of `when`,
+`where`, `limits` or `require`, or of `net` at any depth, makes the grant fail with
+`unknown_constraint:<path>` (e.g. `unknown_constraint:require.after_dark`) and no other reasons.
+A grant that is otherwise invalid — a value out of range, a wrong type, or an unknown member of a
+window, an area, `uses` or a gate entry — fails with `invalid_grant`. The bounds are given with
+each member below.
 
 ### 3.1 `actions` (required) → `action_not_granted`
 
@@ -48,27 +52,33 @@ matches only itself. `ns:a:*` matches any action starting with `ns:a:`. Namespac
 
 ### 3.2 `resources` (default `["*"]`) → `resource_not_granted`
 
-`*` matches anything, including no resource. `prefix*` matches resources starting with `prefix`.
+1–64 strings of 1–256 characters. `*` matches anything, including no resource. `prefix*` matches resources starting with `prefix`.
 Anything else is an exact match. An absent resource matches only `*`.
 
 ### 3.3 `when`
 
 - `not_before` → `before_not_before` when `now < not_before`.
 - `not_after` → `after_not_after` when `now ≥ not_after`.
-- `windows` with `tz` (IANA zone) → `outside_time_window` unless `now`, converted to local
+- `windows` (1–16) with `tz` (IANA zone, required with `windows`) → `outside_time_window` unless `now`, converted to local
   weekday and minute in `tz`, is inside at least one window. A window is
-  `{ days?, from, to }` (`days` ⊆ `sun…sat`, default all; `HH:MM`, `to` may be `24:00`).
+  `{ days?, from, to }` (`days` a non-empty subset of `sun…sat`, default all; `from` and `to` are
+  `HH:MM`, `from` up to `23:59`, `to` up to `24:00`, and they differ).
   If `from < to`: inside when today ∈ days and `from ≤ time < to`.
   If `from > to` (overnight): inside when (today ∈ days and `time ≥ from`) or
   (yesterday ∈ days and `time < to`) — an overnight window belongs to the day it starts.
 
+`not_before` and `not_after` are integer NumericDates, `not_before < not_after`.
+
 ### 3.4 `where`
 
-`source` is `network`, `device` or `both`; for `both`, the checks run independently against each
+`source` (required) is `network`, `device` or `both`, and at least one of `countries`, `regions`,
+`areas`, `networks` is present (each a list of 1–64): `countries` are ISO 3166-1 alpha-2 codes
+(`US`), `regions` ISO 3166-2 codes (`US-MO`), `areas` are `{ lat, lon, radius_m }` with
+`radius_m` 10–20 037 508, `networks` CIDR ranges. For `both`, the checks run independently against each
 source and both must pass. For each source:
 
 - Location absent → `location_unavailable:<source>`.
-- Device location with `|now − t| > 300` → `location_stale:device`.
+- Device location without a numeric `t`, or with `|now − t| > 300` → `location_stale:device`.
 - **Places** (`countries`, `regions`, `areas`) form a union: the location must match at least one
   entry, otherwise `outside_location:<source>`.
   - Network: `countries` match `country`; `regions` (ISO 3166-2, `US-MO`) match `region`; `areas`
@@ -83,12 +93,12 @@ honest as the device. See the master plan §3.5.
 
 ### 3.5 `limits`
 
-- `uses: { count, per }` (`per` ∈ `minute`, `hour`, `day`, `month` (30 days), `total`) — enforced
+- `uses: { count, per }` (`count` an integer 1–1 000 000 000; `per` ∈ `minute`, `hour`, `day`, `month` (30 days), `total`) — enforced
   only online by devicebasedauth.org with a counter per credential and grant. Fixed windows aligned
   to the Unix epoch. An access token's uses count on the credential grant it was cut from (its own
   grant indexes differ), and a delegated grant that copied its parent's limit spends the parent
   grant's counter, so neither a token nor any number of delegates adds uses.
-- `spend_usd_per_month` — not checked by the evaluator. It is returned as a **caveat** for the
+- `spend_usd_per_month` (a number 0–1 000 000) — not checked by the evaluator. It is returned as a **caveat** for the
   audience to enforce on its own spending (e.g. hashbin's monthly spend limit).
 
 ### 3.6 `require`
@@ -116,7 +126,8 @@ honest as the device. See the master plan §3.5.
 - `verified_boot: true` — `context.attestation` must report `verified_boot: "verified"` and
   `device_locked: true`; otherwise `verified_boot_required`. `false` requires nothing.
 
-Both are checked offline: the attestation is part of the signed credential.
+`attestation`, `app_ids` and `verified_boot` are checked offline: the attestation is part of the
+signed credential.
 
 - `gates: [entry, …]` — online, and each use waits until every entry is satisfied (1–3 entries).
   An entry is `{ any, timeout_s?, on_timeout? }`:
@@ -150,8 +161,9 @@ Both are checked offline: the attestation is part of the signed credential.
 ### 3.7 Online-only constraints
 
 If a grant would otherwise pass but has `limits.uses`, `require.online: true`,
-`require.step_up: true` or `require.gates`, or the action's policy requires gates (§3.8), and the
-evaluation is not online, it fails with `online_required` (and the overall result reports
+`require.step_up: true` or `require.gates`, or the action's policy requires gates (§3.8), or only
+its `net.client.addresses.webhook` could still allow the address (§3.10), and the evaluation is
+not online, it fails with `online_required` (and the overall result reports
 `online_required: true` when that is the only reason any grant failed).
 
 ### 3.8 Audience policy
@@ -218,7 +230,7 @@ reason to allow.
   `lists` (1–8 `{ id, uri }`, `id` = `adl_` + 8–64 letters and digits, `uri` an `https://` URL, or
   `http://` on `localhost`, `127.0.0.1` or `[::1]` for local development, of at most 512 characters), `dns` (`names`: 1–16 lower-case host names of two or more labels whose
   last label is not all digits, at most 253 characters; `dnssec`: boolean), `webhook` (a gate id,
-  `client` only). Lists have no duplicates.
+  `client` only). `cidrs`, `lists` (by `id`), `names` and `relays` have no duplicates.
 - `route`: `relays` (1–16 device ids `dev_` + 8–64 letters and digits), `min_hops` and
   `max_hops` (integers 1–4, defaults 1 and 4, `min_hops ≤ max_hops`), `require_attested`
   (boolean).
@@ -257,7 +269,7 @@ reason to allow.
    `route_required`. Otherwise, each that applies: hop count outside `min_hops`…`max_hops` →
    `route_invalid:hop_count`; `require_attested` and `attested` is not one `true` per hop →
    `route_invalid:relay_not_attested`; a relay not in `relays` → `route_relay_not_allowed`.
-3. `latency`. `rtt_ms` missing, not a number or negative → `rtt_required` (the verifier must
+3. `latency`. `rtt_ms` missing, not a finite number or negative → `rtt_required` (the verifier must
    challenge the device and try again); greater than `max_rtt_ms` → `rtt_exceeded`.
 
 `where.networks` is unchanged and evaluated with `where`. Old (vocabulary 1) verifiers deny any

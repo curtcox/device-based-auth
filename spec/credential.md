@@ -1,7 +1,8 @@
 # Device credential format, version 1
 
-Status: draft (STATUS D2 recommends this format; implemented in `packages/verify`).
-Conformance vectors: [`vectors/credentials.json`](vectors/credentials.json) (signatures),
+Status: in production. Implemented by `packages/verify` (JavaScript, the reference), with ports in
+`packages/verify-python` and `packages/verify-go`; the choice of JWS awaits the owner's approval
+(STATUS D2). Conformance vectors: [`vectors/credentials.json`](vectors/credentials.json) (signatures),
 [`vectors/evaluation.json`](vectors/evaluation.json) (grant evaluation; see
 [evaluation.md](evaluation.md)).
 
@@ -32,9 +33,9 @@ base64url-decoding its middle segment.
 |-------|----------|---------|
 | `iss` | yes | `https://devicebasedauth.org` |
 | `sub` | yes | Device id, `dev_` + 8–64 alphanumerics. Stable for a device key within an account. |
-| `acct` | yes | The issuing devicebasedauth.org account. Relying parties map it to a local account (account linking). |
-| `aud` | yes | Array of audience names (site domains) the credential is valid for. |
-| `cid` | yes | Credential id, `crd_…`. Stable across renewals; revoking it revokes every version. |
+| `acct` | yes | The issuing devicebasedauth.org account (1–128 of `[A-Za-z0-9_-]`). Relying parties map it to a local account (account linking). |
+| `aud` | yes | Non-empty array of audience names (site domains) the credential is valid for. |
+| `cid` | yes | Credential id, `crd_` + 8–64 alphanumerics. Stable across renewals; revoking it revokes every version. |
 | `jti` | yes | Unique id of this version, `<cid>.<version>`. |
 | `iat`, `nbf`, `exp` | yes | NumericDate seconds. `exp > nbf`. Verifiers allow 60 s clock skew. |
 | `cnf.jkt` | yes (device) | RFC 7638 SHA-256 thumbprint of the device public key. Absent on access tokens. |
@@ -191,8 +192,10 @@ same `{ format: "tpm", security_level: "tpm", tpm_manufacturer }` claim:
    that the secret hashes to the one it wrapped.
 
 EK certificates' validity periods are not checked, since an EK identifies a TPM for its life and
-many genuine EK certificates come from since-expired intermediates; manufacturers' EK revocation
-lists are not checked yet. Only RSA-2048 EKs (TCG template L-1) are supported.
+many genuine EK certificates come from since-expired intermediates. The EK certificate and any CA in
+`ek_chain` are checked against the CRL distribution points they name (CRL signed by its issuer and
+current; enrollment fails closed with 503 when a list cannot be fetched; skipped for a CA that has
+itself expired, and for pinned anchors). Only RSA-2048 EKs (TCG template L-1) are supported.
 
 Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
 without attestation omits the member.
@@ -226,12 +229,14 @@ does this for the first 60 s after an account's object starts: a proof with an `
 than 60 s after the start (the window in which an earlier object could have accepted it) must
 carry the object's nonce. The error body also carries `code: "use_dpop_nonce"` and `dpop_nonce`.
 Clients that cannot send a request twice (a curl command line) get the nonce first from
-`POST /api/v1/dpop-nonce`, which costs nothing. Sites that do the same with their own replay cache
+`POST /api/v1/dpop-nonce`, which costs nothing. A verifier that measures round-trip time for a grant's
+`net.client.latency` uses the same challenge, with a nonce that encodes its own clock
+(evaluation.md §3.10). Sites that do the same with their own replay cache
 can rely on the browser SDK (v1.4.0+) answering the challenge.
 
 ## 5. Verification
 
-A verifier MUST, in order:
+A verifier MUST:
 
 1. Decode the JWS; require `typ`, `alg: ES256`, a known `kid`; verify the signature.
 2. Require `iss`, structurally valid claims, its own audience in `aud`, and `nbf − 60 ≤ now < exp + 60`.
@@ -246,7 +251,16 @@ A verifier MUST, in order:
    verified confirmation's `iat`, `exp` and `by_timeout`, and the audience's catalog entry for
    the action (evaluation.md §3.8).
 
-If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
+Evaluation (6) comes last; the reference library checks revocation (4) together with 1–2,
+before the proof. If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
+
+**Failure codes**, shared by the reference library and its ports: `invalid_format`, `wrong_type`,
+`unknown_kid`, `invalid_signature`, `wrong_issuer`, `invalid_claims`, `wrong_audience`,
+`not_yet_valid`, `expired` (steps 1–2); `proof_required`, `invalid_proof`, `key_mismatch`,
+`stale_proof`, `use_dpop_nonce`, `replayed_proof` (step 3); `revoked`, `status_unavailable`
+(step 4); a confirmation's codes (§9) prefixed `confirmation_` (step 5); `jwks_unavailable` when
+the JWKS cannot be fetched. Conformance vectors: `credentials` and `proofs` in
+[`vectors/credentials.json`](vectors/credentials.json).
 
 **Withdrawn issuer keys.** When an issuer key is compromised the service removes it from the JWKS,
 so every credential it signed fails step 1 (`unknown_kid`) once verifier caches refresh; verifiers
@@ -322,7 +336,8 @@ and `uri`. The issuer publishes each list at its `uri` as a compact JWS signed w
   (`"deleted": true`, `"cidrs": []`, a higher `ver`) that matches nothing, and is removed two
   days later.
 - A verifier accepts the document only if the signature verifies with an issuer key, `iss` is the
-  issuer, `sub` is the URI it fetched and `id` the id the grant names, and `exp` has not passed.
+  issuer, `sub` is the URI it fetched and `id` the id the grant names, and `exp` has not passed
+  (60 s skew).
   It uses a copy for at most `max-age` (60 s), may keep using it for up to 10 minutes more while
   fetches fail, and otherwise treats the list as unavailable (`address_list_unavailable:<id>`).
 

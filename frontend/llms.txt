@@ -6,23 +6,23 @@ Machine-readable API: https://devicebasedauth.org/openapi.json
 Credential format: https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md
 Grant evaluation rules and test vectors: https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md
 Revocation webhook events: https://github.com/curtcox/device-based-auth/blob/main/spec/events.md
-Docs: https://devicebasedauth.org/docs/ (accounts without a password: https://devicebasedauth.org/docs/accounts.html; Android, iOS and TPM devices: https://devicebasedauth.org/docs/devices.html)
+Docs: https://devicebasedauth.org/docs/ (accounts without a password: https://devicebasedauth.org/docs/accounts.html; Android, iOS and TPM devices: https://devicebasedauth.org/docs/devices.html; network rules and address lists: https://devicebasedauth.org/docs/networks.html)
 Everything in one file (this summary, every route, the credential spec, evaluation rules and pricing): https://devicebasedauth.org/llms-full.txt
 MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_…, a device credential, or an OAuth access token: MCP clients discover /.well-known/oauth-protected-resource/mcp, register at /oauth/register, and the owner approves the scopes)
 
 ## Key facts
 
 - Money is integer micro-dollars (µ$; $1 = 1,000,000 µ$). Every JSON response includes `cost_microdollars`. `GET /api/v1/quote?op=<op>` prices an operation before you do it; `?dry_run=1` on a billable call quotes it (and, with `account:read`, says whether the balance covers it) without doing it. Billable responses carry `balance_microdollars` / `X-DBA-Balance-Microdollars` for callers with `account:read`.
-- Prices (µ$): issue 87, renew 25, online decision 14, metered API read 7, token exchange 7, OIDC login 14 (paid by the site), audience registration/change 100. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
+- Prices (µ$): issue 87, renew 25, online decision 14, metered API read 7, token exchange or client certificate 7, OIDC login 14 (paid by the site), audience registration/change 100, gate request 22 per gate contacted (webhook gate 23, Duo/Okta Verify 30), confirmation 14, security email 200, named address list create/replace 242 per started 1,000 ranges plus 15 per day it extends the list's published life (13 months ahead). Minimum deposit $5. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
 - Errors: `{ "error": "...", "code": "..." }` with HTTP status; 402 = insufficient balance.
 - Private keys never leave the device. The service only ever sees public keys.
 
 ## Credentials
 
 A credential is a compact JWS (ES256), header `{"typ":"dba-device+jwt","alg":"ES256","kid":…}`. Decode the middle segment (base64url JSON) to read it:
-`iss`, `sub` (device id), `acct` (issuing account), `aud` (site names), `cid` (credential id), `jti`, `iat`/`nbf`/`exp`, `cnf.jkt` (device key thumbprint), `device`, `grants`, `status.status_list {idx, uri}`, `ver`.
+`iss`, `sub` (device id), `acct` (issuing account), `aud` (site names), `cid` (credential id), `jti`, `iat`/`nbf`/`exp`, `cnf.jkt` (device key thumbprint), `device`, `grants`, `status.status_list {idx, uri}`, `ver` (1, or 2 when any grant has `net`), `confirm` (optional).
 
-A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "require": {"online","step_up","attestation":"hardware|strongbox","verified_boot","app_ids":["TEAMID.bundle.id"]} }`. Deny by default; any passing grant allows; unknown constraints deny.
+A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "net": {"client": {"addresses": {"cidrs","lists":[{"id","uri"}],"dns":{"names","dnssec"}},"latency":{"max_rtt_ms","samples","reuse_s"}}}, "require": {"online","step_up","attestation":"hardware|strongbox","verified_boot","app_ids":["TEAMID.bundle.id"],"gates","gates_reuse_s"} }`. Deny by default; any passing grant allows; unknown constraints deny.
 
 Present it as `Authorization: DBA <credential>` plus `DPoP: <proof>` (RFC 9449 proof JWT signed by the device key with htm, htu, iat, jti, ath). For the first minute after an account's server object starts, devicebasedauth.org answers proofs without its nonce with `401 use_dpop_nonce` and the nonce in the `DPoP-Nonce` header (also `dpop_nonce` in the body): make a new proof with the `nonce` claim and send once more (the browser SDK v1.4.0+ and the CLI do this). Clients that cannot send twice get the nonce first from `POST /api/v1/dpop-nonce` (free).
 
@@ -62,12 +62,18 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 
 ## Gates (approvals) and periodic confirmation
 
-- Gates approve uses of a grant: `require.gates: [{ any: [gate ids or "owner"], timeout_s?, on_timeout?: "deny"|"allow" }]` (1–3 entries, all must pass), `require.gates_reuse_s`. Kinds: owner, dba-device, totp, webauthn, webhook, duo, okta-verify. Manage with `GET|POST /api/v1/gates`, `DELETE /api/v1/gates/{id}` (scopes `gates:read`, `gates:write`; changing needs a recent sign-in or an API key). CLI: `dba gates`, `dba gates add --kind dba-device|webhook`.
+- Gates approve uses of a grant: `require.gates: [{ any: [gate ids or "owner"], timeout_s?, on_timeout?: "deny"|"allow" }]` (1–3 entries, all must pass), `require.gates_reuse_s`. Kinds: owner, dba-device, totp, webauthn, webhook, duo, okta-verify. Manage with `GET|POST /api/v1/gates`, `DELETE /api/v1/gates/{id}`, `POST /api/v1/gates/{id}/test` (webhook gates; read price) (scopes `gates:read`, `gates:write`; changing needs a recent sign-in or an API key). CLI: `dba gates`, `dba gates add --kind dba-device|webhook`.
 - Online only: `/authorize` answers `gate_pending` with `gate_request: {id, retry_after, deadline}` until the gates settle, then allows or `gate_denied`. Sites pass it on as 403; devices retry (SDK `fetchWithGates()`, CLI `dba curl --dba-wait`).
 - A device holding `dba:approvals:answer` answers as a dba-device gate: `GET /api/v1/gate-requests` (each item's `answer_as: [{entry, gate}]`), `POST /api/v1/gate-requests/{id}/answer {entry, gate, decision: "allow"|"deny", number?}`. CLI: `dba approvals [--watch]`, `dba approvals allow|deny ID`.
 - Webhook gates: DBA POSTs a `dba-gate+jwt` to your service; answer `{"decision"}` at once or 202 then a signed `dba-gate-answer+jwt` to `callback` (spec/events.md §6).
 - Periodic confirmation: credentials issued with `confirm: {gates, every_s}` need a current `dba-confirmation+jwt` sent as `DBA-Confirmation`; get one with `POST /api/v1/credentials/{cid}/confirm` (retry while `pending`). CLI `dba confirm`; SDK `confirm()`. `POST /api/v1/credentials/{cid}/unconfirm` stops trust online at once.
 - Audiences may require gates per catalog action (`catalog[].gates: {require, kinds, fail_open}`) and for sign-in (`sign_in_gates`).
+
+## Network rules and named address lists
+
+- A grant's `net.client` limits the connection (spec/evaluation.md §3.10; credential `ver` 2, so older verifiers deny it): `addresses` allow the peer address when it is in `cidrs` (1–64), in a named address list (`lists`, 1–8 `{id, uri}`), or equal to an A/AAAA address of `dns.names` (with `dnssec: true` only validated answers count); `latency.max_rtt_ms` bounds the round trip, measured by a timed DPoP nonce challenge. Verifiers evaluate only `client`; `net.server`, `route` and `addresses.webhook` are in the format but nothing supplies or enforces them yet. Reasons: `address_unavailable`, `address_not_allowed` (+ `address_list_unavailable:<id>`, `dns_unresolved:<name>`, `dns_unvalidated:<name>`), `rtt_required`, `rtt_exceeded`.
+- Verifier: `createVerifier({ audience, rtt: { secret }, dns: true })`; lists are fetched and cached by default (60 s fresh, 10 min stale, no rollback). A latency grant first answers `401 use_dpop_nonce`: send `result.headers` and `rtt: result.rtt` so the device retries. The unversioned browser SDK (`/sdk/dba.js`) answers timed challenges; `dba headers`/`sign`/`curl` cannot and refuse credentials whose every grant is timed.
+- Named address lists (up to 10,000 IPv4/IPv6 ranges, 50 per account): `GET|POST /api/v1/address-lists {name, cidrs}`, `GET|PUT|DELETE /api/v1/address-lists/{id}` (scopes `networks:read`, `networks:write`; replace and delete need a recent sign-in or an API key). Each is published signed (`dba-addresses+jwt`) at `https://status.devicebasedauth.org/v1/addresses/{id}` within about a minute; a grant names it by `id` and that exact `uri`, and only the issuing account's live lists are accepted (`400 unknown_address_list`). Unchanged for 13 months, a list expires; deleted, it matches nothing. Grants with `dba:` actions cannot use lists yet.
 
 ## Main endpoints
 
@@ -83,8 +89,8 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 
 ## API keys and scopes
 
-Create keys in the dashboard (`dbak_…`, shown once). Scopes: `account:read`, `transactions:read`, `credentials:read`, `credentials:issue`, `credentials:revoke`, `audiences:read`, `audiences:write`, `authorize`, `gates:read`, `gates:write` (`approvals:answer` is for devices only). Send `Authorization: ApiKey dbak_…`. Key reads are metered (5 µ$); dashboard reads are free.
+Create keys in the dashboard (`dbak_…`, shown once). Scopes: `account:read`, `transactions:read`, `credentials:read`, `credentials:issue`, `credentials:revoke`, `audiences:read`, `audiences:write`, `authorize`, `networks:read`, `networks:write`, `gates:read`, `gates:write` (`approvals:answer` is for devices only). Send `Authorization: ApiKey dbak_…`. Key reads are metered (read price, 7 µ$); dashboard reads are free.
 
 ## First-party audiences
 
-`devicebasedauth.org` (namespace `dba`), `hashbin.org` (`hashbin:*`, mirrors hashbin's API key scopes, e.g. `hashbin:content:write`), `cronly.org` (`cronly:read`, `cronly:run`, `cronly:change`, `cronly:prose`, `cronly:secrets:write`). `<ns>:session` means "may sign in to that site".
+`devicebasedauth.org` (namespace `dba`), `hashbin.org` (`hashbin:*`, mirrors hashbin's API key scopes, e.g. `hashbin:content:write`), `cronly.org` (`cronly:read`, `cronly:run`, `cronly:change`, `cronly:prose`, `cronly:secrets:write`), `subetha.us` (`subetha:publish`, `subetha:subscribe`; resources are topic names or `@handle/*`). `<ns>:session` means "may sign in to that site". `GET /api/v1/audiences` lists every catalog.

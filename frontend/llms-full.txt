@@ -6,23 +6,23 @@ Machine-readable API: https://devicebasedauth.org/openapi.json
 Credential format: https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md
 Grant evaluation rules and test vectors: https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md
 Revocation webhook events: https://github.com/curtcox/device-based-auth/blob/main/spec/events.md
-Docs: https://devicebasedauth.org/docs/ (accounts without a password: https://devicebasedauth.org/docs/accounts.html; Android, iOS and TPM devices: https://devicebasedauth.org/docs/devices.html)
+Docs: https://devicebasedauth.org/docs/ (accounts without a password: https://devicebasedauth.org/docs/accounts.html; Android, iOS and TPM devices: https://devicebasedauth.org/docs/devices.html; network rules and address lists: https://devicebasedauth.org/docs/networks.html)
 Everything in one file (this summary, every route, the credential spec, evaluation rules and pricing): https://devicebasedauth.org/llms-full.txt
 MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorization: ApiKey dbak_…, a device credential, or an OAuth access token: MCP clients discover /.well-known/oauth-protected-resource/mcp, register at /oauth/register, and the owner approves the scopes)
 
 ## Key facts
 
 - Money is integer micro-dollars (µ$; $1 = 1,000,000 µ$). Every JSON response includes `cost_microdollars`. `GET /api/v1/quote?op=<op>` prices an operation before you do it; `?dry_run=1` on a billable call quotes it (and, with `account:read`, says whether the balance covers it) without doing it. Billable responses carry `balance_microdollars` / `X-DBA-Balance-Microdollars` for callers with `account:read`.
-- Prices (µ$): issue 87, renew 25, online decision 14, metered API read 7, token exchange 7, OIDC login 14 (paid by the site), audience registration/change 100. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
+- Prices (µ$): issue 87, renew 25, online decision 14, metered API read 7, token exchange or client certificate 7, OIDC login 14 (paid by the site), audience registration/change 100, gate request 22 per gate contacted (webhook gate 23, Duo/Okta Verify 30), confirmation 14, security email 200, named address list create/replace 242 per started 1,000 ranges plus 15 per day it extends the list's published life (13 months ahead). Minimum deposit $5. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
 - Errors: `{ "error": "...", "code": "..." }` with HTTP status; 402 = insufficient balance.
 - Private keys never leave the device. The service only ever sees public keys.
 
 ## Credentials
 
 A credential is a compact JWS (ES256), header `{"typ":"dba-device+jwt","alg":"ES256","kid":…}`. Decode the middle segment (base64url JSON) to read it:
-`iss`, `sub` (device id), `acct` (issuing account), `aud` (site names), `cid` (credential id), `jti`, `iat`/`nbf`/`exp`, `cnf.jkt` (device key thumbprint), `device`, `grants`, `status.status_list {idx, uri}`, `ver`.
+`iss`, `sub` (device id), `acct` (issuing account), `aud` (site names), `cid` (credential id), `jti`, `iat`/`nbf`/`exp`, `cnf.jkt` (device key thumbprint), `device`, `grants`, `status.status_list {idx, uri}`, `ver` (1, or 2 when any grant has `net`), `confirm` (optional).
 
-A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "require": {"online","step_up","attestation":"hardware|strongbox","verified_boot","app_ids":["TEAMID.bundle.id"]} }`. Deny by default; any passing grant allows; unknown constraints deny.
+A grant: `{ "actions": ["hashbin:content:write"], "resources": ["*"], "when": {"tz","windows":[{"days","from","to"}],"not_before","not_after"}, "where": {"source":"network|device|both","countries","regions","areas":[{"lat","lon","radius_m"}],"networks"}, "limits": {"uses":{"count","per"},"spend_usd_per_month"}, "net": {"client": {"addresses": {"cidrs","lists":[{"id","uri"}],"dns":{"names","dnssec"}},"latency":{"max_rtt_ms","samples","reuse_s"}}}, "require": {"online","step_up","attestation":"hardware|strongbox","verified_boot","app_ids":["TEAMID.bundle.id"],"gates","gates_reuse_s"} }`. Deny by default; any passing grant allows; unknown constraints deny.
 
 Present it as `Authorization: DBA <credential>` plus `DPoP: <proof>` (RFC 9449 proof JWT signed by the device key with htm, htu, iat, jti, ath). For the first minute after an account's server object starts, devicebasedauth.org answers proofs without its nonce with `401 use_dpop_nonce` and the nonce in the `DPoP-Nonce` header (also `dpop_nonce` in the body): make a new proof with the `nonce` claim and send once more (the browser SDK v1.4.0+ and the CLI do this). Clients that cannot send twice get the nonce first from `POST /api/v1/dpop-nonce` (free).
 
@@ -62,12 +62,18 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 
 ## Gates (approvals) and periodic confirmation
 
-- Gates approve uses of a grant: `require.gates: [{ any: [gate ids or "owner"], timeout_s?, on_timeout?: "deny"|"allow" }]` (1–3 entries, all must pass), `require.gates_reuse_s`. Kinds: owner, dba-device, totp, webauthn, webhook, duo, okta-verify. Manage with `GET|POST /api/v1/gates`, `DELETE /api/v1/gates/{id}` (scopes `gates:read`, `gates:write`; changing needs a recent sign-in or an API key). CLI: `dba gates`, `dba gates add --kind dba-device|webhook`.
+- Gates approve uses of a grant: `require.gates: [{ any: [gate ids or "owner"], timeout_s?, on_timeout?: "deny"|"allow" }]` (1–3 entries, all must pass), `require.gates_reuse_s`. Kinds: owner, dba-device, totp, webauthn, webhook, duo, okta-verify. Manage with `GET|POST /api/v1/gates`, `DELETE /api/v1/gates/{id}`, `POST /api/v1/gates/{id}/test` (webhook gates; read price) (scopes `gates:read`, `gates:write`; changing needs a recent sign-in or an API key). CLI: `dba gates`, `dba gates add --kind dba-device|webhook`.
 - Online only: `/authorize` answers `gate_pending` with `gate_request: {id, retry_after, deadline}` until the gates settle, then allows or `gate_denied`. Sites pass it on as 403; devices retry (SDK `fetchWithGates()`, CLI `dba curl --dba-wait`).
 - A device holding `dba:approvals:answer` answers as a dba-device gate: `GET /api/v1/gate-requests` (each item's `answer_as: [{entry, gate}]`), `POST /api/v1/gate-requests/{id}/answer {entry, gate, decision: "allow"|"deny", number?}`. CLI: `dba approvals [--watch]`, `dba approvals allow|deny ID`.
 - Webhook gates: DBA POSTs a `dba-gate+jwt` to your service; answer `{"decision"}` at once or 202 then a signed `dba-gate-answer+jwt` to `callback` (spec/events.md §6).
 - Periodic confirmation: credentials issued with `confirm: {gates, every_s}` need a current `dba-confirmation+jwt` sent as `DBA-Confirmation`; get one with `POST /api/v1/credentials/{cid}/confirm` (retry while `pending`). CLI `dba confirm`; SDK `confirm()`. `POST /api/v1/credentials/{cid}/unconfirm` stops trust online at once.
 - Audiences may require gates per catalog action (`catalog[].gates: {require, kinds, fail_open}`) and for sign-in (`sign_in_gates`).
+
+## Network rules and named address lists
+
+- A grant's `net.client` limits the connection (spec/evaluation.md §3.10; credential `ver` 2, so older verifiers deny it): `addresses` allow the peer address when it is in `cidrs` (1–64), in a named address list (`lists`, 1–8 `{id, uri}`), or equal to an A/AAAA address of `dns.names` (with `dnssec: true` only validated answers count); `latency.max_rtt_ms` bounds the round trip, measured by a timed DPoP nonce challenge. Verifiers evaluate only `client`; `net.server`, `route` and `addresses.webhook` are in the format but nothing supplies or enforces them yet. Reasons: `address_unavailable`, `address_not_allowed` (+ `address_list_unavailable:<id>`, `dns_unresolved:<name>`, `dns_unvalidated:<name>`), `rtt_required`, `rtt_exceeded`.
+- Verifier: `createVerifier({ audience, rtt: { secret }, dns: true })`; lists are fetched and cached by default (60 s fresh, 10 min stale, no rollback). A latency grant first answers `401 use_dpop_nonce`: send `result.headers` and `rtt: result.rtt` so the device retries. The unversioned browser SDK (`/sdk/dba.js`) answers timed challenges; `dba headers`/`sign`/`curl` cannot and refuse credentials whose every grant is timed.
+- Named address lists (up to 10,000 IPv4/IPv6 ranges, 50 per account): `GET|POST /api/v1/address-lists {name, cidrs}`, `GET|PUT|DELETE /api/v1/address-lists/{id}` (scopes `networks:read`, `networks:write`; replace and delete need a recent sign-in or an API key). Each is published signed (`dba-addresses+jwt`) at `https://status.devicebasedauth.org/v1/addresses/{id}` within about a minute; a grant names it by `id` and that exact `uri`, and only the issuing account's live lists are accepted (`400 unknown_address_list`). Unchanged for 13 months, a list expires; deleted, it matches nothing. Grants with `dba:` actions cannot use lists yet.
 
 ## Main endpoints
 
@@ -83,11 +89,11 @@ Instant offline revocation: set `revocation_webhook` (https on your audience's d
 
 ## API keys and scopes
 
-Create keys in the dashboard (`dbak_…`, shown once). Scopes: `account:read`, `transactions:read`, `credentials:read`, `credentials:issue`, `credentials:revoke`, `audiences:read`, `audiences:write`, `authorize`, `gates:read`, `gates:write` (`approvals:answer` is for devices only). Send `Authorization: ApiKey dbak_…`. Key reads are metered (5 µ$); dashboard reads are free.
+Create keys in the dashboard (`dbak_…`, shown once). Scopes: `account:read`, `transactions:read`, `credentials:read`, `credentials:issue`, `credentials:revoke`, `audiences:read`, `audiences:write`, `authorize`, `networks:read`, `networks:write`, `gates:read`, `gates:write` (`approvals:answer` is for devices only). Send `Authorization: ApiKey dbak_…`. Key reads are metered (read price, 7 µ$); dashboard reads are free.
 
 ## First-party audiences
 
-`devicebasedauth.org` (namespace `dba`), `hashbin.org` (`hashbin:*`, mirrors hashbin's API key scopes, e.g. `hashbin:content:write`), `cronly.org` (`cronly:read`, `cronly:run`, `cronly:change`, `cronly:prose`, `cronly:secrets:write`). `<ns>:session` means "may sign in to that site".
+`devicebasedauth.org` (namespace `dba`), `hashbin.org` (`hashbin:*`, mirrors hashbin's API key scopes, e.g. `hashbin:content:write`), `cronly.org` (`cronly:read`, `cronly:run`, `cronly:change`, `cronly:prose`, `cronly:secrets:write`), `subetha.us` (`subetha:publish`, `subetha:subscribe`; resources are topic names or `@handle/*`). `<ns>:session` means "may sign in to that site". `GET /api/v1/audiences` lists every catalog.
 
 ---
 
@@ -102,7 +108,7 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 - `GET /status/v1/lists/{shard}` (public): A signed status list (IETF Token Status List). Bit idx = 1 means revoked.
 - `GET /status/v1/addresses/{id}` (public): A published named address list: a signed dba-addresses+jwt { iss, sub (this URI), id, ver, iat, exp, cidrs } (or a tombstone with deleted: true, which matches nothing). Verifiers cache it at most 60 s and never accept a lower ver than one seen.
 - `GET /api/public/config` (public): Public configuration and prices.
-- `GET /api/v1/quote` (public): Price of an operation (op = issue, renew, decision, read, token, login, audience).
+- `GET /api/v1/quote` (public): Price of an operation (op = issue, renew, decision, read, token, login, audience, gate, gate_webhook, gate_vendor, confirm, notice, address_list, address_list_day).
 - `POST /api/v1/inspect` (public): Decode and check a credential; optionally evaluate an action. Free.
 - `POST /api/v1/enrollments` (public): Start an enrollment with a request JWS (typ dba-enroll+jwt) signed by the new device key. Returns the approval URL and a poll URL. Free; nothing is stored.
 - `POST /api/v1/enrollments/describe` (public): Describe a pending enrollment ticket for the approval page. Free.
@@ -209,8 +215,9 @@ Access: PUBLIC needs nothing; SESSION is the dashboard (Clerk session or a DBA b
 
 # Device credential format, version 1
 
-Status: draft (STATUS D2 recommends this format; implemented in `packages/verify`).
-Conformance vectors: [`vectors/credentials.json`](https://github.com/curtcox/device-based-auth/blob/main/spec/vectors/credentials.json) (signatures),
+Status: in production. Implemented by `packages/verify` (JavaScript, the reference), with ports in
+`packages/verify-python` and `packages/verify-go`; the choice of JWS awaits the owner's approval
+(STATUS D2). Conformance vectors: [`vectors/credentials.json`](https://github.com/curtcox/device-based-auth/blob/main/spec/vectors/credentials.json) (signatures),
 [`vectors/evaluation.json`](https://github.com/curtcox/device-based-auth/blob/main/spec/vectors/evaluation.json) (grant evaluation; see
 [evaluation.md](https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md)).
 
@@ -241,9 +248,9 @@ base64url-decoding its middle segment.
 |-------|----------|---------|
 | `iss` | yes | `https://devicebasedauth.org` |
 | `sub` | yes | Device id, `dev_` + 8–64 alphanumerics. Stable for a device key within an account. |
-| `acct` | yes | The issuing devicebasedauth.org account. Relying parties map it to a local account (account linking). |
-| `aud` | yes | Array of audience names (site domains) the credential is valid for. |
-| `cid` | yes | Credential id, `crd_…`. Stable across renewals; revoking it revokes every version. |
+| `acct` | yes | The issuing devicebasedauth.org account (1–128 of `[A-Za-z0-9_-]`). Relying parties map it to a local account (account linking). |
+| `aud` | yes | Non-empty array of audience names (site domains) the credential is valid for. |
+| `cid` | yes | Credential id, `crd_` + 8–64 alphanumerics. Stable across renewals; revoking it revokes every version. |
 | `jti` | yes | Unique id of this version, `<cid>.<version>`. |
 | `iat`, `nbf`, `exp` | yes | NumericDate seconds. `exp > nbf`. Verifiers allow 60 s clock skew. |
 | `cnf.jkt` | yes (device) | RFC 7638 SHA-256 thumbprint of the device public key. Absent on access tokens. |
@@ -400,8 +407,10 @@ same `{ format: "tpm", security_level: "tpm", tpm_manufacturer }` claim:
    that the secret hashes to the one it wrapped.
 
 EK certificates' validity periods are not checked, since an EK identifies a TPM for its life and
-many genuine EK certificates come from since-expired intermediates; manufacturers' EK revocation
-lists are not checked yet. Only RSA-2048 EKs (TCG template L-1) are supported.
+many genuine EK certificates come from since-expired intermediates. The EK certificate and any CA in
+`ek_chain` are checked against the CRL distribution points they name (CRL signed by its issuer and
+current; enrollment fails closed with 503 when a list cannot be fetched; skipped for a CA that has
+itself expired, and for pinned anchors). Only RSA-2048 EKs (TCG template L-1) are supported.
 
 Any failure refuses the enrollment with `400 invalid_attestation`; a device that wants a credential
 without attestation omits the member.
@@ -435,12 +444,14 @@ does this for the first 60 s after an account's object starts: a proof with an `
 than 60 s after the start (the window in which an earlier object could have accepted it) must
 carry the object's nonce. The error body also carries `code: "use_dpop_nonce"` and `dpop_nonce`.
 Clients that cannot send a request twice (a curl command line) get the nonce first from
-`POST /api/v1/dpop-nonce`, which costs nothing. Sites that do the same with their own replay cache
+`POST /api/v1/dpop-nonce`, which costs nothing. A verifier that measures round-trip time for a grant's
+`net.client.latency` uses the same challenge, with a nonce that encodes its own clock
+(evaluation.md §3.10). Sites that do the same with their own replay cache
 can rely on the browser SDK (v1.4.0+) answering the challenge.
 
 ## 5. Verification
 
-A verifier MUST, in order:
+A verifier MUST:
 
 1. Decode the JWS; require `typ`, `alg: ES256`, a known `kid`; verify the signature.
 2. Require `iss`, structurally valid claims, its own audience in `aud`, and `nbf − 60 ≤ now < exp + 60`.
@@ -455,7 +466,16 @@ A verifier MUST, in order:
    verified confirmation's `iat`, `exp` and `by_timeout`, and the audience's catalog entry for
    the action (evaluation.md §3.8).
 
-If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
+Evaluation (6) comes last; the reference library checks revocation (4) together with 1–2,
+before the proof. If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
+
+**Failure codes**, shared by the reference library and its ports: `invalid_format`, `wrong_type`,
+`unknown_kid`, `invalid_signature`, `wrong_issuer`, `invalid_claims`, `wrong_audience`,
+`not_yet_valid`, `expired` (steps 1–2); `proof_required`, `invalid_proof`, `key_mismatch`,
+`stale_proof`, `use_dpop_nonce`, `replayed_proof` (step 3); `revoked`, `status_unavailable`
+(step 4); a confirmation's codes (§9) prefixed `confirmation_` (step 5); `jwks_unavailable` when
+the JWKS cannot be fetched. Conformance vectors: `credentials` and `proofs` in
+[`vectors/credentials.json`](https://github.com/curtcox/device-based-auth/blob/main/spec/vectors/credentials.json).
 
 **Withdrawn issuer keys.** When an issuer key is compromised the service removes it from the JWKS,
 so every credential it signed fails step 1 (`unknown_kid`) once verifier caches refresh; verifiers
@@ -531,7 +551,8 @@ and `uri`. The issuer publishes each list at its `uri` as a compact JWS signed w
   (`"deleted": true`, `"cidrs": []`, a higher `ver`) that matches nothing, and is removed two
   days later.
 - A verifier accepts the document only if the signature verifies with an issuer key, `iss` is the
-  issuer, `sub` is the URI it fetched and `id` the id the grant names, and `exp` has not passed.
+  issuer, `sub` is the URI it fetched and `id` the id the grant names, and `exp` has not passed
+  (60 s skew).
   It uses a copy for at most `max-age` (60 s), may keep using it for up to 10 minutes more while
   fetches fail, and otherwise treats the list as unavailable (`address_list_unavailable:<id>`).
 
@@ -602,7 +623,8 @@ key to bind a confirmation to). Credentials with `dba:*` grants cannot carry `co
 
 # Grant evaluation, vocabulary versions 1 and 2
 
-Implemented by `evaluateGrants` in `packages/verify/src/grants.js`. Every implementation MUST
+Implemented by `evaluateGrants` in `packages/verify/src/grants.js` (ported as `evaluate_grants` in
+`packages/verify-python` and `EvaluateGrants` in `packages/verify-go`). Every implementation MUST
 pass [`vectors/evaluation.json`](https://github.com/curtcox/device-based-auth/blob/main/spec/vectors/evaluation.json): for each case, evaluating `grants`
 in `context` yields `expected.allow`, `expected.grant_index`, and per-grant `expected.reasons`.
 
@@ -632,15 +654,18 @@ The request is allowed when **at least one grant passes**. A grant passes when e
 passes. Otherwise it is denied. Nothing is allowed by default.
 
 Each failing check adds a reason code to that grant's reason list (all applicable reasons,
-in the order of this document).
+in the order of this document). A `grants` value that is not a list denies with the single reason
+list `[["invalid_grants"]]`.
 
 ## 3. Grant members
 
 A grant may contain only `actions`, `resources`, `when`, `where`, `net`, `limits`, `require`
-(`net` only in vocabulary 2, spec/credential.md). Any other
-member — at any nesting level listed here — makes the grant fail with
-`unknown_constraint:<path>` and no other reasons. A grant that is otherwise invalid fails with
-`invalid_grant`.
+(`net` only in vocabulary 2, spec/credential.md). An unknown member of the grant, of `when`,
+`where`, `limits` or `require`, or of `net` at any depth, makes the grant fail with
+`unknown_constraint:<path>` (e.g. `unknown_constraint:require.after_dark`) and no other reasons.
+A grant that is otherwise invalid — a value out of range, a wrong type, or an unknown member of a
+window, an area, `uses` or a gate entry — fails with `invalid_grant`. The bounds are given with
+each member below.
 
 ### 3.1 `actions` (required) → `action_not_granted`
 
@@ -650,27 +675,33 @@ matches only itself. `ns:a:*` matches any action starting with `ns:a:`. Namespac
 
 ### 3.2 `resources` (default `["*"]`) → `resource_not_granted`
 
-`*` matches anything, including no resource. `prefix*` matches resources starting with `prefix`.
+1–64 strings of 1–256 characters. `*` matches anything, including no resource. `prefix*` matches resources starting with `prefix`.
 Anything else is an exact match. An absent resource matches only `*`.
 
 ### 3.3 `when`
 
 - `not_before` → `before_not_before` when `now < not_before`.
 - `not_after` → `after_not_after` when `now ≥ not_after`.
-- `windows` with `tz` (IANA zone) → `outside_time_window` unless `now`, converted to local
+- `windows` (1–16) with `tz` (IANA zone, required with `windows`) → `outside_time_window` unless `now`, converted to local
   weekday and minute in `tz`, is inside at least one window. A window is
-  `{ days?, from, to }` (`days` ⊆ `sun…sat`, default all; `HH:MM`, `to` may be `24:00`).
+  `{ days?, from, to }` (`days` a non-empty subset of `sun…sat`, default all; `from` and `to` are
+  `HH:MM`, `from` up to `23:59`, `to` up to `24:00`, and they differ).
   If `from < to`: inside when today ∈ days and `from ≤ time < to`.
   If `from > to` (overnight): inside when (today ∈ days and `time ≥ from`) or
   (yesterday ∈ days and `time < to`) — an overnight window belongs to the day it starts.
 
+`not_before` and `not_after` are integer NumericDates, `not_before < not_after`.
+
 ### 3.4 `where`
 
-`source` is `network`, `device` or `both`; for `both`, the checks run independently against each
+`source` (required) is `network`, `device` or `both`, and at least one of `countries`, `regions`,
+`areas`, `networks` is present (each a list of 1–64): `countries` are ISO 3166-1 alpha-2 codes
+(`US`), `regions` ISO 3166-2 codes (`US-MO`), `areas` are `{ lat, lon, radius_m }` with
+`radius_m` 10–20 037 508, `networks` CIDR ranges. For `both`, the checks run independently against each
 source and both must pass. For each source:
 
 - Location absent → `location_unavailable:<source>`.
-- Device location with `|now − t| > 300` → `location_stale:device`.
+- Device location without a numeric `t`, or with `|now − t| > 300` → `location_stale:device`.
 - **Places** (`countries`, `regions`, `areas`) form a union: the location must match at least one
   entry, otherwise `outside_location:<source>`.
   - Network: `countries` match `country`; `regions` (ISO 3166-2, `US-MO`) match `region`; `areas`
@@ -685,12 +716,12 @@ honest as the device. See the master plan §3.5.
 
 ### 3.5 `limits`
 
-- `uses: { count, per }` (`per` ∈ `minute`, `hour`, `day`, `month` (30 days), `total`) — enforced
+- `uses: { count, per }` (`count` an integer 1–1 000 000 000; `per` ∈ `minute`, `hour`, `day`, `month` (30 days), `total`) — enforced
   only online by devicebasedauth.org with a counter per credential and grant. Fixed windows aligned
   to the Unix epoch. An access token's uses count on the credential grant it was cut from (its own
   grant indexes differ), and a delegated grant that copied its parent's limit spends the parent
   grant's counter, so neither a token nor any number of delegates adds uses.
-- `spend_usd_per_month` — not checked by the evaluator. It is returned as a **caveat** for the
+- `spend_usd_per_month` (a number 0–1 000 000) — not checked by the evaluator. It is returned as a **caveat** for the
   audience to enforce on its own spending (e.g. hashbin's monthly spend limit).
 
 ### 3.6 `require`
@@ -718,7 +749,8 @@ honest as the device. See the master plan §3.5.
 - `verified_boot: true` — `context.attestation` must report `verified_boot: "verified"` and
   `device_locked: true`; otherwise `verified_boot_required`. `false` requires nothing.
 
-Both are checked offline: the attestation is part of the signed credential.
+`attestation`, `app_ids` and `verified_boot` are checked offline: the attestation is part of the
+signed credential.
 
 - `gates: [entry, …]` — online, and each use waits until every entry is satisfied (1–3 entries).
   An entry is `{ any, timeout_s?, on_timeout? }`:
@@ -752,8 +784,9 @@ Both are checked offline: the attestation is part of the signed credential.
 ### 3.7 Online-only constraints
 
 If a grant would otherwise pass but has `limits.uses`, `require.online: true`,
-`require.step_up: true` or `require.gates`, or the action's policy requires gates (§3.8), and the
-evaluation is not online, it fails with `online_required` (and the overall result reports
+`require.step_up: true` or `require.gates`, or the action's policy requires gates (§3.8), or only
+its `net.client.addresses.webhook` could still allow the address (§3.10), and the evaluation is
+not online, it fails with `online_required` (and the overall result reports
 `online_required: true` when that is the only reason any grant failed).
 
 ### 3.8 Audience policy
@@ -820,7 +853,7 @@ reason to allow.
   `lists` (1–8 `{ id, uri }`, `id` = `adl_` + 8–64 letters and digits, `uri` an `https://` URL, or
   `http://` on `localhost`, `127.0.0.1` or `[::1]` for local development, of at most 512 characters), `dns` (`names`: 1–16 lower-case host names of two or more labels whose
   last label is not all digits, at most 253 characters; `dnssec`: boolean), `webhook` (a gate id,
-  `client` only). Lists have no duplicates.
+  `client` only). `cidrs`, `lists` (by `id`), `names` and `relays` have no duplicates.
 - `route`: `relays` (1–16 device ids `dev_` + 8–64 letters and digits), `min_hops` and
   `max_hops` (integers 1–4, defaults 1 and 4, `min_hops ≤ max_hops`), `require_attested`
   (boolean).
@@ -859,7 +892,7 @@ reason to allow.
    `route_required`. Otherwise, each that applies: hop count outside `min_hops`…`max_hops` →
    `route_invalid:hop_count`; `require_attested` and `attested` is not one `true` per hop →
    `route_invalid:relay_not_attested`; a relay not in `relays` → `route_relay_not_allowed`.
-3. `latency`. `rtt_ms` missing, not a number or negative → `rtt_required` (the verifier must
+3. `latency`. `rtt_ms` missing, not a finite number or negative → `rtt_required` (the verifier must
    challenge the device and try again); greater than `max_rtt_ms` → `rtt_exceeded`.
 
 `where.networks` is unchanged and evaluated with `where`. Old (vocabulary 1) verifiers deny any
@@ -879,25 +912,30 @@ later but never sooner.
 
 # devicebasedauth.org pricing and cost model
 
-Status: **implemented; prices await owner approval (STATUS D6)**. Prices live only in
-`src/utils/pricing.js`; rates and per-operation resource counts live only in
-`src/utils/cost-policy.js`. `src/utils/pricing.test.js` fails if any price drops below its floor.
-The public pricing page and `GET /api/public/config` read the same constants.
+Prices live only in `src/utils/pricing.js`; rates and per-operation resource counts live only in
+`src/utils/cost-policy.js`. `src/utils/pricing.test.js` fails if any price drops below its floor,
+and `src/cost-counts.test.js` fails if an operation does more work than `OPERATIONS` counts. The
+public pricing page and `GET /api/public/config` (`price_table`) read the same constants.
 
-Rates are cronly's (checked 2026-11-15/16) and hashbin's price-floor sheet (2026-10-24). Operation
-counts were taken by reading this repository's handlers on 2026-11-18; re-count them whenever a
-handler adds a Durable Object call or a storage write.
+**Approval (STATUS decisions).** Approved by the owner: issue/rotate, renew, online decision,
+metered read, token, OpenID Connect sign-in and audience (D6, D11, D15), and the security email
+`notice` price (D9). **Proposed, awaiting approval:** gate requests and confirmations (D13) and
+named address lists (D17); they are implemented and charged at the proposed prices.
+
+Rates are cronly's provider list prices (checked 2026-11-15/16) and hashbin's price-floor sheet.
+Re-count `OPERATIONS` whenever a handler adds a Durable Object call or a storage write.
 
 ## Rules
 
 - Money is integer micro-dollars (µ$): $1 = 1,000,000 µ$.
-- Prepaid balance, no subscription. $5 minimum credit, card fee itemized on top:
+- Prepaid balance, no subscription. Deposits of $5 to $1,000 of credit, card fee itemized on top:
   `ceil((credit¢ + 30) / 0.971)` — a $5 credit costs $5.46. New accounts: at most $20 per payment
   in their first week. Credit is granted only by the verified Stripe webhook.
 - A balance never goes negative: every charge checks funds in the same storage transaction.
   Issuance additionally checks funds **before** allocating a status index or signing.
 - **Price-floor test:** `price × 0.92 ≥ 1.5 × ceil(worst-case marginal cost)` (0.92 = revenue kept
-  after refunds/disputes; 1.5 = minimum margin). Included Cloudflare allowances are ignored.
+  after refunds/disputes; 1.5 = minimum margin), so the floor is `ceil(1.5 × ceil(cost) / 0.92)`.
+  Included Cloudflare allowances are ignored.
 
 ## Unit rates (µ$)
 
@@ -906,7 +944,8 @@ handler adds a Durable Object call or a storage write.
 | Worker request | 0.30 |
 | Worker CPU ms | 0.02 |
 | Durable Object request | 0.15 |
-| DO row written | 1.00 |
+| DO row written (a delete counts as a write) | 1.00 |
+| DO row read (measured by the cost monitor; too small to count per operation) | 0.001 |
 | DO storage, per KB-month | 0.20 |
 | R2 class A (write) | 4.50 |
 | R2 class B (read, cache miss) | 0.36 |
@@ -914,43 +953,35 @@ handler adds a Durable Object call or a storage write.
 
 ## Prices and worst-case costs
 
+Counts are those in `OPERATIONS`. Every operation a device can ask for with a DPoP proof includes a
+**DPoP nonce challenge** (D15): an account's object asks for its own nonce during its first 60 s
+after starting, so the device's first request may be answered `401 use_dpop_nonce` and sent again
+(1 Worker request, 1 DO request, 2 ms, already in the counts below). Online decisions and security
+emails do not include it.
+
 | Operation | Who pays | Counted (per `OPERATIONS`) | Cost µ$ | Floor µ$ | **Price µ$** |
 |-----------|----------|----------------------------|--------:|---------:|-------------:|
-| Issue a credential (enrollment approval or API) | Issuing account | 4 Worker req, 21 DO req, 26 rows, 93 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries, an enrollment token's check and use counter, and the **deletion of its records** after 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 53 | 87 | **87** |
+| Issue a credential (enrollment approval or API) | Issuing account | 4 Worker req, 21 DO req, 26 rows, 93 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries, an enrollment token's check and use counter, Web Push notices, the **deletion of its records** after 13 months, and the nonce challenge | 53 | 87 | **87** |
 | Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 53 | 87 | **87** |
-| Renew (same key) | Issuing account | 2 Worker req, 6 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 10 ms, 1 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 13 | 22 | **25** |
+| Renew (same key) | Issuing account | 2 Worker req, 6 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 12 ms, 1 KB × 13 months, incl. the nonce challenge | 13 | 22 | **25** |
 | Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 6 rows (balance, daily aggregate row, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 8 | 14 | **14** |
-| Gate request, per gate contacted (**proposed, D13**) | Account that owns the gates (the credential's issuer) | 2 Worker req and 4 DO req (the answer: authentication with the rate limit and the account; the alarm that prunes it), 9 rows (balance and daily aggregate row; request row; its answer or timeout settlement; an audit row and its deletion after 13 months; the row's deletion when used or pruned; for TOTP and security keys, the gate row's last step or signature counter), 25 ms (Web Push to up to 5 browsers; the notice of an allow by timeout; code and signature checks), 0.5 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 13 | 22 | **22** |
-| Webhook gate request, per webhook gate contacted (**proposed, D13**) | Same | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 14 | 23 | **23** |
-| Duo or Okta Verify gate request, per vendor gate contacted (**proposed, D13**) | Account that owns the gates | As a gate request, plus starting the push (signed subrequest, 1 row) and up to 24 status polls, each an alarm wake-up (24 DO req, ~2 ms each) | 18 | 30 | **30** |
-| Confirmation issued (periodic confirmation, **proposed, D13**) | Account that issued the credential (its gates are charged as gate requests) | 2 Worker req, 3 DO req, 5 rows (credential row, balance and daily aggregate row, an audit row and its later deletion), 5 ms (signing), 0.5 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 8 | 14 | **14** |
-| Named address list, create or replace, per started 1,000 ranges (**proposed, D17**) | Account that owns the list | 3 Worker req, 8 DO req (the request; a debounced publish from the alarm; the list's later free delete with its tombstone and purge), 20 rows (list row, chunk of ranges, charge rows, audit rows, alarm, publish bookkeeping, and their later deletion), 15 ms, 44 KB × 13 months, 2 R2 writes (the publish and the delete's tombstone) — includes a **DPoP nonce challenge** | 148 | 242 | **242** |
+| Gate request, per gate contacted (**proposed, D13**) | Account that owns the gates (the credential's issuer) | 2 Worker req, 4 DO req (the answer: authentication with the rate limit and the account; the alarm that prunes it; the nonce challenge), 9 rows (balance and daily aggregate row; request row; its answer or timeout settlement; an audit row and its deletion after 13 months; the row's deletion when used or pruned; for TOTP and security keys, the gate row's last step or signature counter), 27 ms (Web Push to up to 5 browsers; the notice of an allow by timeout; code and signature checks), 0.5 KB × 13 months | 13 | 22 | **22** |
+| Webhook gate request, per webhook gate contacted (**proposed, D13**) | Account that owns the gates | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 14 | 23 | **23** |
+| Duo or Okta Verify gate request, per vendor gate contacted (**proposed, D13**) | Account that owns the gates | As a webhook gate request, plus up to 24 status polls, each an alarm wake-up (24 DO req, ~2 ms each) | 18 | 30 | **30** |
+| Confirmation issued (periodic confirmation, **proposed, D13**) | Account that issued the credential (its gates are charged as gate requests) | 2 Worker req, 3 DO req, 5 rows (credential row, balance and daily aggregate row, an audit row and its later deletion), 7 ms (signing), 0.5 KB × 13 months, incl. the nonce challenge | 8 | 14 | **14** |
+| Named address list, create or replace, per started 1,000 ranges (**proposed, D17**) | Account that owns the list | 3 Worker req, 8 DO req (the request; a debounced publish from the alarm; the list's later free delete with its tombstone and purge; the nonce challenge), 20 rows (list row, chunk of ranges, charge rows, audit rows, alarm, publish bookkeeping, and their later deletion), 15 ms, 44.5 KB × 13 months, 2 R2 writes (the publish and the delete's tombstone) | 148 | 242 | **242** |
 | Named address list, each day its published life is extended to 13 months after a create or replace (**proposed, D17**) | Account that owns the list | Re-signing every 20 hours (1.2 a day): an alarm wake-up, 2 rows, ~5 ms to sign up to 600 KB, one R2 write | 9 | 15 | **15** |
 | Security email (D9) | Account it is sent to, when it is queued | 3 DO req (up to 3 alarm wake-ups, one per attempt), 15 rows (charge: balance, ledger and receipt rows and their later deletion; queue row and alarm; attempts' rewrites or deletion and next alarms; an audit row and its deletion; the digest's last-sent row), 10 ms (SigV4 signing per attempt), 0.5 KB × 13 months, **1 SES email** (100 µ$; retried only when SES answered that it did not take it, so at most one is billed) | 117 | 191 | **200** |
-| Metered API read (API key or non-dashboard device) | Caller | 2 Worker req, 5 DO req (authentication with the rate limit, charge, up to two for the read), 2 rows (aggregated on the balance row, daily aggregate row) — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 4 | 7 | **7** |
-| Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 2 Worker req, 5 DO req, 2 rows (balance, daily aggregate row) — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 4 | 7 | **7** |
-| OpenID Connect sign-in | The site (audience owner) | 3 Worker req, 8 DO req, 5 rows (incl. daily aggregate row) — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 8 | 14 | **14** |
-| Register or change an audience | Audience owner | 2 Worker req, 5 DO req, 8 rows (incl. later deletions), 4 KB × 13 months — plus a **DPoP nonce challenge** (1 Worker req, 1 DO req, 2 ms; D15) | 20 | 33 | **100** |
-| Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
+| Metered API read (API key or non-dashboard device) | Caller | 2 Worker req, 5 DO req (authentication with the rate limit, charge, up to two for the read, the nonce challenge), 2 rows (balance, daily aggregate row), 5 ms | 4 | 7 | **7** |
+| Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 2 Worker req, 5 DO req, 2 rows (balance, daily aggregate row), 7 ms, incl. the nonce challenge | 4 | 7 | **7** |
+| OpenID Connect sign-in | The site (audience owner) | 3 Worker req, 8 DO req, 5 rows (code put, taken and deleted; balance; daily aggregate row), 12 ms, incl. the nonce challenge | 8 | 14 | **14** |
+| Register or change an audience | Audience owner | 2 Worker req, 5 DO req, 8 rows (incl. later deletions), 7 ms, 4 KB × 13 months, incl. the nonce challenge | 20 | 33 | **100** |
+| Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, DPoP nonces, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
 
-Decision, login, read, token, issue and confirmation prices sit exactly at their floors (the thinnest margin the
-rule allows). The owner approved these prices on 2026-11-18 (D6). That day issue went from 75 to
-85 µ$, when record compaction (below) added the deletes it prepays, and decision and login from 10
-to 12 µ$, when counting the daily aggregate ledger row (below) raised their floors. Later that day
-an audit of online decisions found two more rows in the worst case (a usage window holding a
-single decision is written and later deleted; so is a step-up request), so decision went to its
-new floor of 14 µ$, also approved by the owner (D11). Step-up requests are now reused while
-they wait and deleted when their approval is used, which keeps it at two rows rather than three.
-
-**DPoP nonces (D15, approved by the owner 2026-11-22).** The account's object keeps the DPoP
-proofs it has seen in memory, which is empty again whenever the object starts (after a minute or
-two idle, a deploy, a move), so for its first 60 s it asks every proof for its nonce (RFC 9449
-§8): the device's first request answers `401 use_dpop_nonce` and is sent once more. A device that
-calls every few minutes meets this on most calls, so every operation a device can ask for with a
-proof counts one more Worker request, its authentication (1 DO request) and 2 ms. That raised the
-floors of issue (85 → 87), read and token (5 → 7), OpenID Connect sign-in (12 → 14), confirmation
-(12 → 14), gate (20 → 22) and webhook gate (22 → 23) requests; prices moved to the new floors. Online
-`/authorize` (paid by the site) is unchanged: it does not ask for nonces (STATUS L12).
+Issue, decision, read, token, login, gate, webhook gate, vendor gate, confirmation and both address
+list prices sit exactly at their floors (the thinnest margin the rule allows). Any upward correction
+found when re-counting raises their prices. Online `/authorize` (paid by the site) does not ask for
+DPoP nonces (STATUS L12, docs/security/review-log.md).
 
 ### Gate requests (proposed, STATUS D13)
 
@@ -961,8 +992,7 @@ audience still pays its online decision, and answering is free. If that account 
 sends nothing and records the gates as `unpaid`: the request still exists, the owner can answer
 it from the dashboard, and otherwise each entry waits for its timeout, so an allow-on-timeout
 entry then allows and a deny-on-timeout entry denies. Whether unpaid requests should deny instead
-is part of D13. Before gates, a step-up request's rows were counted in the decision price; they
-are now paid by the gate price, and the decision price is unchanged.
+is part of D13. A step-up request's rows are paid by the gate price, not the decision price.
 
 A `dba-device` gate learns of requests by polling `GET /api/v1/gate-requests`, a free read like
 the dashboard's own lists (rate-limited per account).
@@ -977,7 +1007,7 @@ list prepays 395 days (about $0.006 for up to 1,000 ranges), and changing it a d
 more day. Deleting is free (prepaid). A list not changed for 13 months stops being re-signed and
 expires, which denies every grant naming it. Online decisions read lists through a per-isolate
 one-minute cache; the R2 reads on a miss are counted with the other free-path reads under the
-cost brake, and the decision price is unchanged.
+cost brake, and the decision price does not include them.
 
 ### Why records are deleted after 13 months
 
@@ -987,33 +1017,25 @@ the account's Durable Object compacts them (`compact()` in `src/durable-objects/
 an expired credential goes 13 months after it was issued (and no sooner than 30 days after it
 expired), a device once it has no credential left and nothing was issued to it for 13 months, and
 audit, charge ledger and receipt rows once they are 13 months old, and revoked API keys and ended
-enrollment tokens 13 months after they stopped working (free to make, capped only while active). Deleting a row is billed like
-writing one, so issue now counts 6 more rows plus a share of the compaction alarm (1 DO request,
-1 row); renewals and audience changes count the deletes of their own rows. Compaction runs at most
-weekly, so one wake-up serves everything that fell due in between, and stops waking an account
-that has nothing left to age out. Kept for good: revoked devices (a revoked key must never return
-without a recent sign-in; about 0.1 µ$ a month each), deposits, the daily aggregate ledger rows
-and the monthly summaries (one per day or month, not per operation).
+enrollment tokens 13 months after they stopped working (free to make, capped only while active).
+Deleting a row is billed like writing one, so issue counts its 6 deletes plus a share of the
+compaction alarm (1 DO request, 1 row); renewals and audience changes count the deletes of their
+own rows. Compaction runs at most weekly, so one wake-up serves everything that fell due in
+between, and stops waking an account that has nothing left to age out. Kept for good: revoked
+devices (a revoked key must never return without a recent sign-in; about 0.1 µ$ a month each),
+deposits, the daily aggregate ledger rows and the monthly summaries (one per day or month, not
+per operation).
 
-The first metered read, token, decision or sign-in of a day on an account writes that day's
-aggregate ledger row for its kind, so each of those operations counts one row for it (it was
-omitted until 2026-11-18, which left decision and login 2 µ$ under their floors).
-Any upward correction found in an audit must raise those prices.
+### How the counts are checked
 
-The counts are checked against the code: `src/cost-counts.test.js` measures the Durable Object
-requests and rows each operation really makes (plus what it prepays for later: pruning and
-compaction deletes, revocation, webhooks) and fails when they exceed `OPERATIONS`. Writing it
-found metered reads making 4 DO requests where 3 were counted (5 before authentication took over
-the rate-limit check, which every authenticated request used to spend a DO request on), an
-audience change making 4, and connected MCP apps writing a "last used" row every hour, which is
-gone (the hourly refresh records `refreshed_at`). It also found the MCP refresh grant writing a
-row per refresh without charging; a refresh now costs a token (7 µ$, about $0.005 a month for an
-app connected around the clock), and keeps its refresh digest on the balance row so it writes no
-row of its own.
+`src/cost-counts.test.js` measures the Durable Object requests and rows each operation really
+makes (plus what it prepays for later: pruning and compaction deletes, revocation, webhooks) and
+fails when they exceed `OPERATIONS`. Connected MCP apps record their hourly refresh as
+`refreshed_at` and keep the refresh digest on the balance row, so a refresh writes no row of its
+own; it is charged as a token (7 µ$, about $0.005 a month for an app connected around the clock).
 
 The first read of a new day writes yesterday's aggregate ledger rows and saves the rolled balance
-row once (one row a day at most that no operation counts, on accounts active the day before);
-before that fix, every read wrote the aggregate rows again until something was charged.
+row once: one row a day at most, on accounts active the day before, that no operation counts.
 
 ### Security notices ride on the issue price
 
@@ -1040,9 +1062,9 @@ the event, and only if the balance covers it: an account that cannot pay, has no
 or turned emails off gets none, and the event itself is never refused or charged more. The owner
 chooses `security_email`: `all` (default), `sensitive` (no digest) or `off`; turning it down needs a
 recent sign-in and sends one last email. 200 µ$ is just above the 191 µ$ floor, leaving room for
-SES's per-GB charge on these few-KB messages; the owner approved it, with SES as the provider, on
-2026-11-21 (D9). Queueing a digest reads three rows on every
-ordinary issuance (address, setting, queued digest; 0.003 µ$), which the issue price absorbs.
+SES's per-GB charge on these few-KB messages (owner-approved with SES as the provider, D9).
+Queueing a digest reads three rows on every ordinary issuance (address, setting, queued digest;
+0.003 µ$), which the issue price absorbs.
 
 ### Key attestation adds nothing to the issue price
 
@@ -1054,10 +1076,11 @@ inside the signed approval ticket, so approval and issuance do no extra work.
 
 ### Why aggregate small charges
 
-A separate ledger row per read, decision or token would cost 1 µ$ each — as much as the operation.
-These charges are summed into today's aggregate on the balance row (one write per charge, which the
-balance update needs anyway) and flushed as one ledger row per kind when the day rolls over. That
-row is counted once in each operation's cost, as if every operation were the only one of its day.
+A separate ledger row per read, decision, token or sign-in would cost 1 µ$ each — as much as the
+operation. These charges are summed into today's aggregate on the balance row (one write per
+charge, which the balance update needs anyway) and flushed as one ledger row per kind when the day
+rolls over. That row is counted once in each operation's cost, as if every operation were the
+only one of its day.
 
 ### Why issuance is the expensive operation
 
@@ -1067,8 +1090,8 @@ audiences by signed webhook (spec/events.md): four delivery rounds when an endpo
 The revocation shares one outbox row with its webhook deliveries, so the success path writes no
 extra rows, and audiences without a webhook cost one registry lookup.
 
-The webhook test button (`POST /api/v1/audiences/{name}/webhook-test`) is charged as a metered read:
-1 Worker request, 3 DO requests, one signature and one outbound request.
+The webhook test button (`POST /api/v1/audiences/{name}/webhook-test`) is charged as a metered
+read (7 µ$).
 
 ## What customers would pay
 
@@ -1095,16 +1118,23 @@ decisions per month.
 
 ## Free paths and the cost brake
 
-Free endpoints (`inspect`, enrollment start and describe) are marked `free: true` in `API_ROUTES`.
-They write nothing (enrollment requests travel as signed tickets), are rate-limited per IP by the
-`PUBLIC_LIMITER` binding, and return 503 when the cost-safety brake is on. The brake latches when a
-day of measured Cloudflare cost × 30 exceeds `COST_SAFETY_BRAKE_CENTS` (default $25), or when
-measurements are missing for 36 hours. Paid operations keep working: they are prepaid with margin.
+Free public endpoints (inspection, enrollment start and describe, attestation challenges, TPM
+activation, DPoP nonces, gate links, sign-up, MCP client registration) are marked `free: true` in
+`API_ROUTES`. They write nothing that is not paid for elsewhere (enrollment requests travel as
+signed tickets), are rate-limited per IP by the `PUBLIC_LIMITER` binding (240 a minute, like every
+Worker path), and return 503 `cost_brake` while the cost-safety brake is on. The hourly cron runs
+the cost monitor daily at 02:07 UTC, and again every hour while its last report is missing, stale
+or failed. The brake is on when a day of measured Cloudflare cost × 30 exceeds
+`COST_SAFETY_BRAKE_CENTS` (default $25), when the measurement fails, or when no report is newer
+than 36 hours (unless `COST_SAFETY_FAIL_OPEN=true`); `COST_SAFETY_HARD_STOP=true` forces it on.
+Paid operations keep working: they are prepaid with margin.
 
 ## Open questions for the owner
 
-1. ~~Approve these prices (D6)~~ Approved 2026-11-18. Renew could still go towards its floor (20).
-2. Clerk monthly retained users are the one per-user cost not tied to an operation. Mitigations in
+1. Renew is 3 µ$ above its floor (22) and could go down to it (D6). Recalibrate all prices from a
+   month of measured costs (STATUS S3).
+2. Approve or change the proposed gate and confirmation prices (D13) and address list prices (D17).
+3. Clerk monthly retained users are the one per-user cost not tied to an operation. Mitigations in
    place: dashboard sign-in with a DBA browser credential (no Clerk session), and accounts created
    by paying with a device, which never become Clerk users at all (STATUS B9). Proposed (D8, not
    built): close zero-balance accounts with no live credentials after 12 idle months.

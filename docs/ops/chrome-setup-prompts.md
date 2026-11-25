@@ -1,5 +1,8 @@
 # Prompts for Claude in Chrome: Cloudflare, Clerk and Stripe setup (STATUS L9)
 
+Production setup is done (live since 2026-11-22); these prompts are kept only for rebuilding it
+from scratch. [deployment.md](deployment.md) is the runbook and wins where the two differ.
+
 Paste these into the Claude in Chrome extension, one at a time, in order. Each one starts cold
 and does the browser side of [deployment.md](deployment.md) §1, §3 and §4.
 
@@ -14,9 +17,6 @@ gh secret set NAME
 `gh` asks for the value and hides what you paste. Non-secret values (IDs, the publishable key)
 come back in Claude's report; set them with `gh variable set NAME --body VALUE`, or paste the
 report back into Claude Code.
-
-State on 2026-11-21: no GitHub secrets or variables are set, and the `devicebasedauth.org` zone
-already uses Cloudflare nameservers (registered at Cloudflare) but has no A/AAAA records.
 
 ---
 
@@ -262,7 +262,7 @@ Payments stay closed until `DBA_LAUNCH_APPROVED=true`, so these can be set befor
 
 ---
 
-## 5. After the first deploy: Durable Object namespace IDs (§1.3)
+## 5. After the first deploy: Durable Object namespace IDs (§1.4)
 
 ```text
 In the Cloudflare dashboard (the account holding devicebasedauth.org), open Workers & Pages →
@@ -280,9 +280,9 @@ gh variable set DBA_DO_NAMESPACES --body "id1,id2,id3,id4,id5"
 
 ## Not covered here
 
-- The generated secrets (`DBA_ISSUER_KEYS` with kid `dba-2026-11`, `DBA_TOKEN_SIGNING_KEY`,
-  `DBA_PUSH_VAPID_KEY`, `DBA_GATE_SEALING_KEYS` with kid `gate-2026-11`; deployment.md §2) were
-  generated and set as repository secrets on 2026-11-21, checked by
-  `scripts/check-deployment-secrets.mjs` first, and never printed or written to disk.
+- The generated secrets (`DBA_ISSUER_KEYS`, `DBA_TOKEN_SIGNING_KEY`, `DBA_PUSH_VAPID_KEY`,
+  `DBA_GATE_SEALING_KEYS`; deployment.md §2) are made in a terminal, checked with
+  `scripts/check-deployment-secrets.mjs`, and set with `gh secret set` without printing them or
+  writing them to disk.
 - Amazon SES security email (§3a) is optional and is AWS, not one of these three services.
 - Setting `DBA_DEPLOY_ENABLED=true` (§5) is the last step, after the secret check passes.

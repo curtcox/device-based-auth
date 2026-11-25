@@ -1,7 +1,8 @@
 # Webhook events, version 1
 
-Status: draft (STATUS B1; implemented in `src/services/webhooks.js`, verified by `verifyEvent` and
-`createVerifier().handleEvent` in `packages/verify`).
+Status: in production. Revocation events (§2–5) are sent by `src/services/webhooks.js` and
+verified by `verifyEvent` and `createVerifier().handleEvent` in `packages/verify` (the Python and
+Go ports have no event support yet); gate requests (§6) are sent by `src/durable-objects/gates.js`.
 
 The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
@@ -76,6 +77,9 @@ A receiver MUST:
 2. Refuse events whose `iat` is more than 600 s old or more than 60 s in the future.
 3. Answer `2xx` once the event is applied. Any other answer, a redirect, or no answer within 5 s
    counts as a failure.
+
+`verifyEvent` reports failures as `invalid_format`, `wrong_type`, `unknown_kid`,
+`invalid_signature`, `wrong_issuer`, `invalid_claims`, `wrong_audience` and `stale_event`.
 
 It SHOULD keep each revoked `status` entry until that credential's `exp`, and deny credentials whose
 `status.status_list` matches. Applying the same revocation twice is harmless; receivers MAY skip

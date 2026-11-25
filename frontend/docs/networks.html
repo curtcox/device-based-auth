@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network rules and address lists — devicebasedauth.org</title>
+<meta name="description" content="Limit a devicebasedauth.org grant to the connections it may arrive on: address ranges, named address lists, DNS names and a maximum round-trip time.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/docs.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="bar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">devicebasedauth.org</a><nav class="site-nav" aria-label="Site"><a href="/docs/" aria-current="page">Docs</a><a href="/tools/">Tools</a><a href="/pricing.html">Pricing</a><a class="button small" href="/app.html">Dashboard</a></nav></div></header>
+<main id="main">
+<h1>Network rules and address lists</h1>
+<p class="lead">A grant's <code>net</code> member limits the <em>connection</em> a request arrives on: from which addresses, and how far away in round-trip time. It is evidence about the connection, not proof of identity; the device key still proves who is talking. The rest of the API is the same as for every grant: see the <a href="/docs/">docs</a>.</p>
+<div class="docs-layout">
+<nav class="docs-toc" aria-label="On this page"><ol>
+<li><a href="#net">The <code>net</code> member</a></li>
+<li><a href="#addresses">Addresses</a></li>
+<li><a href="#lists">Named address lists</a></li>
+<li><a href="#latency">Round-trip time</a></li>
+<li><a href="#verifier">Verifier setup</a></li>
+<li><a href="#reasons">Reasons</a></li>
+</ol></nav>
+<div class="docs-body">
+<section id="net">
+<h2>The <code>net</code> member</h2>
+<p>A credential with any grant that has <code>net</code> carries <code>"ver": 2</code>; verifiers that only know vocabulary 1 deny such grants (<code>unknown_constraint:net</code>), so the rule fails closed everywhere. The normative rules are <a href="https://github.com/curtcox/device-based-auth/blob/main/spec/evaluation.md">spec/evaluation.md §3.10</a>, with conformance vectors.</p>
+<pre class="code"><code>{ &quot;actions&quot;: [&quot;hashbin:content:write&quot;],
+  &quot;net&quot;: {
+    &quot;client&quot;: {
+      &quot;addresses&quot;: { &quot;cidrs&quot;: [&quot;203.0.113.0/24&quot;],
+                     &quot;lists&quot;: [{ &quot;id&quot;: &quot;adl_OFFICE0001&quot;, &quot;uri&quot;: &quot;https://status.devicebasedauth.org/v1/addresses/adl_OFFICE0001&quot; }],
+                     &quot;dns&quot;: { &quot;names&quot;: [&quot;vpn-egress.example.com&quot;], &quot;dnssec&quot;: true } },
+      &quot;latency&quot;: { &quot;max_rtt_ms&quot;: 40, &quot;samples&quot;: 1, &quot;reuse_s&quot;: 60 }
+    }
+  } }</code></pre>
+<p><code>net</code> needs <code>client</code> or <code>server</code>; each needs at least one of <code>addresses</code>, <code>route</code> or <code>latency</code>, and every one present must pass. <strong>Verifiers evaluate only <code>client</code></strong>: the request's source as the relying party sees it. <code>server</code> is a rule for the device's own SDK or CLI about which servers it sends to; it is validated at issuance and ignored by verifiers, and no released client enforces it yet. <code>route</code> (signed relay hops) and <code>addresses.webhook</code> (an approval service asked about an address) are part of the format, but neither the verify library nor <code>POST /api/v1/authorize</code> supplies the context they need yet, so today they never allow a request by themselves.</p>
+<p><code>where.networks</code> (vocabulary 1) still works and is checked with <code>where</code>; use <code>net</code> when you need lists, DNS or round-trip time.</p>
+</section>
+
+<section id="addresses">
+<h2>Addresses</h2>
+<p><code>net.client.addresses</code> checks the peer address the verifier sees (on Cloudflare, <code>CF-Connecting-IP</code>; never a header the client sets). Its sources form a union: the address passes when any one of them allows it.</p>
+<table><thead><tr><th>Source</th><th>Allows the address when</th></tr></thead><tbody>
+<tr><td><code>cidrs</code></td><td>It is inside one of 1–64 IPv4 or IPv6 ranges written into the grant.</td></tr>
+<tr><td><code>lists</code></td><td>It is inside a range of one of 1–8 <a href="#lists">named address lists</a> the verifier holds a current copy of. Change the list and every grant naming it changes, without reissuing.</td></tr>
+<tr><td><code>dns</code></td><td>It equals one of the A or AAAA addresses of 1–16 host names, resolved by the verifier. With <code>"dnssec": true</code>, only DNSSEC-validated answers count.</td></tr>
+</tbody></table>
+<p>A source the verifier could not consult (a list it cannot fetch, a name that does not resolve) matches nothing: network rules never allow by failing.</p>
+</section>
+
+<section id="lists">
+<h2>Named address lists</h2>
+<p>A named address list is a set of up to 10,000 IPv4 and IPv6 ranges that your account owns (at most 50 lists). devicebasedauth.org publishes each one as a signed <code>dba-addresses+jwt</code> at <code>https://status.devicebasedauth.org/v1/addresses/{id}</code> (<a href="https://github.com/curtcox/device-based-auth/blob/main/spec/credential.md">spec §7a</a>), so any verifier can enforce it offline. Changes are published within about a minute, and verifiers cache a copy for 60 seconds.</p>
+<table><thead><tr><th>Route</th><th>Access</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>GET /api/v1/address-lists</code>, <code>GET /api/v1/address-lists/{id}</code></td><td><code>networks:read</code></td><td>List your lists, or read one with its ranges. Each has <code>id</code>, <code>name</code>, <code>uri</code>, <code>count</code>, <code>ver</code> and <code>published_until</code>.</td></tr>
+<tr><td><code>POST /api/v1/address-lists</code></td><td><code>networks:write</code></td><td>Create one: <code>{ "name": "Office", "cidrs": ["192.0.2.0/24", "2001:db8:42::/48"] }</code>. Ranges are de-duplicated and sorted; a range with host bits set (<code>192.0.2.7/24</code>) is refused, and a single address needs <code>/32</code> or <code>/128</code>.</td></tr>
+<tr><td><code>PUT /api/v1/address-lists/{id}</code></td><td><code>networks:write</code>, recent sign-in</td><td>Replace its ranges (and optionally its name). The list may be empty.</td></tr>
+<tr><td><code>DELETE /api/v1/address-lists/{id}</code></td><td><code>networks:write</code>, recent sign-in</td><td>Delete it (free). It is published as a tombstone that matches nothing, so every grant naming it denies.</td></tr>
+</tbody></table>
+<p>Replacing and deleting need a recent sign-in, like changing gates (<a href="/docs/accounts.html#confirm">confirming it is you</a>), or an API key: widening a list widens every grant that names it. A grant names a list by its <code>id</code> and exactly the <code>uri</code> the API returns, and devicebasedauth.org issues grants only for live lists of the issuing account (<code>400 unknown_address_list</code> otherwise).</p>
+<p><strong>Price.</strong> A create or replace costs the <code>address_list</code> price per started 1,000 ranges, plus the <code>address_list_day</code> price for each day it extends the list's published life to 13 months from now: a new list of up to 1,000 ranges prepays 395 days, about 6,200 µ$ ($0.006), and changing it a day later pays for one more day. A list not changed for 13 months stops being re-signed and expires, which denies every grant naming it. Live prices: <a href="/pricing.html">Pricing</a>.</p>
+<p>Lists are readable by anyone who has the URI, which every site shown the credential has, so do not put anything private in a list's ranges. Grants with <code>dba:</code> actions (this site's own API) cannot use lists yet; they deny there.</p>
+</section>
+
+<section id="latency">
+<h2>Round-trip time</h2>
+<p><code>net.client.latency</code> bounds how far away (in network time) the device may be: <code>max_rtt_ms</code> (1–5,000, required), <code>samples</code> (1–5, the verifier keeps the best of that many measurements) and <code>reuse_s</code> (0–300, how long a passing measurement counts for the same key and address). The verifier answers the first request with <code>401 use_dpop_nonce</code> and a timed nonce; the device's retry, signed with that nonce, is timed. A device can answer later but never sooner, so the measurement is only ever an upper bound: it stops a credential being used from far away, not a stolen key used nearby.</p>
+<p>The browser SDK's <code>fetch()</code>, <code>api()</code> and <code>fetchWithGates()</code> answer up to three timed challenges in the current <a href="/sdk/dba.js"><code>/sdk/dba.js</code></a>; the pinned releases up to v1.4.0 answer only the plain nonce challenge, once, so they cannot pass a grant with <code>samples</code> above 1. <code>dba headers</code>, <code>dba sign</code> and <code>dba curl</code> hand the proof to another program that cannot answer the challenge, so they refuse a credential whose every grant has <code>latency</code> (and warn when some do).</p>
+</section>
+
+<section id="verifier">
+<h2>Verifier setup</h2>
+<p><code>createVerifier</code> from <code>@devicebasedauth/verify</code> resolves what <code>net</code> needs before it evaluates:</p>
+<pre class="code"><code>const dba = createVerifier({
+  audience: &#39;example.com&#39;,
+  rtt: { secret: env.DBA_RTT_SECRET },   // 32+ bytes, the same on every instance; enables latency
+  dns: true                              // resolve net.client.addresses.dns over DNS-over-HTTPS (1.1.1.1)
+  // addressLists: on by default (60 s fresh, 10 minutes stale while fetches fail, never an older ver)
+});
+
+const result = await dba.verifyRequest(request, { action: &#39;example:write&#39; });
+if (!result.allow) {
+  // A latency grant first answers 401 use_dpop_nonce: send result.headers (DPoP-Nonce) and
+  // result.rtt so the device retries with the timed nonce.
+  return Response.json({ error: &#39;Not allowed&#39;, code: result.code, reasons: result.reasons, rtt: result.rtt, dpop_nonce: result.dpop_nonce },
+    { status: result.status, headers: result.headers });
+}</code></pre>
+<p>Without <code>rtt</code>, pass <code>location.network.rtt_ms</code> yourself or latency grants deny with <code>rtt_required</code>. Without <code>dns</code>, names are unresolved and match nothing. <code>addressLists: false</code> stops fetching lists (they then match nothing); you can also pass your own resolvers (<code>createDohResolver</code>, <code>createAddressListResolver</code>, <code>createRttChallenger</code> are exported). Online, <code>POST /api/v1/authorize</code> reads named address lists itself and takes the peer address (and a measured <code>rtt_ms</code>, if you have one) from <code>context.network</code>; it does not resolve DNS names.</p>
+</section>
+
+<section id="reasons">
+<h2>Reasons</h2>
+<table><thead><tr><th>Reason</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>address_unavailable</code></td><td>The verifier did not know the peer address.</td></tr>
+<tr><td><code>address_not_allowed</code></td><td>No source allows the address. It is followed by one informational reason per source that could not be consulted: <code>address_list_unavailable:&lt;id&gt;</code>, <code>dns_unresolved:&lt;name&gt;</code> or <code>dns_unvalidated:&lt;name&gt;</code>.</td></tr>
+<tr><td><code>route_required</code>, <code>route_invalid:&lt;why&gt;</code>, <code>route_relay_not_allowed</code></td><td>The grant has a <code>route</code> rule and no accepted relay hops.</td></tr>
+<tr><td><code>rtt_required</code></td><td>No round trip was measured: the verifier must challenge the device and try again.</td></tr>
+<tr><td><code>rtt_exceeded</code></td><td>The measured round trip was longer than <code>max_rtt_ms</code>.</td></tr>
+</tbody></table>
+<p>The <a href="/tools/playground.html">policy playground</a> evaluates <code>net</code> grants against an IP address you enter; named lists, DNS names and round trips count as unavailable there.</p>
+</section>
+</div>
+</div>
+</main>
+<footer class="site-footer"><div class="bar"><span>devicebasedauth.org</span><a href="/docs/">Docs</a><a href="/tools/">Developer tools</a><a href="/pricing.html">Pricing</a><a href="/app.html">Dashboard</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/sitemap.html">Site map</a><a href="https://github.com/curtcox/device-based-auth">Source</a></div></footer>
+</body>
+</html>

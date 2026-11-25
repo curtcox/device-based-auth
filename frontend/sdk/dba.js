@@ -1006,7 +1006,7 @@ var DBA = class {
   }
   /**
    * Ask this credential's gates to confirm the device is still trusted (credentials issued with
-   * `confirm`; 12 µ$ when one is issued), waiting while they decide. Resolves with
+   * `confirm`; 14 µ$ when one is issued), waiting while they decide. Resolves with
    * { confirmation, expires_at, by_timeout } and keeps the confirmation for headers(); rejects with
    * DBAError 'gate_denied' or 'confirmation_timeout'. Concurrent calls share one wait.
    * @param {object} [options] { timeoutMs (default 5 minutes), onPending(gate_request) }

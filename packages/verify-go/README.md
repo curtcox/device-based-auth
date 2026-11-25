@@ -66,6 +66,14 @@ Options worth knowing:
 - `HTTPClient`: any `Do(*http.Request)`; tests inject a fake.
 - `Replay`: share a replay cache between instances if a proof must never be accepted twice
   across your fleet.
+- `Catalog`: your action catalog's gate policies by action (spec/evaluation.md §3.8), applied
+  offline; without it an audience's policy is enforced only online.
+- `OnlineAPIKey`: enables `VerifyOnline` (`POST /api/v1/authorize`, metered, billed to your
+  audience's account).
+
+A `DBA-Confirmation` header (spec/credential.md §9) is verified with the credential and its claims
+passed to the grants; one that does not verify is refused (`confirmation_<code>`). Revocation
+webhooks (`handleEvent` in the JavaScript library) are not in this port.
 
 ## Evaluate grants directly
 
@@ -89,10 +97,13 @@ Grants with `net` (vocabulary 2, spec/evaluation.md §3.10) are evaluated from w
 first: `NetworkLocation.RttMs` for `latency`, and `Context.Route`, `RouteError`, `AddressLists`,
 `DNS` and `AddressWebhook` (parsed JSON, shaped as in spec/vectors/evaluation.json). Anything not
 resolved denies with its reason (`route_required`, `rtt_required`, `address_list_unavailable:<id>`,
-`dns_unresolved:<name>` …). `net.server` is validated but never evaluated by verifiers.
+`dns_unresolved:<name>` …). `Verifier` passes only `NetworkLocation`: it does not fetch address
+lists, resolve DNS names or check routes, so grants that need them deny through `VerifyRequest`;
+call `EvaluateGrants` with a resolved `Context` for those. `net.server` is validated but never
+evaluated by verifiers.
 
 Lower-level functions mirror the JavaScript exports: `VerifyCredential`, `VerifyProof`,
-`DecodeStatusList`, `GetBit`, `EvaluateGrants`, `JWKThumbprint`, `VerifyJWS`, and, for tests and
+`VerifyConfirmation`, `DecodeStatusList`, `GetBit`, `EvaluateGrants`, `JWKThumbprint`, `VerifyJWS`, and, for tests and
 Go clients, `CreateProof`, `SignCredential` and `SignStatusList`. Failures are
 `*dbaverify.VerificationError` values with the same `Code` strings as the JavaScript library.
 

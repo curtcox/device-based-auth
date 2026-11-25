@@ -22,7 +22,7 @@
 
 <section class="grid" aria-label="What it does">
 <div class="card"><h3>Device-bound</h3><p>The device generates its key pair and sends only the public key. Every request carries a fresh DPoP proof signed by that key, so a copied credential is useless.</p></div>
-<div class="card"><h3>Readable</h3><p>A credential is a compact JWS whose middle part is plain JSON: device, sites, actions, time windows, places and limits. The <a href="/tools/inspector.html">inspector</a> shows any credential in plain English.</p></div>
+<div class="card"><h3>Readable</h3><p>A credential is a compact JWS whose middle part is plain JSON: device, sites, actions, time windows, places, networks and limits. The <a href="/tools/inspector.html">inspector</a> shows any credential in plain English.</p></div>
 <div class="card"><h3>Revocable</h3><p>Revoke one credential, a device, or everything at once. Online checks see it instantly; offline verifiers see it through signed status lists within about a minute plus their cache time.</p></div>
 <div class="card"><h3>Free to verify</h3><p>Servers verify credentials offline with a zero-dependency library and cached public keys. Only optional online decisions (usage limits, step-up approval, instant revocation) are metered.</p></div>
 </section>
@@ -88,7 +88,7 @@ curl -H "Authorization: Bearer $(dba token --aud example.com)" https://example.c
 
 <h2>Where to next</h2>
 <ul>
-<li><a href="/docs/">Developer docs</a> — concepts, the credential format, quick starts for the browser SDK, CLI, server verification, Workers, online authorization, Sign in with devicebasedauth.org and MCP.</li>
+<li><a href="/docs/">Developer docs</a> — concepts, the credential format, quick starts for the browser SDK, CLI, phones and PCs, server verification, Workers, online authorization, gates, network rules, Sign in with devicebasedauth.org and MCP.</li>
 <li><a href="/tools/">Developer tools</a> — credential inspector, policy playground, grant builder and request signer, all running in your browser.</li>
 <li><a href="/pricing.html">Pricing</a> — every price, its worst-case cost and the floor it must clear.</li>
 <li><a href="/app.html">Dashboard</a> — enroll and approve devices, read every credential, revoke anything.</li>

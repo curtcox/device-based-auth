@@ -2,17 +2,19 @@
 
 A six-commit patch series for [cronly](https://github.com/curtcox/cronly) that makes cronly.org a
 devicebasedauth.org relying party: device-bound API keys and account linking (this repo's master
-plan §9.1, plus the linking half of §9.2). It was prepared without push access to cronly, so it is
-delivered as `git format-patch` output.
+plan §9.1, plus the linking half of §9.2), delivered as `git format-patch` output for the cronly
+owner to apply (STATUS S1).
 
 ## Base and how to apply
 
-- **Base:** cronly `origin/main` at `5134a8f` ("L8: show derived run maxima beside job budgets"),
-  fetched 2026-11-18. The series applies cleanly there with `git am` and reproduces the tested tree.
-- **Vendored verifier:** `packages/verify/src/*.js` (tests excluded) from this repo, first at
-  `7dbb8ad` (patch 1) and refreshed to `a6c0d77` (patch 6, which also carries the fixes this
-  integration reported). If `packages/verify` changes again, re-copy the
-  files and their hashes as `src/vendor/devicebasedauth/README.md` in cronly describes.
+- **Base:** cronly `main` at `5134a8f` ("L8: show derived run maxima beside job budgets"). The
+  series applies cleanly there with `git am`.
+- **Vendored verifier:** `packages/verify/src/*.js` (tests excluded) from this repo at `a6c0d77`
+  (patch 1 vendors it, patch 6 refreshes it). That copy predates grant vocabulary 2 (`net`) and
+  the `require` members `attestation`, `app_ids`, `verified_boot`, `gates`, `gates_reuse_s` and
+  `confirmation`: it refuses `ver: 2` credentials (`invalid_claims`) and denies grants with those
+  members (`unknown_constraint`), so it fails closed but should be refreshed. Re-copy the files and
+  their hashes as `src/vendor/devicebasedauth/README.md` in cronly describes.
 
 ```sh
 cd cronly
@@ -33,7 +35,7 @@ If `main` has moved, try `git am -3`; the likely conflicts are `STATUS.md`, `src
 | 3 | S5: accept devicebasedauth.org credentials and access tokens as API keys | `src/auth/middleware.js` tries DBA first for `DBA …` and for `Bearer …` whose JWS `typ` is `dba-access+jwt` (other bearers stay Clerk). Module-level `createSiteAuth({ audience: 'cronly.org', namespace: 'cronly', scopes: USER_SCOPES, linkedUser, issuer, fetch })` per issuer. Returns `{ account, key_id: <cid>, scopes, session: false, dba: { account, device_id, credential_id } }`. Credential id as key id → metered reads and a monthly key budget from `spend_usd_per_month`. MCP forwards the verified identity to its internal tool requests. `DeviceCredential` OpenAPI scheme. |
 | 4 | S5: devicebasedauth.org section and link callback in the workspace | Account page section: status, Link/Unlink, credentials seen, `dba enroll --aud cronly.org --action cronly:run`, `dba curl`/`dba token`, and the `import { DBA } from 'https://devicebasedauth.org/sdk/dba.js'` snippet; all dynamic text escaped. `/auth/dba/callback` serves the workspace, strips `code`/`state` from the URL immediately and posts them to `finish` after sign-in. Playwright test. |
 | 5 | S5: document devicebasedauth.org credentials and record acceptance | README, agents guide, `llms.txt`, master-plan credential table, pricing doc; STATUS S5 → 🟨 with an acceptance record. |
-| 6 | S5: refresh vendored devicebasedauth verify library (a6c0d77) | OIDC client caches only successful responses; spend caveat limited to cronly-namespace grants; bounded status-list inflation. 1,019 tests pass. |
+| 6 | S5: refresh vendored devicebasedauth verify library (a6c0d77) | The OIDC client caches only successful responses; the spend caveat counts only cronly-namespace grants; status-list inflation is bounded while it runs. |
 
 ## Design decisions (details in cronly `todo/dba_integration.md`)
 
@@ -57,24 +59,17 @@ If `main` has moved, try `git am -3`; the likely conflicts are `STATUS.md`, `src
 - Resource-scoped grants (`resources: ["job:…"]`) are evaluated without a resource and so grant
   nothing yet (fail closed).
 
-## Test results (cronly, at the last patch)
+## Tests (cronly, at the last patch)
 
-- `npm run lint`: clean (also at every intermediate commit).
-- `npm test` (Vitest): 65 files, **1,019 tests pass** (1,000 before; 19 new). Every intermediate
-  commit also passes. New tests sign credentials, access tokens, status lists and OIDC ID tokens
-  with the vendored `issuer.js` and a generated P-256 key, with `fetch` stubbed for JWKS, the
-  status list, discovery and the token endpoint. They cover: valid credential → scopes (and never
-  `SESSION`); ungranted scope, other namespace → 403 from route access; other audience → 401;
-  unlinked and unconfirmed DBA accounts → 403 `account_not_linked`; revoked → 401 (also after the
-  status-list cache refreshes); missing / foreign-key / wrong-URL / wrong-method / replayed DPoP
-  proof → 401; lower-case `dba` scheme; access-token path and Clerk fall-through; metered read
-  charged (21 µ$) and the monthly cap on reads, reservations and a job run; MCP with one proof;
-  JWKS outage → 503; link start/finish/status/unlink, single-use and expiring state, one DBA
-  account per cronly account, stale-claim takeover, relink release; vendored file hashes.
-- `npm run docs:generate`: OpenAPI regenerated; the drift test passes.
-- `wrangler deploy --dry-run` with both configs lists `env.DBA_LINKS (DbaLinkDO)` and `DBA_ISSUER`.
-- Playwright `npm run test:e2e`: 28/28 pass (run with the system Chrome because the Playwright
-  browser download is blocked in this sandbox), including the new account-section/callback test.
+`npm run lint` is clean and `npm test` passes (1,019 tests, 19 of them new) at every commit of the
+series; `npm run docs:generate` leaves no drift; Playwright `npm run test:e2e` passes, including
+the account-section and callback test. The new tests sign credentials, access tokens, status
+lists and OIDC ID tokens with the vendored `issuer.js` and stub `fetch` for the JWKS, status list,
+discovery and token endpoint. They cover scopes from grants (never `SESSION`), wrong audience,
+unlinked or unconfirmed accounts (403 `account_not_linked`), revocation, every DPoP proof failure,
+access tokens and Clerk fall-through, metered reads and the monthly cap, MCP, a JWKS outage (503),
+the link flow (single-use, expiring state, one DBA account per cronly account, stale-claim
+takeover), and the vendored file hashes.
 
 ## Owner steps
 
@@ -95,25 +90,11 @@ If `main` has moved, try `git am -3`; the likely conflicts are `STATUS.md`, `src
    `dba curl https://cronly.org/api/account` (expect a 21 µ$ charge), revoke at DBA and expect 401
    within five minutes.
 
-## Not done / follow-ups
+## Follow-ups
 
 - Revocation seen by the verifier is not written back to the `dba-key:` row, so a run already
   queued by a since-revoked credential can still retry until the credential expires or the
   account unlinks (bounded by job retries and the cap).
+- Refresh the vendored verifier (see above).
 - Resource-scoped grants, Stage B device-bound web sessions, and online authorization
-  (`limits.uses`, `require.*` deny today).
-
-## Issues found in `packages/verify` (fix here, then re-vendor)
-
-1. `createOidcClient` caches the discovery document and the ID-token JWKS without checking
-   `response.ok` (`discovery ||= await (await fetcher(…)).json()`, same for `jwks`). One 5xx JSON
-   body is cached for the life of the client, after which `begin()`/`finish()` fail with a
-   `TypeError` until the isolate restarts. cronly works around it by building a client per link
-   request.
-2. `createSiteAuth` reports `caveats.spend_usd_per_month` as the minimum over **all** grants,
-   including grants for other audiences' namespaces and grants that do not currently apply. That is
-   conservative, but a `hashbin:*` grant's cap also caps cronly use of a multi-audience credential.
-   Consider the minimum over grants that match the site's namespace.
-3. `status-list.js` `inflate` checks its `maxBytes` bound only after decompressing the whole list,
-   so the bound does not prevent the memory use it describes. (Lists are issuer-signed and the
-   signature is checked first, so this needs a compromised issuer key.)
+  (grants with `limits.uses` or online-only `require` members deny today).
