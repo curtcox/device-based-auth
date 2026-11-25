@@ -47,7 +47,7 @@ hashbin). Secrets: `DBA_CLERK_SECRET_KEY`, `DBA_CLERK_PUBLISHABLE_KEY`; add a we
 `https://devicebasedauth.org/webhooks/clerk` for `user.created`/`user.updated`/`user.deleted` and store its signing
 secret as `DBA_CLERK_WEBHOOK_SECRET`. Set the GitHub variable `DBA_OPERATOR_ACCOUNT` to your own
 Clerk user id: that account owns the first-party audiences (devicebasedauth.org, hashbin.org,
-cronly.org) and pays for their online decisions and OpenID Connect sign-ins, so keep it funded.
+cronly.org, subetha.us) and pays for their online decisions and OpenID Connect sign-ins, so keep it funded.
 
 Use session token version 2 (the default for new Clerk applications): its `fva` claim says how many
 minutes ago the user last verified a factor. Creating API keys, approving or issuing `dba:*`

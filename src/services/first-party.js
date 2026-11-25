@@ -1,7 +1,9 @@
 /**
- * The three first-party audiences and their action catalogs. hashbin and cronly actions mirror
+ * The first-party audiences and their action catalogs. hashbin and cronly actions mirror
  * those sites' own scope lists (hashbin src/auth/scopes.js USER_SCOPES; cronly
- * src/auth/scopes.js) so a DBA grant maps one-to-one onto the checks they already make.
+ * src/auth/scopes.js), and subetha's its token scopes (workers/api/src/auth.ts scopeAllows), so a
+ * DBA grant maps one-to-one onto the checks they already make. subetha grants name topics as
+ * resources ("@alice/doorbell", "@alice/*"), as its own token scopes do.
  * "<ns>:session" means "may sign in to the site's web UI".
  */
 export const DBA_SCOPES = Object.freeze({
@@ -60,5 +62,16 @@ export const FIRST_PARTY = Object.freeze([
       'secrets:write': 'Set and rotate secrets.'
     }),
     redirect_uris: ['https://cronly.org/auth/dba/callback']
+  },
+  {
+    name: 'subetha.us', namespace: 'subetha', description: 'SubEtha: send and receive messages between any devices over any transport, paid per message.',
+    catalog: catalog('subetha', {
+      session: 'Sign in to subetha.us.',
+      publish: 'Publish messages to topics (resources: topic names or "@handle/*"), paid from your subetha balance.',
+      subscribe: 'Receive messages from topics (resources: topic names or "@handle/*").'
+    }),
+    // The linking callback in production and staging, and Clerk's callback for DBA as a custom
+    // OpenID Connect provider in subetha's Clerk application (sign-in, Stage A).
+    redirect_uris: ['https://subetha.us/auth/dba/callback', 'https://staging.subetha.us/auth/dba/callback', 'https://clerk.subetha.us/v1/oauth_callback']
   }
 ]);

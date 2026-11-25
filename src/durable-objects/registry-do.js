@@ -3,7 +3,9 @@ import { FIRST_PARTY } from '../services/first-party.js';
 
 export const AUDIENCE_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$|^localhost(?::\d{1,5})?$|^[a-z0-9-]+\.localhost(?::\d{1,5})?$/;
 export const NAMESPACE = /^[a-z0-9-]{1,32}$/;
-const RESERVED = new Set(['dba', 'hashbin', 'cronly', 'admin', 'system', 'test', 'example']);
+// Bump when FIRST_PARTY gains an audience (v2: subetha.us).
+const SEED_VERSION = 'seeded:v2';
+const RESERVED = new Set(['dba', 'hashbin', 'cronly', 'subetha', 'admin', 'system', 'test', 'example']);
 
 /**
  * The global registry of audiences (relying parties): name (a domain), action namespace,
@@ -12,13 +14,19 @@ const RESERVED = new Set(['dba', 'hashbin', 'cronly', 'admin', 'system', 'test',
 export class RegistryDO {
   constructor(ctx, env) { this.storage = ctx.storage; this.env = env; }
 
+  /**
+   * Adds the first-party audiences. A registry seeded before an audience joined FIRST_PARTY gets
+   * it on the next version, unless its name or namespace was taken meanwhile: a customer's
+   * audience is never overwritten (the owner then resolves it by hand).
+   */
   async seed(tx) {
-    if (await tx.get('seeded:v1')) return;
+    if (await tx.get(SEED_VERSION)) return;
     for (const audience of FIRST_PARTY) {
+      if (await tx.get(`aud:${audience.name}`) || await tx.get(`ns:${audience.namespace}`)) continue;
       await tx.put(`aud:${audience.name}`, { ...audience, owner: this.env.OPERATOR_ACCOUNT || 'operator', first_party: true, verified: true, accept_access_tokens: true, created_at: 0 });
       await tx.put(`ns:${audience.namespace}`, audience.name);
     }
-    await tx.put('seeded:v1', true);
+    await tx.put(SEED_VERSION, true);
   }
 
   async fetch(request) {
