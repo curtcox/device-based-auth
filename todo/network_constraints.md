@@ -1,8 +1,8 @@
 # Network constraints: address, route and latency
 
-Status: STATUS **B10** (work), **D16** (owner's choices, 2026-11-19), **D17** (prices, open).
-These were B8, D14 and D15 when first written; those IDs went to other items first.
-Design summary in the master plan §3.6. This file is written to be picked up cold.
+Status: STATUS **B10** (in progress: N1–N4 done, §13a), **D16** (owner's choices),
+**D17** (prices, proposed; implemented for address lists). Design summary in the master plan
+§3.6. This file is written to be picked up cold.
 
 ## 1. What and why
 
@@ -24,7 +24,7 @@ look-alike or relayed endpoint.
 Network constraints are **evidence about the connection, not proof of identity**. The device key
 still proves who is talking; these rules narrow from where and how.
 
-## 2. Decisions already made (D16, owner, 2026-11-19)
+## 2. Decisions already made (D16, owner)
 
 1. **Both directions.** A grant can constrain the device's connection as seen by the verifier
    (`net.client`), and the connection the device sees to the relying party (`net.server`), which
@@ -57,17 +57,17 @@ still proves who is talking; these rules narrow from where and how.
 - **Device-side (`net.server`) rules protect the device, not the relying party.** A modified
   device can ignore them. Relying parties never treat a device's report about the server as a
   reason to allow.
-- **Browsers cannot see server addresses or choose relays.** The browser SDK enforces only the
-  server latency rule; a grant whose `net.server` has addresses or a route is unusable from a
-  browser (fails closed, with a clear reason at enrollment time).
+- **Browsers cannot see server addresses or choose relays.** The browser SDK can enforce only
+  the server latency rule; a grant whose `net.server` has addresses or a route is to be unusable
+  from a browser (fails closed, with a clear reason at enrollment time; N7).
 
 ## 3. Vocabulary
 
 ### 3.1 The `net` constraint
 
-A new grant field, beside `when` and `where`. Old verifiers treat it as an unknown constraint
-and deny (fail closed, spec/evaluation.md), so it can ship without breaking anything. Vocabulary
-`ver` becomes 2 for credentials that use it.
+A grant field beside `when` and `where` (spec/evaluation.md §3.10). Old verifiers treat it as an
+unknown constraint and deny (fail closed). Credentials that use it have `ver` 2; all others keep
+`ver` 1, so older verifiers keep accepting them.
 
 ```json
 "net": {
@@ -97,8 +97,8 @@ and deny (fail closed, spec/evaluation.md), so it can ship without breaking anyt
 - Each of `addresses`, `route` and `latency` is optional; every one present must pass (AND).
   Inside `addresses`, the sources form a **union**: the address must be allowed by at least one
   of `cidrs`, `lists`, `dns` or `webhook`.
-- `where.networks` keeps working unchanged and is evaluated as today. New grants built by our
-  tools use `net.client.addresses.cidrs` instead; the grant builder converts.
+- `where.networks` keeps working unchanged. New grants built by our tools should use
+  `net.client.addresses.cidrs` instead (the grant builder's `net` section is N9).
 
 ### 3.2 Addresses
 
@@ -107,7 +107,7 @@ and deny (fail closed, spec/evaluation.md), so it can ship without breaking anyt
 | `cidrs` | IPv4/IPv6 CIDR ranges, inline. ≤ 64. | Anyone |
 | `lists` | Named address lists (§4), referenced by id and URI. ≤ 8. | Anyone (fetch and cache the list) |
 | `dns` | Host names; the address must be one of their current A/AAAA answers. ≤ 16. `dnssec: true` requires a validated answer (DoH with the AD bit). | Anyone who can resolve DNS |
-| `webhook` | A registered webhook (the gate registry's `webhook` kind, reused) that answers allow/deny for an address (§5). | DBA online only |
+| `webhook` | A registered webhook (a `gate_…` id: the gate registry's `webhook` kind, reused) that answers allow/deny for an address (§5). Client direction only. | DBA online only |
 
 `of` says which address is checked:
 
@@ -130,7 +130,7 @@ which the CLI and native SDKs read from the socket. `of: "origin"` is not allowe
 A relay device is an ordinary DBA device whose credential grants `dba:relay:forward` for the
 audience (or `*`) and lists its **egress** addresses in `device.relay.egress` (CIDRs, ≤ 16), set
 by the owner at enrollment. The relay must belong to the same account as the credential it
-vouches for, or to an account that granted relaying to it (open question §12).
+vouches for (cross-account relays are an open question, §14).
 
 ### 3.4 Latency
 
@@ -147,25 +147,33 @@ leaves less than 10 ms of network budget.
 
 ## 4. Named address lists
 
-- Account-owned objects: `POST /api/v1/address-lists` (`adl_…` id, 128 random bits), `PUT` to
-  replace the entries, `DELETE`. Up to 10,000 CIDRs per list, 50 lists per account. Scopes
-  `networks:read` / `networks:write`; changes from the dashboard need a recent sign-in (as gate
-  changes do), because widening a list widens every credential that names it.
-- Published at `status.devicebasedauth.org/v1/addresses/{id}` as a signed JWT
-  (`typ: dba-addresses+jwt`, issuer key, `iat`, `exp` = `iat` + 24 h, `ver` (monotonic),
-  `cidrs` sorted). Republished at most once per 60 s per list (debounced, like status lists),
-  `Cache-Control: max-age=60`, and once a day to roll `exp`.
+- Account-owned objects: `POST /api/v1/address-lists` (`adl_…` id, 128 random bits), `GET`,
+  `PUT` to replace the entries, `DELETE`. Up to 10,000 CIDRs per list (stored in the account
+  object in chunks of 1,000), 50 lists per account. Scopes `networks:read` / `networks:write`;
+  replacing and deleting need a recent sign-in (as gate changes do), because widening a list
+  widens every credential that names it. Code: `src/api/address-lists.js`,
+  `src/durable-objects/account/address-lists.js`, `src/services/address-lists.js`.
+- Published at `status.devicebasedauth.org/v1/addresses/{id}` (also served by the Worker at
+  `/status/v1/addresses/{id}`) as a signed JWT (`typ: dba-addresses+jwt`, spec/credential.md §7a:
+  issuer key, `iat`, `exp` = `iat` + 24 h, `ver` (monotonic), `cidrs` sorted). Published at most
+  once per 60 s per list (debounced on the account's alarm), `Cache-Control: max-age=60`, and
+  re-signed every 20 h for 13 months after the list's last change, which the create/replace
+  price prepays.
+- Issuance accepts only the issuing account's own live lists, named by their canonical URI.
+  Online decisions read lists from R2 through a 60 s per-isolate cache. List URIs may be
+  `http://` on loopback for local development.
 - Verifiers fetch through the CDN, cache for at most `max-age`, and may serve a stale copy for up
   to 10 minutes when the fetch fails; after that the list is **unavailable** and its source
   matches nothing. A list with a lower `ver` than one already seen is ignored (no rollback).
-- Deleting a list publishes a signed tombstone (`deleted: true`), which matches nothing. Every
-  credential naming it denies through that source; the dashboard lists those credentials before
-  the delete.
+- Deleting a list publishes a signed tombstone (`deleted: true`), which matches nothing and is
+  purged two days later. Every credential naming it denies through that source; the dashboard
+  is to list those credentials before the delete (N9).
 - Lists are readable by anyone who has the URI, which every audience shown the credential has.
   The UI says so ("this list of addresses is visible to the sites you use it with"). An account
   that wants its addresses private uses the webhook source instead.
-- `kind: "audience"` lists: an audience may publish lists too (e.g. "hashbin's own relays"), so
-  account owners can name them in grants. Same format, owned by the audience's account.
+- `kind: "audience"` lists (not built): an audience may publish lists too (e.g. "hashbin's own
+  relays"), so account owners can name them in grants. Same format, owned by the audience's
+  account.
 
 ## 5. Webhook address check
 
@@ -246,19 +254,24 @@ only; the browser SDK refuses the grant.
 ### 7.1 Client direction (verifier times the device)
 
 Rides on the DPoP server-nonce flow (RFC 9449 §8, `use_dpop_nonce`) that DBA's own API, the
-browser SDK (v1.4.0), the CLI and the samples already answer for D15 (§7.1.1 says how the two fit):
+browser SDK (v1.4.0), the CLI and the samples answer for D15 (§7.1.1 says how the two fit). Built
+in `packages/verify/src/rtt.js` and `createVerifier({ rtt: { secret } })`:
 
 1. A request without a fresh RTT nonce gets `401` with `WWW-Authenticate: DPoP
    error="use_dpop_nonce"`, `DPoP-Nonce: <rtt nonce>` and, in the body, `dpop_nonce` and
    `rtt: { samples_left }`.
-2. The **RTT nonce** is stateless: `base64url(t_ms ‖ jkt-hash ‖ peer-addr-hash ‖ HMAC)` keyed by a
-   verifier secret. The verifier needs no storage; it reads its own issue time back.
+2. The **RTT nonce** is stateless: `rtt1.` + base64url(issue time in ms ‖ samples taken ‖ best
+   round trip so far ‖ jkt hash ‖ peer-address hash ‖ HMAC-SHA-256/128) keyed by a verifier
+   secret of at least 32 bytes, shared by every instance that may see the retry. The verifier
+   needs no storage; it reads its own issue time back. A nonce older than 10 s is not a
+   measurement.
 3. The device immediately re-sends the request with a proof whose `nonce` is that value. The
    verifier computes `rtt = now_ms − t_ms` on its own clock (no clock sync with the device), and
    checks the HMAC, the `jkt` and that the peer address is the one the nonce was issued to.
-4. With `samples > 1` the verifier repeats and keeps the minimum. `context.network.rtt_ms` is the
-   result; the evaluator compares it.
-5. A passing result may be remembered for `reuse_s` keyed by (`jkt`, peer address).
+4. With `samples > 1` the verifier repeats and keeps the minimum (carried in the nonce, so still
+   stateless). `context.network.rtt_ms` is the result; the evaluator compares it.
+5. A passing result may be remembered for `reuse_s` keyed by (`jkt`, peer address), in memory
+   (at most 10,000 entries).
 
 Notes:
 - On Cloudflare Workers the clock advances between requests (it is frozen only *during* a
@@ -271,34 +284,32 @@ Notes:
 
 #### 7.1.1 One nonce per proof: fitting with D15
 
-A proof carries one `nonce`, and since D15 a nonce can already be asked for for another reason:
-DBA's account object asks for its own random epoch nonce (`dpn_…`) for its first 60 s, against
-proof replay after a restart, and sends `DPoP-Nonce` on its responses. The two must not fight:
+A proof carries one `nonce`, and D15 asks for one for another reason: DBA's account object asks
+proofs made before it started for its own random epoch nonce (`dpn_…`), against proof replay
+after a restart, and sends `DPoP-Nonce` on its responses. The two must not fight:
 
 - **One challenge answers both.** A verifier that wants a replay nonce and a latency
   measurement issues only the RTT nonce. It is fresh, signed by the verifier and bound to the
   `jkt` and peer address, so it does a replay nonce's job too. A proof never needs two nonces.
-- **DBA's own API** (sign-in and confirmation `net` settings, N8): when the account object needs
-  a latency measurement, its challenge is an RTT nonce keyed by a secret of its own. It meets
-  the D15 rule like the epoch nonce does when its `t_ms` is after the object started (it cannot
-  predate the restart, so a proof captured before the restart still fails). Without a latency
-  rule nothing changes: the epoch nonce as today.
-- **Library.** `verifyProof`'s `nonce` option is an exact value today. N2 lets it also take a
-  check function (`nonce: (value) => ({ ok, rtt_ms })`), so a stateless RTT nonce is checked by
-  HMAC and age instead of equality; the exact value stays for D15-style nonces.
+- **DBA's own API** (sign-in and confirmation `net` settings, N8, not built): when the account
+  object needs a latency measurement, its challenge is an RTT nonce keyed by a secret of its
+  own. It meets the D15 rule like the epoch nonce does when its issue time is after the object
+  started (it cannot predate the restart, so a proof captured before the restart still fails).
+  Without a latency rule the epoch nonce is used, as now.
+- **Library.** `verifyProof`'s `nonce` option takes an exact value (D15-style nonces) or a check
+  function (`nonce: (value) => ({ ok, rtt_ms })`), so a stateless RTT nonce is checked by HMAC
+  and age instead of equality.
 - **Clients.** The SDK and CLI keep the last `DPoP-Nonce` per origin, put it in every later
-  proof, and retry once, and only for a nonce different from the one kept. RTT nonces are
-  always new, so they pass that test, but two things change in N2:
+  proof, and retry once, and only for a nonce different from the one kept. For RTT nonces:
   - Clients use an RTT nonce once (a challenge whose body has `rtt.samples_left`) and drop it
     after the exchange: kept for the next proof, it would time that request from this one, and
     the verifier cannot tell a reused nonce from a slow answer.
-  - A kept RTT nonce is stale by the next request. The verifier answers it with a new
-    challenge, not a denial, until `samples` attempts have failed, then denies
-    `rtt_exceeded`. Clients follow `rtt.samples_left` (at most 3 retries), not just one.
-  - Commands that hand a proof to another program (`dba headers`, `dba curl`, which ask
-    `POST /api/v1/dpop-nonce` first for DBA's origin) cannot answer a timed challenge for
-    another site. They refuse grants with `net.client.latency` and say so. A timed request
-    needs a client that sends the request itself.
+  - A stale RTT nonce gets a new challenge, not a denial, until `samples` attempts have failed,
+    then `rtt_exceeded`. Clients follow `rtt.samples_left` (at most 3 retries), not just one.
+  - Commands that hand a proof to another program (`dba headers`, `dba sign`, `dba curl`, which
+    ask `POST /api/v1/dpop-nonce` first for DBA's origin) cannot answer a timed challenge for
+    another site. They refuse credentials whose every grant is timed, and say so. A timed
+    request needs a client that sends the request itself.
 - **DBA as the online verifier.** `/authorize` takes the relying party's measurement
   (§7.2). The device's proof there was made for the relying party, so DBA's epoch nonce is
   not involved.
@@ -325,12 +336,12 @@ the verifier first and handed in as context, so the vectors stay plain JSON:
 
 | Context field | Filled by |
 |---------------|-----------|
-| `context.network.ip` | already today (platform, never client headers) |
+| `context.network.ip` | the verifier (platform-reported, never client headers; §10) |
 | `context.network.rtt_ms` | §7.1 measurement, or absent |
 | `context.address_lists` | `{ id: { cidrs, ver } \| "unavailable" }` for every list the credential names |
 | `context.dns` | `{ name: { addrs, dnssec } \| "unresolved" }` |
 | `context.address_webhook` | online only: `{ gat_…: true \| false }` |
-| `context.route` / `context.route_error` | §6.3 |
+| `context.route` / `context.route_error` | §6.3: `{ relays, origin, attested }` (one `attested` boolean per hop) or a reason matching `[a-z0-9_]{1,64}` |
 | `context.mode` | `offline` / `online` (exists) |
 
 New reasons (spec/evaluation.md §3.10): `address_unavailable` (no peer or origin address),
@@ -354,9 +365,12 @@ SDK and CLI evaluate it with the same code and the same reasons prefixed `server
 
 ## 10. Security, abuse and privacy
 
-- **IP source**: the verify library reads only `request.cf`/`CF-Connecting-IP` on Workers and the
-  socket address in Node; a `trustProxies` option must be set explicitly to honour
-  `X-Forwarded-For`, and then only from listed proxy ranges.
+- **IP source**: verifiers take the peer address from the platform: `CF-Connecting-IP` on
+  Workers (Cloudflare sets it), the socket address elsewhere; a `trustProxies` option must be set
+  explicitly to honour `X-Forwarded-For`, and then only from listed proxy ranges. As built, the Go
+  verifier makes the caller choose (`RemoteAddrLocation` or `CloudflareLocation`), but the JS
+  `createVerifier` reads `CF-Connecting-IP` whenever the caller passes no
+  `check.location.network`, which is only safe on Workers, and has no `trustProxies` (§13a).
 - **Relay keys** are device keys: never on DBA's server; relays should be attested
   (`require_attested`) and short-lived; the dashboard shows each relay's recent hop counts.
 - **Challenge abuse**: RTT nonces cost the verifier an HMAC and no storage; per-IP rate limits on
@@ -370,45 +384,56 @@ SDK and CLI evaluate it with the same code and the same reasons prefixed `server
 
 ## 11. Money
 
-New operations for `src/utils/cost-policy.js` and prices for `src/utils/pricing.js`, each passing
-the price-floor test. Numbers come from counting, then owner approval (D17):
+Operations in `src/utils/cost-policy.js`, prices in `src/utils/pricing.js`, each passing the
+price-floor test; counted in `src/cost-counts.test.js`, then owner approval (D17). Derivations in
+docs/business/pricing.md.
 
-| Operation | Worst case to count | Payer |
-|-----------|--------------------|-------|
-| Address list create / replace | DO write + R2 put (class A) + later republish(es) to roll `exp` for the list's life, prepaid like issuance prepays storage | Owning account |
-| Address list daily republish | prepaid by the above; lists not renewed for 13 months stop being republished and expire (deny) | — |
-| Webhook address check | a signed subrequest + DO cache write | Account that owns the webhook (the issuer) |
-| Relay credential | ordinary issue / renew prices | Relay's account |
-| CIDR, DNS, route and latency checks | verifier-side, free to DBA | — |
-| Online decision with `net` | unchanged decision price (14 µ$) if counting shows no extra row writes | Audience |
+| Operation | Worst case counted | Price | Payer |
+|-----------|--------------------|-------|-------|
+| Address list create / replace (`address_list`) | per started 1,000 ranges: the request, a debounced publish, the later free delete with its tombstone and purge, list and chunk rows, 2 R2 writes | 242 µ$ (proposed) | Owning account |
+| Address list published life (`address_list_day`) | re-signing every 20 h up to 13 months after the last change; each create or replace pays for the days it adds (a new list ≈ 6,200 µ$). Lists unchanged for 13 months stop being re-signed and expire (deny) | 15 µ$ per day (proposed) | Owning account |
+| Webhook address check (N6) | a signed subrequest + DO cache write | to count | Account that owns the webhook (the issuer) |
+| Relay credential | ordinary issue / renew | 87 / 25 µ$ | Relay's account |
+| CIDR, DNS, route and latency checks | verifier-side | free to DBA | — |
+| Online decision with `net` | lists read through a per-isolate cache; no extra row writes | 14 µ$ (unchanged) | Audience |
 
 List fetches are CDN-cached R2 reads like status lists (misses cost a class-B read and are
 covered by the cost brake's free-path budget).
 
 ## 12. Spec, verifier and tools
 
-- `spec/credential.md`: the `net` grant field, `device.relay.egress`, the `dba-addresses+jwt`,
-  `dba-hop+jwt`, `dba-addrcheck+jwt` and `dba-rtt+jwt` formats, audience `server_keys`.
-- `spec/evaluation.md` §3.10 `net`, with the context table of §8 and the reasons.
-- Vectors in all three verifiers (JS, Python, Go): each address source alone and in union;
-  `of: origin` with and without a route; unavailable list; stale list rollback ignored;
-  unvalidated DNS with `dnssec`; route hop count, order, egress chain break, wrong `ath`,
-  revoked relay, relay not listed; rtt missing / under / over / `samples` minimum; webhook
-  offline → `online_required`; unknown `net` field → deny; `where.networks` unchanged.
-  Signature vectors for hops, lists and RTT echoes.
-- `@devicebasedauth/verify`: list fetch/cache, DoH resolver, route verification, RTT nonces,
-  `site.rttEcho()`, `trustProxies`; browser copy and SDK bundle regenerated.
-- SDK: answer RTT challenges without delay (keep-alive), time server echoes, evaluate
-  `net.server`; refuse grants it cannot enforce in a browser. New SDK release.
-- CLI: `dba relay` (run an inline relay or the tunnel hop endpoint), `dba address-lists
+Built: `spec/evaluation.md` §3.10 (`net`, the context table of §8, the reasons) and
+`spec/credential.md` §7a (`dba-addresses+jwt`); the evaluator in JS, Python and Go with vectors
+for each address source alone and in union, `of: origin` with and without a route, unavailable
+lists, unvalidated DNS with `dnssec`, route context (hop count, relay not listed, not attested,
+`route_error`), rtt missing / under / over, webhook offline → `online_required`, unknown `net`
+field → deny, `where.networks` unchanged; in `@devicebasedauth/verify` list fetch/cache
+(`createAddressListResolver`), the DoH resolver (`createDohResolver`) and RTT nonces
+(`createRttChallenger`); the SDK and CLI answering timed challenges.
+
+Still to do (phase in brackets):
+
+- `spec/credential.md`: `device.relay.egress`, `dba-hop+jwt` [N5], `dba-addrcheck+jwt` [N6],
+  `dba-rtt+jwt` and audience `server_keys` [N7]. Signature vectors for hops [N5] and RTT echoes
+  [N7]; vectors for the verifier-side route checks (egress chain break, wrong `ath`, revoked
+  relay) [N5].
+- `@devicebasedauth/verify`: route verification [N5], `site.rttEcho()` [N7], `trustProxies` and
+  a safe default IP source outside Workers (§10); browser copy and SDK bundle regenerated.
+  Python and Go: they evaluate `net` from context today; RTT nonces, DoH and list fetching are
+  JS-only.
+- SDK: time server echoes, evaluate `net.server`; refuse grants it cannot enforce in a browser
+  [N7]. New SDK release [N9].
+- CLI: `dba relay` (run an inline relay or the tunnel hop endpoint) [N5], `dba address-lists
   list|create|set|delete`, `dba net test <aud>` (measures RTT, address and route as a verifier
-  would see them).
-- Site: address-list editor, relay enrollment (egress ranges), grant builder `net` section with
-  measured signing time, inspector and playground render `net` in English ("only from
-  203.0.113.0/24 or the addresses in 'Office', through relay 'HQ gateway', within 40 ms").
+  would see them) [N9].
+- Site: relay enrollment (egress ranges) [N5]; address-list editor, grant builder `net` section
+  with measured signing time, and playground inputs for RTT, lists, DNS answers and routes [N9].
+  The inspector, playground and approval page already render `net` in English through
+  `describeGrant` ("only from 203.0.113.0/24 or the addresses in list adl_…, through relay
+  dev_…, within 40 ms").
 - Docs: a "Network constraints" page with CI-executed samples (an offline verifier enforcing
   address + RTT, a relay in front of a sample service, a webhook address service in Node and
-  Python, a server adding `rttEcho`).
+  Python, a server adding `rttEcho`) [N9].
 
 ## 13. Phases
 
@@ -418,23 +443,72 @@ STATUS row updated.
 | Phase | Deliverable | Exit criteria |
 |-------|-------------|---------------|
 | N1 ✅ | Spec text and vectors for `net` (addresses inline + context-resolved lists/DNS, route context, rtt); evaluator in JS, Python, Go | Every new vector passes in all three; old `where.networks` vectors unchanged |
-| N2 ✅ | RTT challenge in the verify library (nonce check function, retry, samples, reuse), the account object's RTT nonce standing in for its D15 epoch nonce, SDK/CLI following `samples_left`, `dba headers`/`dba curl` refusing latency grants (§7.1.1) | e2e: a device behind an injected 100 ms delay fails `max_rtt_ms: 40` and passes without it |
+| N2 ✅ | RTT challenge in the verify library (nonce check function, retry, samples, reuse), SDK/CLI following `samples_left`, `dba headers`/`sign`/`curl` refusing timed credentials (§7.1.1) | A device behind an injected delay fails `max_rtt_ms` and passes without it (real-clock test: 150 ms against 60) |
 | N3 ✅ | Named address lists: CRUD, signed publishing on R2, verifier fetch/cache/stale/rollback rules, D17 prices in cost policy | Changing a list changes an offline verifier's decision within 60 s + cache; cost-count test covers the new ops |
 | N4 ✅ | DNS source (DoH, DNSSEC flag, TTL bounds) | Tested against a stub resolver incl. unvalidated and failing answers |
 | N5 ⬜ | Relays: `dba:relay:forward`, egress at enrollment, `dba-hop+jwt`, inline and tunnel modes, `dba relay`, route verification | e2e through a local inline relay and a CONNECT relay; direct send with replayed hops denied by the egress check |
 | N6 ⬜ | Webhook address check on `/authorize` (gate registry `purpose: "address"`, cache) | CI sample service allows and denies; unreachable and unpaid deny |
 | N7 ⬜ | Server direction: audience `server_keys`, `rttEcho`, SDK/CLI `net.server` (addresses, route, latency) | CLI refuses a server outside its ranges; browser SDK times a signed echo and refuses unenforceable grants |
-| N8 ⬜ | Sign-in and confirmation `net` settings; ID token `dba_net`; the account object's RTT nonce standing in for its D15 epoch nonce (moved from N2: DBA's own API has no latency rule before this phase) | Playwright: sign-in refused from an address outside the account's setting |
+| N8 ⬜ | Sign-in and confirmation `net` settings; ID token `dba_net`; the account object's RTT nonce standing in for its D15 epoch nonce (§7.1.1); address lists, DNS and latency for `dba:*` grants on DBA's own API | Playwright: sign-in refused from an address outside the account's setting |
 | N9 ⬜ | Tools and docs (§12) not already done per phase; SDK release | Every docs sample runs in CI |
 
-## 13a. Progress (moved from STATUS B10)
+## 13a. Where things stand
 
-- N1 ✅ (2026-11-22): `net` in spec/evaluation.md §3.10, 49 vectors, the evaluator in JS (`packages/verify/src/net.js`, `ip.js`), Python and Go; credential `ver` 2 only for grants with `net`.
-- N2 ✅ (2026-11-22): stateless timed DPoP nonces (`rtt.js`), `createVerifier({ rtt })` challenging, timing, keeping the best of `samples` and reusing a pass for `reuse_s`; CLI and browser SDK answer timed challenges (up to 3) and use each timed nonce once; `dba headers`/`sign`/`curl` refuse credentials whose every grant is timed. Checked with a real-clock test (150 ms injected delay fails `max_rtt_ms` 60) rather than Playwright; the account object's own RTT nonce moved to N8, where DBA's API first gets a latency rule.
-- N4 ✅ (2026-11-22): `createDohResolver` (`dns.js`: DoH JSON API, A and AAAA, DNSSEC only when both answers carry AD, TTL bounded to 30–300 s, failures cached 5 s, at most 16 names per request) and `createVerifier({ dns })`.
-- N3 ✅ (2026-11-23): named address lists (`/api/v1/address-lists`, scopes `networks:read`/`networks:write`, replace and delete need a recent sign-in; up to 10,000 ranges, 50 lists per account; stored in the account object in 1,000-range chunks), published as signed `dba-addresses+jwt` (spec/credential.md §7a) on R2 at `status…/v1/addresses/{id}`, at most once a minute (debounced on the account's alarm), re-signed every 20 h for 13 months after the last change, tombstone on delete (purged two days later); issuance accepts only the account's own live lists at their canonical URI (other accounts' and audience lists, §4 `kind: audience`, not yet); online decisions read lists from R2 through a 60 s per-isolate cache; `createVerifier` fetches, verifies and caches them (`createAddressListResolver`: 60 s fresh, 10 min stale, no rollback, tombstones and expired copies match nothing); list URIs may be `http://` on loopback for local development (spec, vectors and all three verifiers); proposed prices in D17. DBA's own API (dba:* grants) does not resolve lists yet (they deny there) — N8. Next: N5 relays or N6 webhook address check (N6 prices also wait on D17); no CLI or dashboard editor for lists yet (N9).
+**Built (N1–N4).**
 
-**SDK bundle is 65,446 of its 65,536-byte limit**: the next SDK change needs room first (minify whitespace in scripts/build-sdk.mjs, about 47 KB, or keep `describeGrant` out of the bundle); SDK release not cut yet (N9).
+- N1: `net` in spec/evaluation.md §3.10 with its vectors; the evaluator in JS
+  (`packages/verify/src/net.js`: `validateNet`, `checkNetClient`, `describeNet`; addresses in
+  `ip.js`), Python (`net.py`) and Go (`grants_net.go`). Issuance validates `net` and sets `ver` 2
+  only for credentials with it.
+- N2: `rtt.js` (§7.1) and `createVerifier({ rtt })`: challenge, timing, best of `samples`, reuse
+  for `reuse_s`. The browser SDK and CLI answer up to 3 timed challenges and use each timed nonce
+  once; `dba headers`/`sign`/`curl` refuse credentials whose every grant is timed.
+- N3: named address lists (§4), prices in §11, `createAddressListResolver` (60 s fresh, 10 min
+  stale, no rollback, tombstones and expired copies match nothing) used by `createVerifier`
+  by default; `/authorize` resolves them from R2.
+- N4: `createDohResolver` (`dns.js`: DoH JSON API, A and AAAA, DNSSEC only when both answers
+  carry AD, TTL bounded to 30–300 s, failures cached 5 s, at most 16 names per request) and
+  `createVerifier({ dns })`.
+
+**Gaps in what is built** (none blocks N5; each fails closed except the first):
+
+- The JS verifier's default IP source is the `CF-Connecting-IP` header (§10). Off Workers a
+  client can set it and pass an address rule, unless the caller passes
+  `check.location.network.ip` from the socket. Needs a safe default or a required option, and
+  `trustProxies`; until then the README and docs should say so.
+- `/authorize` resolves address lists but not DNS names, so a grant that relies on `dns` alone
+  denies online (`dns_unresolved`); it takes `rtt_ms` and the address from the relying party's
+  `context.network`.
+- DBA's own API does not resolve lists or DNS for `dba:*` grants (they deny there) [N8].
+- `net.server` is accepted at issuance and, as designed, ignored by verifiers, but no SDK or CLI
+  enforces it yet, so it protects nothing [N7]. Consider refusing it at issuance until then.
+- Issuance accepts `route` and `webhook` grants; they deny everywhere until N5 / N6.
+- Lists of other accounts and audience lists (§4 `kind: "audience"`) are refused at issuance.
+- No CLI or dashboard editor for lists yet [N9].
+- **SDK bundle is 65,454 of its 65,536-byte limit**: the next SDK change needs room first
+  (minify whitespace in scripts/build-sdk.mjs, or keep `describeGrant` out of the bundle). No SDK
+  release carries `net` support beyond v1.4.0's timed nonces [N9].
+
+**Next: N5 relays** (or N6, whose price also waits on D17). Picking up N5 cold:
+
+1. Spec first (spec/credential.md): the relay grant `dba:relay:forward` (add it to `DBA_SCOPES`
+   in `src/services/first-party.js`, which also makes it an API-key scope; decide whether the
+   relay names audiences as resources), `device.relay.egress` (CIDRs, ≤ 16), the `dba-hop+jwt`
+   format and the `DBA-Route` / `DBA-Route-Credentials` headers (§6), plus signature vectors.
+   The evaluator side already exists: it reads `context.route` / `context.route_error` (§8).
+2. Issuance: accept `device.relay.egress` from the owner at enrollment approval (`cleanDevice`
+   in `src/services/credentials.js` keeps only name, kind and key protection) and on
+   `POST /api/v1/credentials`; refuse it without `dba:relay:forward`; same-account relays only
+   (§14).
+3. Verify library: a route verifier (§6.3) that parses the headers, verifies each relay
+   credential through the same JWKS/status path as the device's, checks hop signatures, `iat`,
+   `ath` against the device proof, `n` order and the egress chain against the peer address, and
+   hands the evaluator `{ relays, origin, attested }` or a `route_error`. Python and Go take the
+   result as context, as for lists.
+4. `/authorize`: let the relying party pass the hops (its request headers) so DBA can run the
+   same route verifier online.
+5. CLI `dba relay`: an inline HTTP relay that appends its hop, and the tunnel hop endpoint
+   (`GET /.well-known/dba-hop?ath=…`, §6.2). Exit criteria in §13.
 
 ## 14. Open questions for later
 

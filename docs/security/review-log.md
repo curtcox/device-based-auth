@@ -135,3 +135,8 @@ detail. Add new findings to the end of "Found and fixed", and keep "Known limits
   first requests after an account object starts fail (D15).
 - **Issuer key withdrawal leaves status lists signed by the old key for up to about 12 hours**
   (docs/ops/issuer-key-compromise.md step 3): there is no command to re-sign every shard at once.
+- **The JS verifier trusts `CF-Connecting-IP` by default.** Unless the caller passes
+  `check.location.network`, `createVerifier` takes the client address (for `net.client` address
+  rules and network location) from that header, which only Cloudflare guarantees. A verifier running
+  elsewhere must strip it at its edge or pass the address itself; the Python port has the same
+  default, the Go port makes the caller choose. A `trustProxies`-style option is not built (B10).

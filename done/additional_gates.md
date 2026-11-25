@@ -1,14 +1,14 @@
 # Additional gates on authentication and authorization
 
-Status: **done** (G1–G9, 2026-11-19); STATUS **B7**, **D12** (owner's choices, 2026-11-19), **D13** (prices, open).
-Design summary in the master plan §6.4. This file is written to be picked up cold.
+Status: **done** (G1–G9); STATUS **B7**, **D12** (owner's choices), **D13** (prices, proposed).
+Design summary in the master plan §6.4. Kept for reference: the design below is as built; §11a
+maps it to the code.
 
 ## 1. What and why
 
-Today a grant can say `require.step_up: true`: every use waits for the account owner to approve it
-from a signed-in browser or dashboard device (`src/durable-objects/account-do.js`, `stepup:` rows,
-`/api/v1/step-ups`). This plan generalizes that into **gates**: named devices or services that must
-say yes before DBA lets something happen.
+A grant can say `require.step_up: true`: every use waits for the account owner to approve it from
+a signed-in browser or dashboard device. **Gates** generalize that: named devices or services that
+must say yes before DBA lets something happen. Step-up is the `owner` gate.
 
 - **Authorization gate**: *this action is allowed as long as it is approved by this device or
   service.* Attached to a grant; checked on each use.
@@ -26,7 +26,7 @@ Gate kinds in v1:
 
 | Kind | What answers | DBA stores |
 |------|--------------|------------|
-| `owner` (built in) | Any browser signed in to the account, or a dashboard device (`dba:session`). This is today's step-up. | nothing new |
+| `owner` (built in) | Any browser signed in to the account, or a dashboard device (`dba:session`). This is step-up. | nothing new |
 | `dba-device` | One named DBA device, signing its answer with its own key (SDK, CLI, mobile sample, or the dashboard open on that device). | the device id |
 | `totp` | Whoever holds an authenticator app (Google Authenticator, Authy, 1Password, Microsoft Authenticator in code mode…) types its current code. | the TOTP seed, sealed (§7) |
 | `webauthn` | A security key or passkey (YubiKey, Titan, platform passkey) signs a WebAuthn assertion. | the public key credential |
@@ -34,10 +34,10 @@ Gate kinds in v1:
 | `duo` | Duo Push to a Duo user (Duo Auth API). | Duo integration key, secret key (sealed), API host, Duo username |
 | `okta-verify` | Okta Verify push to an Okta user (Okta Factors API). | Okta org URL, API token (sealed), user and factor ids |
 
-Microsoft Authenticator push is only available to Microsoft Entra ID. Unless phase G8 turns up a
-public third-party push API, it is supported as a `totp` app only.
+Microsoft Authenticator push has no public third-party API that we know of (it serves Microsoft
+Entra ID); it is supported as a `totp` app.
 
-## 2. Decisions already made (D12, owner, 2026-11-19)
+## 2. Decisions already made (D12, owner)
 
 1. Authentication gates apply at sign-in **and** optionally periodically, through a short-lived
    signed confirmation that offline verifiers check for free.
@@ -104,8 +104,10 @@ A **gate entry** names one or more gates of the account and how long to wait:
 - `gates_reuse_s` (0–3600, default 0): one approval covers repeated uses of the same
   (credential, action, resource, audience) for this long. 0 = each approval is spent by one use.
 - `require.step_up: true` stays valid and means exactly
-  `gates: [{ any: ["owner"], timeout_s: 600, on_timeout: "deny" }]`. Existing credentials keep
-  working; the grant builder writes `gates` from now on.
+  `gates: [{ any: ["owner"], timeout_s: 600, on_timeout: "deny" }]`; `step_up` and `gates`
+  together are invalid. The grant builder writes `gates`.
+- Gate ids are `gate_` + 8–64 alphanumerics. `dba:*` grants cannot have gates (DBA checks them
+  per request with no gate engine).
 - Old verifiers deny `require.gates` as an unknown constraint (fail closed); nothing more needed.
 
 ### 3.3 Authentication at sign-in: account settings
@@ -118,10 +120,15 @@ A **gate entry** names one or more gates of the account and how long to wait:
 }
 ```
 
-Stored on the account (`GET/PUT /api/v1/settings/sign-in-gates`; changing them needs a recent
-sign-in, and loosening them also needs the current gates to pass, so a stolen session cannot
-switch them off). `audiences` override `default` for that OIDC client; `dashboard` covers DBA
-itself. Audiences can demand more (§6).
+Stored on the account (`GET/PUT /api/v1/settings/sign-in-gates`). Only the signed-in owner may
+change them (API keys and devices get 403 `session_required`), with a recent sign-in. A change
+that loosens a list (an entry no longer matched by a new one whose gates are among its gates and
+that does not newly allow on timeout) opens a `settings` gate request on the loosened lists'
+current entries (at most 3, `fail_open: false`, so silence never approves it), keyed by a hash of
+the exact change; the PUT answers 202 `gate_pending` until it is allowed, then the same PUT
+applies. A stolen session cannot switch the gates off. `audiences` override `default` for that
+OIDC client; `dashboard` covers DBA itself. The `owner` gate cannot be a sign-in gate (the owner
+is who signs in). Audiences can demand more (§6).
 
 ### 3.4 Authentication over time: `confirm`
 
@@ -153,43 +160,53 @@ A credential may carry a top-level `confirm` block:
 - Renewal, rotation, token exchange (§6.3 of the master plan) and X.509 certificates need a current
   confirmation; tokens and certificates never outlive it.
 - Online `/authorize` uses DBA's own record (`confirmed_until` on the credential row), so the
-  owner can end confirmation instantly for online audiences ("Stop trusting this device now");
-  offline verifiers stop within `every_s` at most, or at once on revocation.
+  owner can end confirmation instantly for online audiences ("Stop trusting now",
+  `POST /api/v1/credentials/{cid}/unconfirm`); offline verifiers stop within `every_s` at most,
+  or at once on revocation.
+- `confirm` is set by the issuer: on `POST /api/v1/credentials`, or by the owner on the
+  enrollment approval page. It is refused with `dba:*` grants, and `require.confirmation` cannot
+  be written by hand. A credential starts unconfirmed.
 
 ## 4. Gate requests (the engine)
 
 ### 4.1 One engine for every purpose
 
-Generalize `stepup:` rows in the AccountDO into `gatereq:` rows:
+Gate requests are `gatereq:` rows in the AccountDO (gates themselves are `gate:` rows):
 
 ```
-{ id: "gtr_…", purpose: "authorize" | "sign_in" | "confirm",
+{ id: "gtr_…", purpose: "authorize" | "sign_in" | "dashboard" | "confirm" | "settings" | "reverify" | "recover",
   cid, device_id, device_name, subject: { audience, action, resource } | { client_id } | { cid },
   entries: [{ any, timeout_s, on_timeout, deadline, delivered: {gate: "sent"|"failed"},
               answer: { gate, decision, at, by } | null, outcome: null|"allow"|"deny", by_timeout }],
   number: "47", created_at, approved_until, spent }
 ```
 
-- Creation is idempotent per (purpose, cid, subject) while one is waiting, as step-up is today:
-  retries reuse it, one notice per request.
+- Creation is idempotent per (purpose, cid, subject) and the grant's exact gate list while one is
+  waiting: retries reuse it, one notice per request. A different gate list needs its own approval.
 - Outcome of an entry: first answer; else at `deadline`, `on_timeout`. Of the request: deny if any
-  entry denies, allow when all allow.
-- Deadlines are evaluated lazily when the request is read (no alarm needed for correctness); the
-  existing alarm prunes rows at `deadline + approved window` and returns for vendor polls (§4.4).
+  entry denies, allow when all allow. Later answers to a settled entry get 409, answers after the
+  deadline 410 `expired`. A request whose gates are all deleted (or are only the requesting
+  device) denies at once.
+- Deadlines are evaluated lazily when the request is read (no alarm needed for correctness). An
+  unanswered request is kept 5 minutes past its last deadline so the site's next retry settles it
+  (that is when an allow by timeout is seen, audited and announced); the alarm prunes rows and
+  returns for vendor polls (§4.4).
 - `/authorize` keeps its async contract: `{ allow: false, code: "gate_pending", gate_request:
-  { id, retry_after, deadline } }`; the caller retries. SDK and CLI get an
-  `authorizeWithGates()` / `--wait` helper that polls until settled. A settled allow says how:
+  { id, retry_after, deadline, approve_url } }`; the caller retries. The browser SDK's
+  `fetchWithGates()` and `dba curl --dba-wait[=SECONDS]` resend with a fresh proof every
+  `retry_after` s while a site answers 403 `gate_pending`. A settled allow says how:
   `gates: [{ kind, by: "answer" | "timeout" }]`; callers must not cache it beyond `gates_reuse_s`.
-- Step-up routes (`/api/v1/step-ups`) stay as a filtered view of `owner` gate requests.
+- Step-up routes (`/api/v1/step-ups`) are a filtered view of `owner` gate requests; the
+  dashboard's Approvals page lists every gate request.
 
 ### 4.2 Delivery per kind
 
 | Kind | Delivery | "Failed" means |
 |------|----------|----------------|
-| `owner` | Web Push to the account's browsers (existing), dashboard list | no subscription |
-| `dba-device` | Web Push to that device's browser if subscribed; the device also polls `GET /api/v1/gate-requests?mine=1` (SDK, CLI `dba approvals --watch`) | device revoked, or nothing to push to |
-| `totp`, `webauthn` | Push to the owner with an approval link; or inline at sign-in (§5.1) | no subscription and not inline |
-| `webhook` | POST of a `dba-gate+jwt` (signed with the issuer key, checkable with the JWKS) to the service URL | non-2xx, timeout (10 s), bad answer |
+| `owner` | Web Push to the account's browsers, dashboard Approvals page | no subscription |
+| `dba-device` | The device polls `GET /api/v1/gate-requests` (filtered to its gates; CLI `dba approvals --watch`, MCP `list_gate_requests`); each request lists `answer_as: [{ entry, gate }]` | device revoked |
+| `totp`, `webauthn` | Web Push to the owner linking the approval page; or inline at sign-in (§5.1) | no subscription and not inline |
+| `webhook` | POST of a `dba-gate+jwt` (signed with the issuer key, checkable with the JWKS; spec/events.md §6) to the service URL, in the background once the decision has answered `gate_pending` | non-2xx, timeout (10 s), bad answer |
 | `duo` | Duo Auth API `POST /auth/v2/auth` (factor push, `async=1`), then `/auth/v2/auth_status` | API error, user not enrolled |
 | `okta-verify` | Okta `POST /api/v1/users/{uid}/factors/{fid}/verify`, then polls the transaction | API error |
 
@@ -202,41 +219,51 @@ recorded and shown ("not delivered: no push subscription") so owners can fix the
 
 | Kind | Proof |
 |------|-------|
-| `owner` | Clerk session or `dba:session` device (not the requester), as step-up today |
-| `dba-device` | DPoP-authenticated request from that device, credential holding `dba:approvals:answer`, not revoked |
+| `owner` | Clerk session or `dba:session` device (not the requester) |
+| `dba-device` | DPoP-authenticated request from that device, credential holding `dba:approvals:answer`, not revoked (a dashboard device registered as a gate answers as that gate) |
 | `totp` | `{ code }`; ±1 step; each step accepted once per gate (replay row until the step expires) |
 | `webauthn` | WebAuthn assertion over a challenge bound to the request id and decision; RP ID `devicebasedauth.org`; user verification per gate setting; sign counter checked |
-| `webhook` | Synchronous JSON answer `{ "decision": "allow" }` to DBA's POST, or `202` then a callback whose body is a JWS signed by the service's registered key (ES256) over `{ request, entry, decision, iat }` |
+| `webhook` | Synchronous JSON answer `{ "decision": "allow" }` to DBA's POST, or `202` then a callback to `/api/v1/gate-links/{link}/callback` whose body is a `dba-gate-answer+jwt` signed by the service's registered key (ES256) over `{ request, entry, decision, iat }` |
 | `duo`, `okta-verify` | Vendor status `allow`/`deny` from DBA's own polling; never trusted from the client |
 
-The **approval surface** is a page on devicebasedauth.org (`/approve.html#gtr_…`, link carries an
-HMAC token naming the request) that shows who asks for what (device, action, resource, audience,
-coarse country, the request's number) and offers the factors the entry accepts. A TOTP or
-security-key holder who is not the account owner (a manager, a parent) can answer there without
-a DBA session: the factor is the authentication. Escape everything dynamic; it renders untrusted
-device names and resources.
+The **approval surface** is `/gate.html#<link>` (`/approve.html` is enrollment approval): a `dbag_`
+link signed with `TOKEN_SIGNING_KEY` names the account and request and expires a minute after its
+last deadline. It shows who asks for what (device, action, resource, audience, coarse country,
+the request's number) and offers the factors the entry accepts, through the public
+`GET/POST /api/v1/gate-links/{link}[/answer]` (behind the cost brake; 5 wrong tries per gate per
+15 minutes). A TOTP or security-key holder who is not the account owner (a manager, a parent) can
+answer there without a DBA session: the factor is the authentication. TOTP accepts each step
+once (the gate row keeps the last accepted step); security keys keep their signature counter; the
+assertion's challenge binds request, entry, decision and a per-request salt. Everything dynamic
+is escaped; the page renders untrusted device names and resources.
 
 Requests time out for answering at their deadline; an answer after it is refused (410 `expired`).
 
 ### 4.4 Vendor polling bounds
 
 Duo and Okta answers are pulled, not pushed. The AccountDO alarm polls at most every 5 s and at
-most 24 times per entry, then treats the vendor as silent until the deadline. The gate price
-(§9) prepays the maximum polls.
+most 24 times per entry, then treats the vendor as silent until the deadline. Poll times are kept
+in memory, bounded by the time since the push started, so polls write nothing; a poll that cannot
+be read counts as waiting. Vendor hosts are pinned to the vendors' domains (no SSRF). The gate
+price (§9) prepays the maximum polls.
 
 ## 5. Authentication flows
 
 ### 5.1 Sign in with devicebasedauth.org (OIDC)
 
-In `src/api/oidc.js`, after consent and before the authorization code is issued:
+After consent and before the authorization code is issued (`op_sign_in` in
+`src/durable-objects/account/sign-in.js`, one account request, so the login price is unchanged):
 
 1. Resolve the gates: `sign_in_gates.audiences[client]` or `default`, plus whatever the audience
-   requires (§6). None → today's flow.
-2. Create a `sign_in` gate request. The consent page switches to "Waiting for approval" and
-   shows the request's two-digit **number**; pushes and the approval page ask the approver to
-   pick that number (number matching against push fatigue).
+   requires (§6). None → the ordinary flow.
+2. Open (or reuse, per site, requester and gate list) a `sign_in` gate request.
+   `/oauth/authorize` answers `{ pending, gate_request }` and the consent page asks again every
+   `retry_after` s, showing the request's two-digit **number**. The number is only in the consent
+   page's response; approvers on the approval page or a device must send it with an allow
+   (`wrong_number`), webhook services need not (number matching against push fatigue).
 3. TOTP and security-key gates on deny-on-timeout entries can be answered right on the consent
-   page by the person signing in (inline). Allow-on-timeout entries are never inline (§2).
+   page by the person signing in (inline). Allow-on-timeout entries refuse answers from the
+   signed-in session (`not_inline`, §2).
 4. On allow, issue the code. The ID token adds `amr` values (RFC 8176: `otp` for TOTP, `hwk` for
    security keys and DBA devices with hardware attestation, `swk` for other DBA devices, `mfa`
    when any gate passed by answer), `acr` = `urn:devicebasedauth.org:acr:gated` (all answered)
@@ -247,25 +274,34 @@ In `src/api/oidc.js`, after consent and before the authorization code is issued:
 
 ### 5.2 The DBA dashboard
 
-- After a Clerk sign-in (or a dashboard device's sign-in, Stage B), if `sign_in_gates.dashboard`
-  is set, the session is **unconfirmed**: every route except the gate flow, sign-out and
-  revocation (the panic button must always work) answers 403 `sign_in_gate_required` until the
-  gate request settles allow. The confirmation is remembered per Clerk session id (`sid`) or
-  dashboard credential until that session ends.
+- After a Clerk sign-in, a local sign-in or a dashboard device's sign-in (Stage B), if
+  `sign_in_gates.dashboard` is set, the session is **locked**: every route except
+  `/api/v1/session*`, `whoami` and revocation (the panic button must always work) answers 403
+  `sign_in_gate_required` until the gate request settles allow. `POST /api/v1/session/confirm`
+  opens the `dashboard` request (number matching as for sign-in) and takes this page's own
+  TOTP/security-key answer for deny-on-timeout entries; a locked session cannot use
+  `/gate-requests/{id}/answer`, which could approve other requests. Sessions are keyed
+  `sid:<Clerk sid>`, `local:<name>` or `cid:<credential>`; a confirmation lasts 7 days
+  (`dashsess:` rows, pruned). The state (`open | confirmed | locked`) comes back from the account
+  request every call already makes.
 - **Recovery codes** come first: enabling a deny-on-timeout dashboard gate requires that the
-  account has 10 one-time recovery codes (shown once, stored hashed). Using one passes the
-  dashboard gate, is audited and pushed to every browser, and invalidates that code.
+  account has 10 one-time recovery codes (shown once, stored as SHA-256 hashes). Using one
+  (`POST /api/v1/session/recover`) passes the dashboard gate, is audited and announced, and
+  invalidates that code.
 - A recent re-authentication (S8) does not bypass the dashboard gate; it is checked in addition.
 
 ### 5.3 Periodic confirmation
 
-- `POST /api/v1/credentials/{id}/confirm` (DPoP from the credential's key) creates a `confirm`
-  gate request; `GET …/confirm/{gtr}` returns `pending`, `denied`, or the confirmation JWS.
-- SDK and CLI request a new confirmation at 2/3 of `every_s`, early enough for the entry's
-  timeout, alongside auto-renewal (S7). `dba status` shows "Confirmed until".
-- The dashboard's device page shows each `confirm` credential's last confirmation, how it passed,
-  and a "Stop trusting this device now" button (sets `confirmed_until` to now; offer revocation
-  for offline audiences).
+- `POST /api/v1/credentials/{cid}/confirm` (DPoP from the credential's key) opens or reads the
+  credential's `confirm` gate request and answers `pending`, `denied`, or `confirmed` with the
+  confirmation JWS; the device repeats the call to poll. It is charged `confirm` when a
+  confirmation is issued; its gates are charged as gate requests.
+- The SDK (`confirm()`, and `headers()`/`fetch()` before a request) and the CLI (`dba confirm`,
+  and `dba headers`/`curl` before a request; `DBA_AUTO_CONFIRM=0` turns that off) ask for a new
+  confirmation when there is none or it ends within 30 s, and send it as `DBA-Confirmation`.
+  Calls to DBA's own API (renew, token, revoke) do not wait for one.
+- The dashboard's credential page shows the confirmation state and a "Stop trusting now" button
+  (`…/unconfirm`, sets `confirmed_until` to now; offer revocation for offline audiences).
 
 ## 6. Audience policy
 
@@ -273,33 +309,39 @@ An audience's catalog entry may carry a `gates` policy, and its OIDC client a `s
 policy:
 
 ```json
-{ "action": "cronly:jobs:delete", "description": "Delete a job",
+{ "action": "cronly:secrets:write", "description": "Set and rotate secrets.",
   "gates": { "require": true, "kinds": ["webauthn", "dba-device"], "fail_open": false } }
 ```
 
 - `require: true`: a grant for this action counts only if it has a gate entry whose gates are all
-  of `kinds` (any kind if `kinds` is absent). Checked at issuance (400 `gate_required`, with the
-  policy in the error, so the grant builder can add one) and at every `/authorize` (catalog
-  changes apply at once to older credentials: reason `gate_required`).
+  of `kinds` (any kind if `kinds` is absent). Checked at issuance for exact action names (400
+  `gate_required`, with the policy in the error, so the grant builder can add one; kinds are
+  checked in the account) and at every `/authorize`, which also catches wildcard grants and
+  older credentials (reason `gate_required`) before any gate request is opened.
 - `fail_open: false`: an allow by timeout counts as deny for this action (`by_timeout_refused`),
   in `/authorize` and in confirmations presented for it.
 - The same shape on the OIDC client governs sign-ins; `acr_values` can ask per request.
-- **Offline verifiers** must enforce this too, or an ungated credential would pass. The verify
-  library (and the Python and Go ports) take `createVerifier({ audience, catalog })` or fetch the
-  audience's public catalog (`GET /api/v1/audiences/{name}`, cached like the JWKS) and, for an
-  action whose policy requires gates, return `online_required`. For `fail_open: false` they refuse
-  confirmations with `by_timeout: true`.
+- **Offline verifiers** must enforce this too, or an ungated credential would pass. The JS
+  verifier fetches the audience's public catalog with `createVerifier({ audience, catalog: true })`
+  (`GET /api/v1/audiences/{name}`, cached like the JWKS; a stale copy is kept when a refresh fails,
+  since policies only tighten; no copy at all fails closed, 503 `catalog_unavailable`) or takes a
+  static one; the Python and Go verifiers take a static catalog. For an action whose policy
+  requires gates they return `online_required`; for `fail_open: false` they refuse confirmations
+  with `by_timeout: true`.
+- The audience console edits these policies per catalog action and for signing in
+  (`PATCH /api/v1/audiences/{name}`, the audience price).
 - Account owners can add gates but never remove an audience's requirement or turn its
   `fail_open: false` back on.
 
 ## 7. Secrets
 
-- TOTP seeds, Duo secret keys and Okta API tokens are the first customer secrets DBA stores. They
-  are sealed with AES-256-GCM under a Worker secret `GATE_SEALING_KEY_<kid>` (rotatable, like
-  issuer keys), per-record random nonce, AAD = account id + gate id; stored only in the account's
-  DO; never returned after creation, never logged, never in audit details; deleting the gate
-  deletes the blob. A runbook entry covers rotating the sealing key and what a leak of it means
-  (all sealed secrets must be re-enrolled).
+- TOTP seeds, Duo secret keys and Okta API tokens are the customer secrets DBA stores. They are
+  sealed with AES-256-GCM (`src/services/sealing.js`) under the Worker secret `GATE_SEALING_KEYS`
+  (a JSON list of `{ kid, key }`: the first seals, every one opens, so a key rotates by putting a
+  new one first), per-record random nonce, AAD = account id + gate id; stored only in the
+  account's DO; never returned after creation, never logged, never in audit details; deleting the
+  gate deletes the blob. docs/ops/deployment.md covers setting and rotating it and what a leak
+  means (every TOTP gate must be re-added).
 - Webhook services use asymmetric keys in both directions (DBA signs with the issuer key; the
   service registers a public key), so DBA stores no shared secret for them.
 - WebAuthn stores public keys only.
@@ -308,11 +350,11 @@ policy:
 ## 8. Security, abuse and visibility
 
 - **Push fatigue**: one waiting request per subject (dedupe), number matching at sign-in, at most
-  10 gate requests per (device, gate) per hour (then 429 `gate_rate_limited`; for allow-on-timeout
-  entries this is a deny, not a silence, so flooding cannot be used to force the timeout), and a
-  "I didn't ask for this" button on deny that also offers to revoke the requesting device.
+  10 gate requests per (device, gate) per hour (then a denial with `gate_rate_limited`; for
+  allow-on-timeout entries this is a deny, not a silence, so flooding cannot be used to force the
+  timeout).
 - **Every allow by timeout** writes `gate.allowed_by_timeout` to the audit log, shows in the
-  decision log with its reason, and is announced to the owner's browsers ("cronly:jobs:run was
+  decision log with its reason, and is announced to the owner's browsers ("cronly:run was
   allowed because nobody answered within 2 minutes"), batched hourly like other notices.
 - **Self-approval** is impossible for every kind: the requester device cannot answer allow for
   its own request (it may deny).
@@ -322,50 +364,63 @@ policy:
   (it is shown to every audience).
 - The grant builder, approval page, inspector and dashboard render allow-on-timeout entries in a
   warning style with the plain-English meaning: "allowed if nobody answers within 2 minutes".
-- Webhook URLs follow the existing rules in `src/services/webhooks.js` (https, public host, no
-  credentials or fragment) and have a test button.
+- Webhook URLs follow the rules in `src/services/webhooks.js` (https on a public host name and
+  the default port, no credentials or fragment; `http://localhost` in local mode) and have a test
+  (`POST /api/v1/gates/{id}/test`: a signed `gate.test` event, charged the read price; dashboard
+  "Test" button, `dba gates test`).
 
 ## 9. Money
 
-New operations for `src/utils/cost-policy.js` and prices for `src/utils/pricing.js`, each passing
-the price-floor test. Proposed shape (numbers come from counting, then owner approval, D13):
+Operations in `src/utils/cost-policy.js`, prices in `src/utils/pricing.js`, each passing the
+price-floor test and counted in `src/cost-counts.test.js`; derivations in
+docs/business/pricing.md. All four are proposed, awaiting the owner (D13):
 
-| Operation | Worst case to count | Payer |
-|-----------|--------------------|-------|
-| Gate request, local kinds (`owner`, `dba-device`, `totp`, `webauthn`) | request row + deletion, answer write, notice (push CPU), WebAuthn/TOTP verify CPU, approval-page reads | Account that owns the gates (credential issuer; for sign-in, the signing-in account) |
-| Gate request, `webhook` | the above + 1 signed subrequest (+ callback request) | same |
-| Gate request, `duo` / `okta-verify` | the above + 1 start + up to 24 status subrequests | same |
-| Confirmation | gate request price + a token's signing | same |
+| Operation (`PRICES` key) | Worst case counted | Price | Payer |
+|-----------|--------------------|-------|-------|
+| Gate request, local kinds (`owner`, `dba-device`, `totp`, `webauthn`) (`gate`) | request row and its deletion, answer or timeout settlement, audit row, notices (push CPU), WebAuthn/TOTP checks and replay state, DPoP nonce challenge | 22 µ$ | Account that owns the gates (credential issuer; for sign-in, the signing-in account) |
+| Gate request, `webhook` (`gate_webhook`) | the above + 1 signed subrequest + the row recording its outcome | 23 µ$ | same |
+| Gate request, `duo` / `okta-verify` (`gate_vendor`) | the above + 1 start + up to 24 status polls | 30 µ$ | same |
+| Confirmation issued (`confirm`) | credential row, charge and audit rows, signing; its gates are charged as gate requests | 14 µ$ | Account that issued the credential |
 
 Charged per gate actually contacted, when the request is created (reserve the maximum first, as
-everywhere). The audience still pays the online decision. Answering is free. A gate request the
-owner cannot pay for is not sent and is treated as unreachable (§2). Gate CRUD is a metered write
-for API keys and free from the dashboard, like other settings.
+everywhere). Step-up (the owner gate) is billed this way too. The audience still pays the online
+decision. Answering is free. A gate request the owner cannot pay for is not sent (`unpaid`) and is
+treated as unreachable: it waits for its timeout (§2). Adding and removing gates is free; listing
+them is a metered read for API keys, like other reads.
 
 ## 10. Spec, verifier and tools
 
-- `spec/credential.md`: `confirm` claim; `require.gates`, `require.gates_reuse_s`,
-  `require.confirmation`; the `dba-confirmation+jwt` format; the `dba-gate+jwt` webhook format
-  (or in `spec/events.md` beside the revocation events).
-- `spec/evaluation.md`: §3.6 adds `gates` (online only) and `confirmation`; a new step between
-  revocation and grants for the confirmation; new reasons `gate_pending`, `gate_denied`,
+All built; where each lives:
+
+- `spec/credential.md` §9: `confirm` claim and the `dba-confirmation+jwt` format;
+  `spec/events.md` §6: the `dba-gate+jwt` webhook format and the `dba-gate-answer+jwt` callback.
+- `spec/evaluation.md` §3.6–3.9: `require.gates`, `require.gates_reuse_s`,
+  `require.confirmation` (online only for gates), the catalog policy, the confirmation step
+  between revocation and grants; reasons `gate_pending`, `gate_denied`,
   `gate_required`, `by_timeout_refused`, `confirmation_required`, `confirmation_expired`,
   `confirmation_by_timeout_refused`.
 - Vectors (all three verifiers): gates offline → `online_required`; step_up and the equivalent
   gates evaluate the same; confirmation present / missing / expired / wrong `cid` / wrong `jkt` /
   bad signature / by-timeout under a `fail_open: false` policy; catalog-required gates offline.
-- `@devicebasedauth/verify`: `DBA-Confirmation` header parsing in `verifyRequest`; `catalog`
-  option; browser copy and SDK bundle regenerated (`npm run docs:generate`); SDK
-  `authorizeWithGates()`, confirmation auto-refresh; new SDK release `vX.Y.Z`.
-- CLI: `dba gates list|add|remove|test`, `dba approvals [--watch]` (answer as a `dba-device`
-  gate), `dba confirm`, `--wait` on calls that may hit a gate.
-- Site: gates page (add TOTP with QR, register a security key, pick a device, webhook with test,
-  Duo/Okta forms), approval page, sign-in gate settings, recovery codes; grant builder, inspector
-  and playground understand `gates` and `confirm`; audience console edits catalog gate policies.
-- Docs: a "Gates" page with CI-executed samples (a webhook approval service in Node and Python,
-  answering as a `dba-device` from the CLI, an online check that waits for a gate, an offline
-  verifier checking a confirmation); `llms.txt`; MCP tools to list gates and answer as the
-  connected account's owner (never as a gate the MCP app could fake).
+- Verifiers: `DBA-Confirmation` in `verifyRequest` (JS), `verify_request` (Python) and the Go
+  `AuthResult.Confirmation`, each refusing a bad one with `confirmation_<code>` (401); the JS
+  `catalog` option (§6). SDK (from v1.2.0): `confirm()`, confirmation auto-refresh in
+  `headers()`/`fetch()`, `fetchWithGates()`.
+- CLI: `dba gates [--json]`, `dba gates add --kind dba-device|webhook`, `dba gates remove`,
+  `dba gates test` (an API key; devices cannot pass the recent-sign-in check; TOTP, security keys,
+  Duo and Okta are set up on the dashboard), `dba approvals [--watch] | allow | deny` (answer as a
+  `dba-device` gate), `dba confirm [--wait]`, `dba curl --dba-wait[=SECONDS]` (named so it never
+  collides with a curl option; options that would hide the response are refused in that mode).
+- Site: the dashboard's Gates page (TOTP with a QR code from `frontend/js/qr.js`, written here so
+  no third-party code ships; security keys; devices; webhooks with a test; Duo/Okta forms;
+  sign-in gates; recovery codes), Approvals page, the approval page `/gate.html`, "Require
+  periodic confirmation" on the enrollment approval page; grant builder, inspector and playground
+  understand `gates` and `confirm`; the audience console edits catalog gate policies.
+- Docs: `/docs/#gates` with CI-executed samples (webhook approval services in Node
+  `docs/samples/gate-webhook.mjs` and Python `gate_webhook.py`, answering as a `dba-device` from
+  the CLI `approve-from-cli.sh`); `llms.txt`; MCP tools `list_gates`, `list_gate_requests` and
+  `answer_gate_request`. MCP answers only as a device's own `dba-device` gate: answering as the
+  owner would let an agent holding an API key pose as the owner gate, which no key may do.
 
 ## 11. Phases
 
@@ -384,186 +439,40 @@ STATUS row updated.
 | G8 ✅ | `duo` and `okta-verify` gates (sealed credentials, polling bounds); confirm whether Microsoft Authenticator push is open to third parties | Tested against recorded vendor responses; live checks are owner steps after L9 |
 | G9 ✅ | Tools and docs (§10) not already done per phase; SDK release | Every docs sample runs in CI |
 
-## 11a. Progress
+## 11a. Where it lives
 
-- **G1 done (2026-11-19).** `spec/evaluation.md` §3.6–3.9 and `spec/credential.md` §9: `require.gates`
-  (1–3 entries of 1–5 gates; ids `gate_` + 8–64 alphanumerics; `step_up` and `gates` together are
-  invalid), `gates_reuse_s`, `require.confirmation`, the `confirm` claim, `dba-confirmation+jwt`
-  (bound to the credential's `cid`, `sub` and `cnf.jkt`; time checked by the evaluator with 60 s
-  skew), and the catalog `gates` policy (`context.policy`, `context.gate_kinds` online). 34 new
-  evaluation vectors and 10 signed confirmation vectors pass in JS, Python and Go (plus 19 new
-  cross-check cases). `verifyConfirmation` / `verify_confirmation` / `VerifyConfirmation` in all
-  three; the JS `createVerifier` reads `DBA-Confirmation` and takes a static `catalog` option
-  (fetching the catalog, and the Python and Go verifier wiring, are G3/G7).
-- **G2 done (2026-11-19).** `src/durable-objects/gates.js` (registry rows `gate:`, engine rows
-  `gatereq:`; lazily settled), `src/api/gates.js`, AccountDO ops, `/authorize` integration.
-  Choices made: requests match their grant's exact gate list (`signature`), so a different list
-  needs its own approval; an unanswered request is kept 5 minutes past its last deadline so the
-  site's next retry settles it (that is when an allow by timeout is seen, audited and announced);
-  a request whose gates are all deleted (or only the requesting device) denies at once; answers
-  after the first per entry are refused (409), after the deadline 410; a `dba-device` gate is
-  delivered by polling (`GET /api/v1/gate-requests`, filtered to its gates), so "failed" means
-  the device is revoked; owner gates are "sent" when the account has a push subscription.
-  Requests the owner cannot pay for are `unpaid` and wait for their timeout (D13 pending).
-  `dba:*` grants cannot have gates (DBA checks them per request with no engine). Issuance refuses
-  `require.confirmation` (400 `confirmation_not_available`) until G7.
-- **G3 done (2026-11-19).** `cleanGatePolicy` in `src/api/audiences.js`; issuance check in
-  `validateIssue` (exact action names only: a wildcard grant is not refused at issuance, and
-  `/authorize` answers `gate_required` for the gated actions it covers) and, for kinds, in the
-  account (`checkGatesForIssue`); `/authorize` passes the policy to the account, which checks kinds
-  against its gate rows (no extra request) before any gate request is opened; `fail_open: false`
-  makes the engine deny an entry that would pass by timeout (`by_timeout_refused`). The JS
-  verifier's `catalog: true` fetches `GET /api/v1/audiences/{name}` (TTL as the JWKS; a stale
-  copy is kept when a refresh fails, since policies only tighten); Python and Go take a static
-  catalog. The audience console's editor for policies comes with G9.
-- **G4 done (2026-11-19).** `src/services/{sealing,totp,webauthn}.js`; TOTP and security-key gates
-  start `pending` (`POST /api/v1/gates` returns the secret or creation options once) and become
-  active with `POST /api/v1/gates/{id}/activate` (a first code, or the registration); pending gates
-  cannot be named at issuance and count as deleted in requests. The approval page is
-  `/gate.html#<link>` (not `/approve.html`, which is enrollment approval): `dbag_` links signed with
-  `TOKEN_SIGNING_KEY` name the account and request and expire a minute after its last deadline;
-  `GET/POST /api/v1/gate-links/{link}[/answer]` are public (behind the cost brake). TOTP keeps the
-  last accepted step on the gate row (later steps only); security keys keep the signature counter;
-  the assertion's challenge binds request, entry, decision and a per-request salt. Factor gates are
-  delivered with the owner's Web Push (a notice linking to the approval page), so "failed" means no
-  push subscription. Not done: a QR code for the otpauth URI (the page shows the secret and an
-  `otpauth:` link), and inline answers on the OIDC consent page (G6).
-- **G5 done (2026-11-19).** Webhook gates: `{ kind: "webhook", label, url, public_jwk }`, active at
-  once; URL https on a public host name, default port (localhost http in local mode). DBA posts
-  after the decision answers `gate_pending` (in the background, 10 s timeout), so the first answer
-  is seen on the site's next retry; the late answer goes to `/api/v1/gate-links/<link>/callback`
-  (the approval link's token). The format is spec/events.md §6. Price `gate_webhook` (22 µ$,
-  proposed). The Node sample service runs in CI; a Python one and the dashboard's "test" button
-  for webhook gates are left for G9.
-- **G6, first half (2026-11-19): OIDC.** `op_sign_in` in the account resolves the gates (the
-  account's entries for the site, else its default; the site's `sign_in_gates` policy), opens or
-  reads the request, and stores the code with its claims — one account request, so the login price
-  is unchanged. `/oauth/authorize` answers `{ pending, gate_request }` while it waits (the consent
-  page asks again every `retry_after` s). Requests are reused per (site, requester, gate list).
-  The owner gate is refused in sign-in gates (the owner is who signs in). Number matching: a
-  sign-in's number is only in the consent page's response; approvers on the approval page or a
-  device must send it with an allow (`wrong_number`); webhook services need not. Allow-on-timeout
-  entries refuse answers from the signed-in session (`not_inline`). "Loosening sign-in gates also
-  needs the current gates to pass" came with G9 (below).
-- **G6, second half (2026-11-19): the dashboard.** Sessions are keyed `sid:<Clerk sid>`,
-  `local:<name>` (local sign-ins now name a random per-browser session: `LocalDev <account>
-  <session>`) or `cid:<credential>` for dashboard devices; `op_init` / `op_credential_status`
-  report `open | confirmed | locked` from the same request they already made (no extra DO request).
-  The Worker refuses a locked dashboard session everything but `/api/v1/session*`, `whoami` and
-  revocation. `POST /api/v1/session/confirm` opens the `dashboard` gate request (number matching as
-  for sign-in) and takes this page's own TOTP/security-key answer for deny-on-timeout entries (a
-  locked session cannot use `/gate-requests/{id}/answer`, which could approve other requests). A
-  confirmation lasts 7 days (`dashsess:` rows, pruned). Recovery codes: 10, shown once, SHA-256
-  hashed, each once; using one is audited and announced.
-- **G7 done (2026-11-19).** `confirm` is accepted on `POST /api/v1/credentials` and on enrollment
-  approval (`confirm` in the approve body: the owner decides); issuance adds
-  `require.confirmation` to every grant (refused by hand) and refuses `confirm` with `dba:*`
-  grants. A credential starts unconfirmed. `confirm` gate requests are keyed by credential; a
-  confirmation is charged `confirm` (12 µ$, proposed) when issued, its gates as gate requests.
-  Online, `/authorize` gives the evaluator a stand-in confirmation and the account checks
-  `confirmed_until` (and `confirmed_by_timeout` against `fail_open: false`). Tokens drop
-  `require.confirmation` and end by `confirmed_until`; certificates too. Not yet (G9): the SDK and
-  CLI asking for confirmations on their own, the dashboard's "Stop trusting" button, and
-  `DBA-Confirmation` in the Python and Go verifiers.
-- **G8 done (2026-11-19).** `src/services/vendors.js`. Duo: `{ api_host (api-*.duosecurity.com),
-  integration_key, secret_key, username }`, `POST /auth/v2/auth` (factor=push, async=1, pushinfo)
-  then `GET /auth/v2/auth_status`; requests signed per Duo's documented v2 scheme (HMAC-SHA1; the
-  test reproduces Duo's published example). Okta: `{ org_url (*.okta.com, oktapreview, okta-emea,
-  okta-gov), api_token, user_id, factor_id }`, `POST …/factors/{fid}/verify` then the poll link
-  (pinned to the same user and factor). Hosts are pinned to the vendors' domains (no SSRF). Poll
-  times are in memory and bounded by time since the push started, so polls write nothing; a poll
-  that cannot be read counts as waiting. Live checks are owner steps after L9. Microsoft
-  Authenticator push: no public third-party push API is known (not re-researched); TOTP only.
-- **G9 started (2026-11-19).** The Python (`verify_request`, `decide(confirmation=…)`) and Go
-  (`AuthResult.Confirmation`, `Check.Confirmation`) verifiers verify `DBA-Confirmation` and refuse
-  a bad one with `confirmation_<code>` (401), as the JS verifier does.
-- **G9, CLI (2026-11-19).** `dba gates [--json]`, `dba gates add --kind dba-device|webhook`,
-  `dba gates remove` (DBA_API_KEY, or a device with `dba:gates:read` for listing; changing gates
-  needs an API key since devices cannot pass the recent-sign-in check; TOTP, security keys, Duo and
-  Okta stay on the dashboard). `dba approvals [--watch] [--json]`, `dba approvals allow|deny ID
-  [--entry N] [--number NN]`: requests listed to a device carry `answer_as: [{ entry, gate }]`
-  (its own gates that may still answer), so the CLI needs no `gates:read`. `dba confirm [--wait]`
-  saves `confirmation.jwt`; `dba headers` and `dba curl` send it as `DBA-Confirmation` and ask
-  for a new one 30 s before it ends (`DBA_AUTO_CONFIRM=0`: never on their own). Not done: `--wait`
-  on calls that hit a gate (sites answer `gate_pending` in their own way), `dba gates test`.
-  Sample `docs/samples/approve-from-cli.sh` (the harness approves the laptop with `confirm`, as
-  the owner would once the approval page offers it).
-- **G9, browser SDK v1.2.0 (2026-11-19).** `dba.confirm({ timeoutMs, onPending })` (one shared wait
-  for concurrent callers; the confirmation is kept with the credential in IndexedDB);
-  `headers()`/`fetch()` add `DBA-Confirmation` and confirm first when it is missing or within 30 s
-  of its end (`{ confirm: false }` never waits); calls to DBA's own API (renew, token, revoke) do
-  not wait for one. `fetchWithGates(input, init, { timeoutMs, onPending })` is the plan's
-  "authorizeWithGates": it resends with a fresh proof every `retry_after` s while the site answers
-  403 `gate_pending`. Released as `frontend/sdk/v1.2.0/`.
-- **G9, approval page and credential page (2026-11-19).** The enrollment approval page has
-  "Require periodic confirmation" (one gate from the account, every 1–168 hours, 1–60 minutes to
-  answer, refuse or confirm when nobody answers) sent as `confirm` in the approve body. The
-  dashboard's credential page shows the confirmation state and "Stop trusting now" (`…/unconfirm`).
-  Playwright covers both, with a Node-side device confirming through a phone gate.
-- **G9, tools (2026-11-19).** Grant builder: "Gates that approve each use" (ids, any of; time to
-  answer; deny or allow when nobody answers; reuse seconds) as one `require.gates` entry. Inspector:
-  a "Periodic confirmation" row for `confirm`, and `dba-confirmation+jwt` decoded (credential, key,
-  until, how it passed). Not yet: the playground taking a confirmation.
-- **G9, audience console (2026-11-19).** "Gate policies" on each of your audiences: per catalog
-  action and for signing in, require gates (optionally of kinds) and refuse allows by timeout;
-  saved with `PATCH /api/v1/audiences/{name}` (catalog and `sign_in_gates`, the audience price).
-  The catalog table shows each action's policy.
-- **G9, Python webhook sample (2026-11-19).** `docs/samples/gate_webhook.py` (standard library HTTP
-  server, `cryptography`, `requests`) runs in CI through the same checks as the Node service
-  (`checkGateService` in the harness): approved at once, refused, approved by a late signed answer.
-- **G9, Duo and Okta forms (2026-11-19).** The dashboard's Gates page adds Duo Push (API hostname,
-  integration key, secret key, username) and Okta Verify (org URL, API token, user and factor ids)
-  gates; the secrets are sealed and never listed (Playwright checks).
-- **G9, docs (2026-11-19).** `/docs/#gates` ("Gates: approvals and confirmation": kinds,
-  `require.gates`, `gate_pending` handling, how each kind answers, periodic confirmation, sign-in
-  gates, links to the CI samples) and a Gates section in `llms.txt` (scopes list updated).
-- **G9, MCP (2026-11-19).** Tools `list_gates`, `list_gate_requests`, `answer_gate_request`. The
-  plan said "answer as the connected account's owner"; that would let an agent holding an API key
-  pose as the owner gate, which G2 refuses for every key, so only a device holding
-  `dba:approvals:answer` answers, as its own dba-device gate (API keys: 403 `insufficient_scope`).
-- **G9, webhook test (2026-11-19).** `POST /api/v1/gates/{id}/test` (gates:write, read price) posts a
-  `dba-gate+jwt` with `type: "gate.test"` (no request or callback, `exp` = `iat` + 60) and reports
-  `{ delivered, status, decision }`; only webhook gates (the others would reach a person). Dashboard
-  "Test" button, `dba gates test`, and both sample services answer it in CI.
-- **G9, playground (2026-11-19).** A "Confirmation" fieldset (sent or not, minutes since, hours
-  valid, by timeout) passed to the evaluator; a preset "Works only while confirmed by a phone";
-  reasons `confirmation_*` and `gate_required` explained.
-- **G9, loosening sign-in gates (2026-11-19).** `PUT /api/v1/settings/sign-in-gates` is refused
-  to API keys and devices (403 `session_required`). A list is loosened unless every current entry
-  is matched by a new one whose gates are among its gates and that does not newly allow on
-  timeout; a loosening opens a `settings` gate request on the loosened lists' current entries
-  (at most 3, `fail_open: false`, so silence never approves it), keyed by a hash of the exact
-  change, and the PUT answers 202 `gate_pending` until it is allowed (then the same PUT applies),
-  403 `gate_denied` or `by_timeout_refused`. The Gates page says so instead of "Saved".
-- **G9, TOTP QR code (2026-11-19).** The Gates page shows the `otpauth:` URI as a QR code beside the
-  secret. The encoder is written here (`frontend/js/qr.js`: byte mode, level M, versions 1–40,
-  penalty-chosen mask) so no third-party code ships to visitors. `src/qr.test.js` checks it against
-  the standard's capacities, alignment positions, format and version bits, and a separate reader
-  (its own GF tables, zigzag, row/column mask formulas and the standard's block table) that checks
-  every Reed–Solomon block's syndromes and reads the text back, for every mask. Scanning one with a
-  real phone app is still worth doing once.
-- **G9, `dba curl --dba-wait` (2026-11-19).** The plan's "`--wait` on CLI calls that hit a gate".
-  Named `--dba-wait[=SECONDS]` (default 300) because it sits among curl's own arguments and must
-  never collide with a curl option; it is taken out before curl runs. In that mode dba reads each
-  response (curl writes the body to a private temp file, the status through `-w`) and, while the
-  site answers 403 `gate_pending`, sends the request again with a fresh proof every `retry_after`
-  seconds (1–60), telling the user once where to approve; then it prints the final body, or exits
-  1 if the gates have not decided in time. Options that would hide the response (`-o`, `-O`, `-D`,
-  `-w`, `-i`, `-f` and friends, also inside short clusters) are refused in that mode.
-  `packages/cli/dba.test.js` runs it against a local site that asks the real Worker's
-  `/authorize`, with an owner gate approved after the first refusal.
-- **G9 done (2026-11-19); the plan is complete.** What is left are owner steps, tracked in STATUS:
-  D13 (gate prices), live checks with real Duo and Okta accounts after L9, and scanning a TOTP QR
-  code with a real phone app once.
-- **G9, dashboard approvals (2026-11-19).** The dashboard's Approvals page lists every gate request
-  still waiting or approved (`GET /api/v1/gate-requests`; step-up is its owner gate), whatever its
-  purpose (use, confirmation, sign-in, dashboard, settings), with each entry's gates by label, what
-  happens when nobody answers, and Approve/Deny where the owner gate may answer. For the owner the
-  list carries `approve_url` on waiting requests with code or security-key gates, linked as "Answer
-  with a code or security key" (a session never stands in for a factor).
+- Spec and vectors (G1): spec/evaluation.md §3.6–3.9, spec/credential.md §9, spec/events.md §6;
+  gate and confirmation vectors in `spec/vectors/` pass in JS, Python and Go
+  (`verifyConfirmation` / `verify_confirmation` / `VerifyConfirmation`).
+- Registry and engine (G2): `src/durable-objects/gates.js` (`gate:` and `gatereq:` rows),
+  `src/durable-objects/gate-requests.js` (approval links, delivery), `src/api/gates.js`,
+  `/authorize` integration in `src/durable-objects/account/authorize.js`.
+- Audience policy (G3): `cleanGatePolicy` in `src/api/audiences.js`; `validateIssue` in
+  `src/services/credentials.js` and `checkGatesForIssue` in the account.
+- Factors (G4): `src/services/{sealing,totp,webauthn}.js`; TOTP and security-key gates start
+  `pending` (`POST /api/v1/gates` returns the secret or creation options once) and become active
+  with `POST /api/v1/gates/{id}/activate`; pending gates cannot be named at issuance and count as
+  deleted in requests.
+- Webhooks (G5): `{ kind: "webhook", label, url, public_jwk }`, active at once.
+- Sign-in (G6): `src/durable-objects/account/sign-in.js`, `src/api/sign-in-gates.js`,
+  `src/api/oidc.js`.
+- Confirmation (G7): `confirmCredential` / `unconfirmCredential` in `src/api/credentials.js`.
+  Tokens drop `require.confirmation` and end by `confirmed_until`; certificates too.
+- Vendors (G8): `src/services/vendors.js`. Duo: `{ api_host (api-*.duosecurity.com),
+  integration_key, secret_key, username }`, `POST /auth/v2/auth` (factor=push, async=1) then
+  `GET /auth/v2/auth_status`, signed per Duo's v2 scheme (HMAC-SHA1; the test reproduces Duo's
+  published example). Okta: `{ org_url (*.okta.com, oktapreview, okta-emea, okta-gov), api_token,
+  user_id, factor_id }`, `POST …/factors/{fid}/verify` then the poll link (pinned to the same user
+  and factor). Tested against recorded vendor responses.
+- Tools and docs (G9): §10.
+
+Owner steps left (STATUS B7): the D13 prices, live checks with a real Duo Auth API application
+and a real Okta org, and scanning a TOTP QR code with a real phone app once.
 
 ## 12. Open questions for later
 
+- An "I didn't ask for this" button on deny that also offers to revoke the requesting device
+  (designed, not built).
 - k-of-n quorum (`at_least: 2` of a list) beyond all-of / any-of.
 - Per-device sign-in gates (e.g. only for the kiosk), in addition to per audience.
 - Location- or time-conditioned gates ("approval needed only outside office hours") — today the

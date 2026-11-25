@@ -43,7 +43,7 @@
 
 <section id="addresses">
 <h2>Addresses</h2>
-<p><code>net.client.addresses</code> checks the peer address the verifier sees (on Cloudflare, <code>CF-Connecting-IP</code>; never a header the client sets). Its sources form a union: the address passes when any one of them allows it.</p>
+<p><code>net.client.addresses</code> checks the peer address the verifier sees. By default the JavaScript verifier reads it from <code>CF-Connecting-IP</code>, which Cloudflare sets and clients cannot forge <em>on Cloudflare</em>. Anywhere else a client can send that header itself: outside Cloudflare, strip it at your edge or pass the socket address as <code>check.location.network.ip</code>. Its sources form a union: the address passes when any one of them allows it.</p>
 <table><thead><tr><th>Source</th><th>Allows the address when</th></tr></thead><tbody>
 <tr><td><code>cidrs</code></td><td>It is inside one of 1–64 IPv4 or IPv6 ranges written into the grant.</td></tr>
 <tr><td><code>lists</code></td><td>It is inside a range of one of 1–8 <a href="#lists">named address lists</a> the verifier holds a current copy of. Change the list and every grant naming it changes, without reissuing.</td></tr>
