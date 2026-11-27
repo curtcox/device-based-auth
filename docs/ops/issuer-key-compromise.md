@@ -1,7 +1,8 @@
 # Runbook: issuer signing key compromise
 
-The issuer key signs every credential, access token, confirmation, X.509 client certificate,
-status list, address list, ID token and webhook event. Whoever holds it can mint credentials that every verifier
+The issuer key signs every credential, access token (including connected MCP apps'),
+confirmation, X.509 client certificate, status list, address list, ID token, revocation webhook
+event and webhook-gate request. Whoever holds it can mint credentials that every verifier
 accepts until the key leaves the JWKS.
 
 `DBA_ISSUER_KEYS` (Worker secret `ISSUER_KEYS`) is a JSON list of

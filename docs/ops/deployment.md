@@ -4,9 +4,9 @@ Everything below needs dashboard or credential access, so only the project owner
 (STATUS L9). Code-side checks (`scripts/check-deployment-secrets.mjs`, `scripts/verify-production.mjs`)
 run in `.github/workflows/deploy.yml`.
 
-**Production state (2026-11-25).** Live since 2026-11-22: §1–§5 are done, and every push to
-`main` deploys. Payments are open (`DBA_STRIPE_WEBHOOK_SECRET` set, `DBA_LAUNCH_APPROVED=true`).
-Left: a first real payment, the post-deploy checks in §3 and §4, and §6. The steps stay written
+**Production state.** §1–§5 are done: production is live, every push to `main` deploys, and
+payments are open (`DBA_STRIPE_WEBHOOK_SECRET` set, `DBA_LAUNCH_APPROVED=true`). Left (STATUS L9,
+L14): a first real payment, the post-deploy checks in §3 and §4, and §6. The steps stay written
 for a fresh deploy (a new account, or rebuilding after a loss).
 
 ## How configuration reaches the Worker
@@ -45,7 +45,10 @@ not undo it: set it to another value (`DBA_LAUNCH_APPROVED=false`) or run
 `npx wrangler secret delete NAME`. Two optional settings have no GitHub mapping and are set by
 hand with `npx wrangler secret put NAME`: `COST_SAFETY_BRAKE_CENTS` (the brake's monthly
 projection limit, default 2500 = $25) and `COST_SAFETY_FAIL_OPEN=true` (do not brake only because
-the cost report is more than 36 hours old). `GIT_SHA` is set by the deploy itself.
+the cost report is more than 36 hours old). `GIT_SHA` is set by the deploy itself. Settings
+that exist only for local work (`STATUS_PUBLISH_DELAY_MS`, and the attestation test roots and
+`TPM_EK_TEST_CA`, which are honoured only when `ENVIRONMENT` is `local`) live in
+`wrangler.local.toml` or the test environment and are never set in production.
 
 ## 1. Cloudflare
 
