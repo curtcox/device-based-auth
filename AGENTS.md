@@ -28,8 +28,9 @@ src/                 Worker: index.js (API_ROUTES, the only dispatch table), api
                      auth/ (Clerk, scopes, tokens, re-verification), durable-objects/ (AccountDO
                      with its operations by area in account/, StatusListDO, RegistryDO, EnrollmentDO,
                      SafetyDO; gates.js and gate-requests.js), services/ (issuance, issuer keys,
-                     first-party audiences, attestation, email, push, address lists, OpenAPI, cost
-                     monitor), utils/ (pricing.js = prices, cost-policy.js = rates and op counts)
+                     first-party audiences, attestation, gate factors, revocation webhooks, X.509,
+                     email, push, address lists, OpenAPI, cost monitor), utils/ (pricing.js =
+                     prices, cost-policy.js = rates and op counts)
 packages/verify/     @devicebasedauth/verify: JOSE, grants, net constraints, DPoP, status lists,
                      address lists, DNS, round-trip timing, events, verifier, site helpers, ReplayCacheDO
 packages/verify-python/ packages/verify-go/   Ports of the verifier; pass the same vectors
@@ -45,6 +46,9 @@ integrations/        Patches/notes for sibling sites (cronly)
 scripts/             Generators, the file-size check, deploy helpers, verify-production
 test-utils/          In-memory Durable Object storage, R2, test env and device helpers
 todo/ done/          Plans in progress and finished plans
+.github/workflows/   CI (ci.yml) and the push-to-main deploy (deploy.yml); .githooks/ holds pre-push
+wrangler.toml        Production config (bindings, hourly cron, STATUS_SHARDS); wrangler.local.toml
+                     is the dev:local one
 ```
 
 ## Commands
@@ -59,9 +63,10 @@ Node 22+. `npm install` (an `.npmrc` sets `legacy-peer-deps`).
 | `npm run dev:local` | Full local stack at http://localhost:8787. `Authorization: LocalDev <name>`; `POST /api/v1/dev/deposit` adds credit. |
 | `npm run test:samples` | Runs docs/samples against a fresh local server on port 8788; a sample whose toolchain is missing (python3 with cryptography+requests, go, a JDK, swtpm/tpm2-tools, Swift) is skipped unless `DBA_SAMPLES_STRICT=1`. |
 | `npm run test:e2e` | Playwright browser tests (starts the local server). |
-| `npm run docs:generate` | Regenerate openapi.json, the browser copy of verify, and the SDK bundle. Tests fail on drift. |
+| `npm run docs:generate` | Regenerate openapi.json, llms-full.txt, the browser copy of verify, and the SDK bundle. Tests fail on drift. |
 | `node scripts/build-sdk.mjs --release` | Cut an immutable `frontend/sdk/vX.Y.Z/` release (bump `VERSION` in `packages/browser-sdk/dba.js` first). |
 | `npm run vectors:generate` | Rewrite evaluation vectors (signature vectors only with `--resign`). |
+| `npm run status` | List the STATUS.md rows that are not done. |
 
 Pushing to `main` deploys production (the GitHub variable `DBA_DEPLOY_ENABLED` is `true`; see
 [`docs/ops/deployment.md`](docs/ops/deployment.md)). Production has real customers and money: keep

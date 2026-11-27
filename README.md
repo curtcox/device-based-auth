@@ -28,7 +28,7 @@ what is left: [STATUS.md](STATUS.md).
 | Browser SDK (`/sdk/v1.4.0/dba.js`, SRI-pinnable) | [packages/browser-sdk/](packages/browser-sdk/) |
 | `dba` command-line tool | [packages/cli/](packages/cli/) |
 | Website: dashboard, approval page, developer tools, docs, pricing | [frontend/](frontend/) |
-| Samples run in CI (shell, Node, Worker, Python, Go) | [docs/samples/](docs/samples/) |
+| Samples run in CI (shell, Node, Worker, Python, Go, Android/JVM, iOS/Swift, TPM) | [docs/samples/](docs/samples/) |
 | Pricing model and runbooks | [docs/business/](docs/business/), [docs/ops/](docs/ops/) |
 | cronly integration patches | [integrations/cronly/](integrations/cronly/) |
 | Security review log | [docs/security/](docs/security/) |
