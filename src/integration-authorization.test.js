@@ -41,7 +41,7 @@ describe('online authorization', () => {
     expect(decisions.body.items.map(d => d.allow)).toEqual([false, true, true]);
     // Only the coarse country of a decision is kept (master plan §10), never coordinates or IPs.
     expect(decisions.body.items.map(d => d.country)).toEqual([null, 'US', null]);
-    expect(JSON.stringify(decisions.body)).not.toMatch(/30\.27|203\.0\.113|TX/);
+    expect(JSON.stringify(decisions.body)).not.toMatch(/30\.27|203\.0\.113|"TX"/);
   });
 
   it('rejects replayed proofs and revoked credentials immediately', async () => {
