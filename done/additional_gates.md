@@ -121,7 +121,8 @@ A **gate entry** names one or more gates of the account and how long to wait:
 ```
 
 Stored on the account (`GET/PUT /api/v1/settings/sign-in-gates`). Only the signed-in owner may
-change them (API keys and devices get 403 `session_required`), with a recent sign-in. A change
+change them, from the dashboard or a dashboard (`dba:session`) device (API keys and other
+devices get 403 `session_required`), with a recent sign-in. A change
 that loosens a list (an entry no longer matched by a new one whose gates are among its gates and
 that does not newly allow on timeout) opens a `settings` gate request on the loosened lists'
 current entries (at most 3, `fail_open: false`, so silence never approves it), keyed by a hash of
@@ -192,7 +193,8 @@ Gate requests are `gatereq:` rows in the AccountDO (gates themselves are `gate:`
   (that is when an allow by timeout is seen, audited and announced); the alarm prunes rows and
   returns for vendor polls (§4.4).
 - `/authorize` keeps its async contract: `{ allow: false, code: "gate_pending", gate_request:
-  { id, retry_after, deadline, approve_url } }`; the caller retries. The browser SDK's
+  { id, retry_after, deadline, approve_url } }` (`step_up_required` for a `step_up` grant;
+  `approve_url` only when a TOTP or security-key gate can answer); the caller retries. The browser SDK's
   `fetchWithGates()` and `dba curl --dba-wait[=SECONDS]` resend with a fresh proof every
   `retry_after` s while a site answers 403 `gate_pending`. A settled allow says how:
   `gates: [{ kind, by: "answer" | "timeout" }]`; callers must not cache it beyond `gates_reuse_s`.

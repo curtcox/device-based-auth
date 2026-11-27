@@ -232,7 +232,8 @@ Clients that cannot send a request twice (a curl command line) get the nonce fir
 `POST /api/v1/dpop-nonce`, which costs nothing. A verifier that measures round-trip time for a grant's
 `net.client.latency` uses the same challenge, with a nonce that encodes its own clock
 (evaluation.md §3.10). Sites that do the same with their own replay cache
-can rely on the browser SDK (v1.4.0+) answering the challenge.
+can rely on the browser SDK (v1.4.0+) answering the challenge; timed nonces are answered only by
+the CLI and the unreleased SDK build (`frontend/sdk/dba.js`).
 
 ## 5. Verification
 
@@ -259,7 +260,8 @@ before the proof. If the JWKS or status list cannot be fetched, verifiers MUST f
 `not_yet_valid`, `expired` (steps 1–2); `proof_required`, `invalid_proof`, `key_mismatch`,
 `stale_proof`, `use_dpop_nonce`, `replayed_proof` (step 3); `revoked`, `status_unavailable`
 (step 4); a confirmation's codes (§9) prefixed `confirmation_` (step 5); `jwks_unavailable` when
-the JWKS cannot be fetched. Conformance vectors: `credentials` and `proofs` in
+the JWKS cannot be fetched, and `catalog_unavailable` when a verifier set to load the audience's
+catalog has no copy of it. Conformance vectors: `credentials` and `proofs` in
 [`vectors/credentials.json`](vectors/credentials.json).
 
 **Withdrawn issuer keys.** When an issuer key is compromised the service removes it from the JWKS,
@@ -352,7 +354,8 @@ audience's account), which also sees revocations instantly.
 
 Gated grants (`require.gates`, `require.step_up`, and actions whose audience requires gates) are
 online only too: `/authorize` answers `{ allow: false, code: "gate_pending", gate_request: { id,
-retry_after, deadline } }` until the gates settle, and the caller retries.
+retry_after, deadline } }` (`code: "step_up_required"` for a `step_up` grant) until the gates
+settle, and the caller retries.
 
 ## 9. Confirmations
 

@@ -141,7 +141,7 @@ Rules:
   device names and geofences to every audience it is shown to. The issuing UI says so, and
   offers coarse geofences and generic device names (privacy note, §10).
 
-### 3.3 Grant and constraint vocabulary (v1)
+### 3.3 Grant and constraint vocabulary (versions 1 and 2)
 
 | Field | Meaning | Who can enforce it |
 |-------|---------|--------------------|
@@ -173,7 +173,7 @@ that vendor the JS one) must pass in CI:
 1. Verify JWS signature against the issuer JWKS (`kid`), `typ`, `iss`, `aud`, `nbf ≤ now < exp`
    (60 s skew).
 2. Verify the DPoP proof: signature by the key whose thumbprint is `cnf.jkt`, `htm`/`htu` match the
-   request, `iat` within ±60 s, `ath` = hash of the credential, `jti` not replayed (verifier-local
+   request, `iat` from 120 s before to 60 s after the verifier's clock, `ath` = hash of the credential, `jti` not replayed (verifier-local
    cache), nonce if the verifier requires one (a server nonce, or a timed one for latency, §3.6).
 3. Check revocation: status-list bit for `status.status_list.idx` (cached ≤ TTL) — or online.
 4. For a credential with a `confirm` block, check its `DBA-Confirmation` (§6.4).
@@ -230,8 +230,8 @@ nearby.
 Built so far: the whole `net` vocabulary in the spec, vectors and all three evaluators; inline
 CIDRs; named address lists (`/api/v1/address-lists`, published at
 `status.devicebasedauth.org/v1/addresses/{id}`, enforced offline and in `/authorize`); DNS names
-(DoH in the verify library); client-direction latency (timed nonces in the verify library, SDK
-and CLI). Not built yet: relay hops and the webhook address source (grants that need them
+(DoH in the verify library); client-direction latency (timed nonces in the verify library and
+CLI; the browser SDK's side is built but in no release yet). Not built yet: relay hops and the webhook address source (grants that need them
 deny), `net` settings for sign-in and confirmations, and the device side of `net.server`
 (accepted at issuance and ignored by verifiers, as designed, but no SDK or CLI enforces it yet,
 so today it protects nothing). What is left, phase by phase, is in the plan's §13a.
@@ -466,7 +466,7 @@ prices D13). Generalizes `require.step_up`.
 - Browser SDK (source `packages/browser-sdk/`, bundled to `frontend/sdk/dba.js`) — versioned,
   immutable releases under `frontend/sdk/vX.Y.Z/` pinned with SRI (hashbin's model; latest
   v1.4.0): `enroll()`, `fetch()`/`headers()` (credential, DPoP, confirmation; answers server
-  and timed nonces), `fetchWithGates()`, `renew()`/`autoRenew()` (at 2/3 of lifetime),
+  nonces, and timed nonces in the unreleased build), `fetchWithGates()`, `renew()`/`autoRenew()` (at 2/3 of lifetime),
   `confirm()`, `token()`, `revoke()`, `describe()`, `signUp()`, `recover()`.
 - `packages/verify` — the verifier (§6.1), with Python and Go ports in `packages/verify-python`
   and `packages/verify-go`. Publishing to npm, PyPI and a Go tag is an owner step (L14, S5).
@@ -536,8 +536,8 @@ proposed (D13), address-list prices too (D17). Summary (`PRICES` in `src/utils/p
   own DBA browser credential (no Clerk session, so no MRU); accounts created by paying with a device
   never become Clerk users (STATUS B9). Closing accounts with zero balance and no live
   credentials after 12 months idle, after notice, is decided in principle (D8) but not built.
-- The cost-safety brake (`SafetyDO`, ported from hashbin/cronly): an hourly cron measures cost
-  from Cloudflare analytics, alerts at a projected month-end variable cost, then latches a brake
+- The cost-safety brake (`SafetyDO`, ported from hashbin/cronly): the hourly cron measures cost
+  from Cloudflare analytics once a day (and again while that report is missing or stale), alerts at a projected month-end variable cost, then latches a brake
   that stops the free public paths (`free: true` routes) while paid operations keep working.
 
 ---
@@ -630,7 +630,7 @@ merged (`integrations/cronly/`).
   any gate kind, and gate configuration changes behind a recent sign-in.
 - **Replay**: DPoP `jti` + `iat` window; online authorize keeps a replay cache; DBA's own API
   also requires its server nonce from proofs made before an account object started, since that
-  cache lives in memory (D15, §7.1); docs tell offline verifiers to keep a 2-minute `jti` cache
+  cache lives in memory (D15, §7.1); docs tell offline verifiers to keep a 3-minute `jti` cache
   (the verify library does it in-isolate by default; a shared cache in a Durable Object is
   optional, `replay-do.js`).
 - **Network constraints** (§3.6): verifiers take the peer address from the platform, never from
@@ -674,7 +674,8 @@ STATUS.md AGENTS.md      Status (single source of truth) and contributor guide
 
 ## 12. Build order
 
-Phases 0–7 and 11 are done; 8, 9, 10 and 12 are in progress (STATUS S1, S2, L9–L14, B10).
+Phases 1–7 and 11 are done, and phase 0 apart from the owner decisions still open (D2, D7, D8);
+8, 9, 10 and 12 are in progress (STATUS S1, S2, L9–L14, B10).
 
 | Phase | Deliverable | Exit criteria |
 |-------|-------------|---------------|

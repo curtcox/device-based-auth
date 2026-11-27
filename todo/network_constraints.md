@@ -77,7 +77,7 @@ unknown constraint and deny (fail closed). Credentials that use it have `ver` 2;
       "cidrs": ["203.0.113.0/24", "2001:db8:42::/48"],
       "lists": [{ "id": "adl_01JD…", "uri": "https://status.devicebasedauth.org/v1/addresses/adl_01JD…" }],
       "dns": { "names": ["vpn-egress.example.com"], "dnssec": true },
-      "webhook": "gat_01JD…"
+      "webhook": "gate_01JD…"
     },
     "route": { "relays": ["dev_01JDRELAY…"], "min_hops": 1, "max_hops": 2 },
     "latency": { "max_rtt_ms": 40, "samples": 1, "reuse_s": 60 }
@@ -142,8 +142,8 @@ vouches for (cross-account relays are an open question, §14).
 
 The measured time includes the device's signing time. Hardware keys are slow (TPM ES256 signing
 can take 50–200 ms; StrongBox 30–100 ms; WebCrypto and Secure Enclave a few ms). The grant
-builder shows the measured signing time of the enrolling device and warns when `max_rtt_ms`
-leaves less than 10 ms of network budget.
+builder is to show the measured signing time of the enrolling device and warn when `max_rtt_ms`
+leaves less than 10 ms of network budget (N9; not built).
 
 ## 4. Named address lists
 
@@ -200,7 +200,7 @@ Each relay that forwards a request adds one `dba-hop+jwt`, signed with the relay
 
 ```json
 { "typ": "dba-hop+jwt", "alg": "ES256", "jwk": { … relay public key … } }
-{ "relay": "dev_01JDRELAY…", "rcid": "crt_… (relay credential jti)",
+{ "relay": "dev_01JDRELAY…", "rcid": "crd_….1 (relay credential jti)",
   "prev": "192.0.2.17", "ath": "<hash of the device's DPoP proof>",
   "n": 0, "iat": 1795017600, "jti": "…" }
 ```
@@ -269,7 +269,7 @@ in `packages/verify/src/rtt.js` and `createVerifier({ rtt: { secret } })`:
    verifier computes `rtt = now_ms − t_ms` on its own clock (no clock sync with the device), and
    checks the HMAC, the `jkt` and that the peer address is the one the nonce was issued to.
 4. With `samples > 1` the verifier repeats and keeps the minimum (carried in the nonce, so still
-   stateless). `context.network.rtt_ms` is the result; the evaluator compares it.
+   stateless). The result goes to the evaluator as `location.network.rtt_ms`, which it compares.
 5. A passing result may be remembered for `reuse_s` keyed by (`jkt`, peer address), in memory
    (at most 10,000 entries).
 
@@ -317,8 +317,8 @@ after a restart, and sends `DPoP-Nonce` on its responses. The two must not fight
 ### 7.2 Online (`/authorize`)
 
 DBA does not face the device's connection, so the relying party measures as in §7.1 (the verify
-library does it) and passes `context.network.rtt_ms` and the peer address, as it already passes
-the IP. The relying party is only ever lying to itself.
+library does it) and passes `rtt_ms` beside the peer address `ip` in the request's
+`context.network`. The relying party is only ever lying to itself.
 
 ### 7.3 Server direction (device times the relying party)
 
@@ -336,13 +336,13 @@ the verifier first and handed in as context, so the vectors stay plain JSON:
 
 | Context field | Filled by |
 |---------------|-----------|
-| `context.network.ip` | the verifier (platform-reported, never client headers; §10) |
-| `context.network.rtt_ms` | §7.1 measurement, or absent |
+| `location.network.ip` | the verifier (platform-reported, never client headers; §10) |
+| `location.network.rtt_ms` | §7.1 measurement, or absent |
 | `context.address_lists` | `{ id: { cidrs, ver } \| "unavailable" }` for every list the credential names |
 | `context.dns` | `{ name: { addrs, dnssec } \| "unresolved" }` |
-| `context.address_webhook` | online only: `{ gat_…: true \| false }` |
+| `context.address_webhook` | online only: `{ gate_…: true }` when the webhook allowed the address |
 | `context.route` / `context.route_error` | §6.3: `{ relays, origin, attested }` (one `attested` boolean per hop) or a reason matching `[a-z0-9_]{1,64}` |
-| `context.mode` | `offline` / `online` (exists) |
+| `context.online` | `true` only when DBA evaluates (exists) |
 
 New reasons (spec/evaluation.md §3.10): `address_unavailable` (no peer or origin address),
 `address_not_allowed`, `address_list_unavailable:<id>` (informational beside
@@ -369,12 +369,14 @@ SDK and CLI evaluate it with the same code and the same reasons prefixed `server
   Workers (Cloudflare sets it), the socket address elsewhere; a `trustProxies` option must be set
   explicitly to honour `X-Forwarded-For`, and then only from listed proxy ranges. As built, the Go
   verifier makes the caller choose (`RemoteAddrLocation` or `CloudflareLocation`), but the JS
-  `createVerifier` reads `CF-Connecting-IP` whenever the caller passes no
-  `check.location.network`, which is only safe on Workers, and has no `trustProxies` (§13a).
+  `createVerifier` and the Python verifier (`network_location`) read `CF-Connecting-IP` whenever
+  the caller passes no network location, which is only safe behind Cloudflare, and neither has
+  `trustProxies` (§13a).
 - **Relay keys** are device keys: never on DBA's server; relays should be attested
   (`require_attested`) and short-lived; the dashboard shows each relay's recent hop counts.
-- **Challenge abuse**: RTT nonces cost the verifier an HMAC and no storage; per-IP rate limits on
-  challenges in the verify library; DBA's own endpoints already rate-limit.
+- **Challenge abuse**: RTT nonces cost the verifier an HMAC and no storage. The verify library
+  has no per-IP challenge limit of its own yet (to add; meanwhile a site rate-limits as for any
+  endpoint); DBA's own endpoints already rate-limit.
 - **DNS**: resolution through DoH to a configurable resolver (default Cloudflare 1.1.1.1), with
   a cache bounded by TTL (≥ 30 s, ≤ 300 s) and per-verifier limits on lookups per request (16).
 - **Privacy**: credentials reveal CIDRs, host names, list URIs and relay ids to every audience
@@ -409,7 +411,8 @@ lists, unvalidated DNS with `dnssec`, route context (hop count, relay not listed
 `route_error`), rtt missing / under / over, webhook offline → `online_required`, unknown `net`
 field → deny, `where.networks` unchanged; in `@devicebasedauth/verify` list fetch/cache
 (`createAddressListResolver`), the DoH resolver (`createDohResolver`) and RTT nonces
-(`createRttChallenger`); the SDK and CLI answering timed challenges.
+(`createRttChallenger`); the CLI and the unreleased browser SDK build (`frontend/sdk/dba.js`)
+answering timed challenges.
 
 Still to do (phase in brackets):
 
@@ -461,7 +464,8 @@ STATUS row updated.
   `ip.js`), Python (`net.py`) and Go (`grants_net.go`). Issuance validates `net` and sets `ver` 2
   only for credentials with it.
 - N2: `rtt.js` (§7.1) and `createVerifier({ rtt })`: challenge, timing, best of `samples`, reuse
-  for `reuse_s`. The browser SDK and CLI answer up to 3 timed challenges and use each timed nonce
+  for `reuse_s`. The CLI and the browser SDK source (in `frontend/sdk/dba.js`, not in any
+  release: v1.4.0 answers only D15 nonces) answer up to 3 timed challenges and use each timed nonce
   once; `dba headers`/`sign`/`curl` refuse credentials whose every grant is timed.
 - N3: named address lists (§4), prices in §11, `createAddressListResolver` (60 s fresh, 10 min
   stale, no rollback, tombstones and expired copies match nothing) used by `createVerifier`
@@ -472,9 +476,9 @@ STATUS row updated.
 
 **Gaps in what is built** (none blocks N5; each fails closed except the first):
 
-- The JS verifier's default IP source is the `CF-Connecting-IP` header (§10). Off Workers a
-  client can set it and pass an address rule, unless the caller passes
-  `check.location.network.ip` from the socket. Needs a safe default or a required option, and
+- The JS and Python verifiers' default IP source is the `CF-Connecting-IP` header (§10). Off
+  Cloudflare a client can set it and pass an address rule, unless the caller passes the network
+  location (`ip` from the socket). Needs a safe default or a required option, and
   `trustProxies`; until then the README and docs should say so.
 - `/authorize` resolves address lists but not DNS names, so a grant that relies on `dns` alone
   denies online (`dns_unresolved`); it takes `rtt_ms` and the address from the relying party's
@@ -482,12 +486,14 @@ STATUS row updated.
 - DBA's own API does not resolve lists or DNS for `dba:*` grants (they deny there) [N8].
 - `net.server` is accepted at issuance and, as designed, ignored by verifiers, but no SDK or CLI
   enforces it yet, so it protects nothing [N7]. Consider refusing it at issuance until then.
-- Issuance accepts `route` and `webhook` grants; they deny everywhere until N5 / N6.
+- Issuance accepts `route` and address `webhook` rules; grants that need them deny everywhere
+  until N5 / N6.
 - Lists of other accounts and audience lists (§4 `kind: "audience"`) are refused at issuance.
 - No CLI or dashboard editor for lists yet [N9].
 - **SDK bundle is 65,454 of its 65,536-byte limit**: the next SDK change needs room first
   (minify whitespace in scripts/build-sdk.mjs, or keep `describeGrant` out of the bundle). No SDK
-  release carries `net` support beyond v1.4.0's timed nonces [N9].
+  release carries any `net` client support: N2's timed-challenge answering is only in the
+  unversioned `frontend/sdk/dba.js` (v1.4.0 has the D15 nonces only) [N9].
 
 **Next: N5 relays** (or N6, whose price also waits on D17). Picking up N5 cold:
 
