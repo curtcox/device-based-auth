@@ -31,7 +31,7 @@ src/                 Worker: index.js (API_ROUTES, the only dispatch table), api
                      first-party audiences, attestation, email, push, address lists, OpenAPI, cost
                      monitor), utils/ (pricing.js = prices, cost-policy.js = rates and op counts)
 packages/verify/     @devicebasedauth/verify: JOSE, grants, net constraints, DPoP, status lists,
-                     address lists, verifier, site helpers, ReplayCacheDO
+                     address lists, DNS, round-trip timing, events, verifier, site helpers, ReplayCacheDO
 packages/verify-python/ packages/verify-go/   Ports of the verifier; pass the same vectors
 packages/browser-sdk/ Browser SDK source (bundled to frontend/sdk/dba.js by scripts/build-sdk.mjs)
 packages/cli/        dba CLI: lib.js re-exports the testable modules beside it; commands/ does the I/O
@@ -57,7 +57,7 @@ Node 22+. `npm install` (an `.npmrc` sets `legacy-peer-deps`).
 | `npm run lint` | ESLint; must be clean. |
 | `npm run check:file-sizes` | Per-type file size limits and the ratchet (also run by the pre-push hook, the tests and CI). |
 | `npm run dev:local` | Full local stack at http://localhost:8787. `Authorization: LocalDev <name>`; `POST /api/v1/dev/deposit` adds credit. |
-| `npm run test:samples` | Runs docs/samples against a fresh local server on port 8788 (needs python3 with cryptography+requests, and go). |
+| `npm run test:samples` | Runs docs/samples against a fresh local server on port 8788; a sample whose toolchain is missing (python3 with cryptography+requests, go, a JDK, swtpm/tpm2-tools, Swift) is skipped unless `DBA_SAMPLES_STRICT=1`. |
 | `npm run test:e2e` | Playwright browser tests (starts the local server). |
 | `npm run docs:generate` | Regenerate openapi.json, the browser copy of verify, and the SDK bundle. Tests fail on drift. |
 | `node scripts/build-sdk.mjs --release` | Cut an immutable `frontend/sdk/vX.Y.Z/` release (bump `VERSION` in `packages/browser-sdk/dba.js` first). |
@@ -71,8 +71,9 @@ Pushing to `main` deploys production (the GitHub variable `DBA_DEPLOY_ENABLED` i
 
 - **JavaScript:** ES modules, async/await, JSDoc on exported functions. Files kebab-case,
   classes PascalCase. Comments explain *why*.
-- **Tests sit beside the code** as `name.test.js` (Vitest). Durable Objects are tested by
-  constructing the class with an in-memory storage stub.
+- **Tests sit beside the code** as `name.test.js` (Vitest); integration tests across areas are
+  in `src/*.test.js`. Durable Objects are tested by constructing the class with an in-memory
+  storage stub.
 - **Every API route declares its access** in `API_ROUTES` (`src/index.js`): `PUBLIC`, `SESSION`,
   `DEVICE`, `AUTHENTICATED`, or scopes; billable routes also declare `billable` (which gives them
   `?dry_run=1`). A test fails for any undeclared route.

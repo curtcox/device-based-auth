@@ -40,6 +40,11 @@ be reached. Runnable versions: [`docs/samples/verify-request.mjs`](https://githu
 and for `net` grants `rtt: { secret }` (round-trip timing), `dns` and `addressLists`. The JSDoc
 on `createVerifier` in `src/verifier.js` describes each.
 
+Where a request came from (for `where` and `net` grants) is read by default from Cloudflare's
+`request.cf` and the `CF-Connecting-IP` header, which a client can set itself when you are not
+behind Cloudflare. Elsewhere, pass `{ location: { network: { ip } } }` with the socket's peer
+address in the check given to `verifyRequest`.
+
 ## Other exports
 
 - `handleEvent(body)` on a verifier, and `verifyEvent`: signed revocation webhooks
