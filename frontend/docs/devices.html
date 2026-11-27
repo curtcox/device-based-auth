@@ -69,7 +69,7 @@ let result = try await client.call("POST", "https://hashbin.org/api/content", cr
         print(url)
         fflush(stdout)
     }</code></pre>
-<p>What the attestation proves:</p>
+<h3>What the attestation proves</h3>
 <p>App Attest cannot vouch for an arbitrary key: Apple attests a key of its own and says which app, on a genuine iPhone or iPad, holds it. So an iOS app makes its DBA key in the Secure Enclave as usual and then has App Attest vouch for that key:</p>
 <ol>
 <li>Get a challenge from <code>POST /api/v1/enrollments/attestation-challenge</code> (valid 10 minutes).</li>

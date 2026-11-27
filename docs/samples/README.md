@@ -33,7 +33,14 @@ npm run test:samples                      # all of them, against a fresh local s
 DBA_SAMPLES_VERBOSE=1 npm run test:samples   # also print each sample's output
 DBA_SAMPLES_STRICT=1 npm run test:samples    # fail, rather than skip, when python3, go, a JDK or swtpm/tpm2-tools is missing
 DBA_SAMPLES_ONLY=verify-request.mjs,go_verify npm run test:samples   # only these (names as in run-samples.mjs)
+DBA_SAMPLES_PORT=8790 npm run test:samples   # another port for the local server
 ```
+
+The harness uses routes that exist only on a local server: `Authorization: LocalDev <name>` to act
+as an account owner, `POST /api/v1/dev/deposit` to fund it, and `POST /api/v1/dev/fresh-object`
+before each sample, so every client meets the DPoP nonce challenge a newly started account object
+asks for. In place of the card payment, `dba signup` itself calls `POST /api/v1/dev/signup-paid` when
+the server says it is local.
 
 To run one by hand, start the local server (`npm run dev:local`, port 8787), then for example
 `DBA_ORIGIN=http://localhost:8787 node docs/samples/verify-request.mjs`, and approve the printed

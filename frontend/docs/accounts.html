@@ -90,7 +90,10 @@ dba --profile spare recover --account &quot;$account&quot; --code &quot;$code&qu
 <tr><td><code>POST /api/v1/session/reverify</code></td><td>A dashboard device asks your gates to confirm it is you.</td></tr>
 <tr><td><code>POST /api/v1/recover</code>, <code>POST /api/v1/recover/complete</code></td><td>Recover by <code>code</code>, <code>gate</code> or <code>email</code>; finish a waiting one.</td></tr>
 <tr><td><code>GET</code>/<code>POST /api/v1/account/recovery</code></td><td>Your ways back in; accept having none; cancel an email recovery.</td></tr>
-<tr><td><code>POST</code>/<code>DELETE /api/v1/account/email</code></td><td>Verify an address here for security email and recovery; remove it.</td></tr>
+<tr><td><code>POST /api/v1/recover/email-link</code></td><td>Start the 72-hour wait with the <code>token</code> from the emailed recovery link (what <a href="/email-link.html">/email-link.html</a> does).</td></tr>
+<tr><td><code>POST /api/v1/settings/recovery-codes</code></td><td>Ten new one-time recovery codes, shown once; the old ones stop working. Needs a recent sign-in.</td></tr>
+<tr><td><code>POST</code>/<code>DELETE /api/v1/account/email</code>, <code>POST /api/v1/account/email/verify</code></td><td>Send a confirmation link to an address for security email and recovery, or remove it; the link's <code>token</code> verifies it.</td></tr>
+<tr><td><code>GET</code>/<code>POST /api/v1/push-subscriptions</code>, <code>DELETE …/{id}</code></td><td>Browsers that get security notices (Web Push, at most 5); free.</td></tr>
 <tr><td><code>POST</code>/<code>DELETE /api/v1/account/clerk-link</code></td><td>Add or remove a password (Clerk) sign-in.</td></tr>
 </tbody></table>
 <p>Schemas and every other route: <a href="/openapi.json">/openapi.json</a>.</p>
