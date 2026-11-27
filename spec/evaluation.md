@@ -74,7 +74,7 @@ Anything else is an exact match. An absent resource matches only `*`.
 `source` (required) is `network`, `device` or `both`, and at least one of `countries`, `regions`,
 `areas`, `networks` is present (each a list of 1–64): `countries` are ISO 3166-1 alpha-2 codes
 (`US`), `regions` ISO 3166-2 codes (`US-MO`), `areas` are `{ lat, lon, radius_m }` with
-`radius_m` 10–20 037 508, `networks` CIDR ranges. For `both`, the checks run independently against each
+`lat` −90–90, `lon` −180–180 and `radius_m` 10–20 037 508, `networks` CIDR ranges. For `both`, the checks run independently against each
 source and both must pass. For each source:
 
 - Location absent → `location_unavailable:<source>`.

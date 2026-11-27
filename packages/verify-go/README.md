@@ -47,7 +47,7 @@ fmt.Println(w.Code, strings.TrimSpace(w.Body.String()))
 
 The JSON error has the shape `{"error", "code", "reasons"}` with the HTTP status of the
 decision: `401` (no or invalid credential or proof, revoked), `403` (`forbidden`, or
-`online_required` for grants with usage limits, step-up or `require.online`, which only
+`online_required` for grants with usage limits, step-up, gates or `require.online`, which only
 `VerifyOnline` can allow) and `503` (issuer unreachable).
 
 Without middleware, `verifier.VerifyRequest(r, check)` returns the same `*Decision`.

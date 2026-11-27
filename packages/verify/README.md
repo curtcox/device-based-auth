@@ -30,11 +30,13 @@ if (!result.allow) return Response.json({ code: result.code, reasons: result.rea
 `Bearer` access token), revocation, any `DBA-Confirmation`, and then the grants for the action.
 It fails closed: `401` for a missing or invalid credential or proof, `403` (`forbidden`, or
 `online_required` for grants only devicebasedauth.org can decide), `503` when the issuer cannot
-be reached. Runnable versions: [`docs/samples/verify-request.mjs`](https://github.com/curtcox/device-based-auth/blob/main/docs/samples/verify-request.mjs)
+be reached. With the `rtt` option, a grant that needs a round-trip measurement first gets `401`
+`use_dpop_nonce` with the headers to send in `result.headers`. Runnable versions: [`docs/samples/verify-request.mjs`](https://github.com/curtcox/device-based-auth/blob/main/docs/samples/verify-request.mjs)
 (Node) and [`docs/samples/worker-middleware.mjs`](https://github.com/curtcox/device-based-auth/blob/main/docs/samples/worker-middleware.mjs)
 (a Worker that also receives revocation webhooks).
 
-`createVerifier` options include `issuer`, `fetch`, `now`, `replay` (a shared cache such as
+`createVerifier` options include `issuer`, `fetch`, `now`, `jwksTtl` and `statusTtl` (cache
+lifetimes, default 3600 s and 300 s), `replay` (a shared cache such as
 `durableReplayCache` over the exported `ReplayCacheDO`), `acceptAccessTokens`,
 `online: { apiKey }` (enables `verifyOnline`, metered), `catalog` (your audience's gate policies),
 and for `net` grants `rtt: { secret }` (round-trip timing), `dns` and `addressLists`. The JSDoc
@@ -47,12 +49,18 @@ address in the check given to `verifyRequest`.
 
 ## Other exports
 
+- `authenticateRequest(request)` (credential, proof and confirmation, no action yet),
+  `allowedActions(payload, actions)`, `decide(payload, check)` and `verifyOnline(request, check)`
+  on a verifier.
 - `handleEvent(body)` on a verifier, and `verifyEvent`: signed revocation webhooks
   ([spec/events.md](https://github.com/curtcox/device-based-auth/blob/main/spec/events.md)).
 - `createSiteAuth` (credentials as API keys beside a site's own auth, mapped to local users) and
   `createOidcClient` ("Sign in with devicebasedauth.org" and account linking).
-- `evaluateGrants`, `validateGrants`, `describeGrant`: grants on their own.
-- `verifyCredential`, `verifyProof`, `verifyConfirmation`, `createProof`, `decodeStatusList`,
+- `evaluateGrants`, `validateGrants`, `describeGrant`, `grantsNarrow`: grants on their own.
+- `createAddressListResolver` and `verifyAddressList`, `createDohResolver`, `createRttChallenger`:
+  the resolvers `createVerifier` uses for `net` grants, for use on their own.
+- `inspectCredential` (decode without verifying), `verifyCredential`, `verifyProof`,
+  `verifyConfirmation`, `createProof`, `decodeStatusList`,
   `getBit`, JOSE helpers, and issuer helpers (`signCredential`, `signStatusList`) for tests.
 
 Ports with the same decisions and reason codes: Python (`packages/verify-python`) and Go

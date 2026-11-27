@@ -33,7 +33,7 @@ def handle(method, url, headers):
 
 `url` must be the full URL the client called (`https://host/path?query`); behind a proxy, rebuild
 it from the forwarded host and scheme. `result["caveats"]` carries limits you enforce yourself,
-such as `spend_usd_per_month`. Grants with usage limits, step-up or `require.online` come back as
+such as `spend_usd_per_month`. Grants with usage limits, step-up, gates or `require.online` come back as
 `code: "online_required"`; send those to `verifier.verify_online(...)` (needs `online_api_key`).
 
 Fetching is injectable — `create_verifier(audience, fetch=my_fetch, now=my_clock)` — where

@@ -18,7 +18,7 @@ export const COST_POLICY = Object.freeze({
  * (its account's object started less than a minute ago and asks for its nonce, STATUS D15), so
  * each operation a device can ask for with a DPoP proof counts that challenge too: one more Worker
  * request, its authentication (1 DO request, with the rate limit) and ~2 ms to check the proof.
- * `dba curl` and `dba headers` ask POST /api/v1/dpop-nonce first instead, which costs the same.
+ * `dba curl` and `dba headers` ask POST /api/v1/dpop-nonce first instead, which costs DBA the same (the caller pays nothing for it).
  */
 const withNonceChallenge = o => ({ ...o, workerRequests: o.workerRequests + 1, doRequests: o.doRequests + 1, cpuMs: o.cpuMs + 2 });
 

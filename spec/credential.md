@@ -36,10 +36,10 @@ base64url-decoding its middle segment.
 | `acct` | yes | The issuing devicebasedauth.org account (1–128 of `[A-Za-z0-9_-]`). Relying parties map it to a local account (account linking). |
 | `aud` | yes | Non-empty array of audience names (site domains) the credential is valid for. |
 | `cid` | yes | Credential id, `crd_` + 8–64 alphanumerics. Stable across renewals; revoking it revokes every version. |
-| `jti` | yes | Unique id of this version, `<cid>.<version>`. |
+| `jti` | yes | Unique id of this version, `<cid>.<version>` (a random `tok_…` id on access tokens, §6). |
 | `iat`, `nbf`, `exp` | yes | NumericDate seconds. `exp > nbf`. Verifiers allow 60 s clock skew. |
 | `cnf.jkt` | yes (device) | RFC 7638 SHA-256 thumbprint of the device public key. Absent on access tokens. |
-| `device` | no | `{ name, kind, key_protection }` for display. `kind` ∈ `browser`, `phone`, `desktop`, `server`, `cli`, `agent`, `iot`, `other`. `key_protection` ∈ `webcrypto-nonextractable`, `secure-enclave`, `android-keystore`, `tpm`, `os-keychain`, `software`. Self-reported unless `device.attestation` is present (§3a). |
+| `device` | no | `{ name, kind, key_protection }` for display (devicebasedauth.org always includes it; `name` is plain text of at most 100 characters). `kind` ∈ `browser`, `phone`, `desktop`, `server`, `cli`, `agent`, `iot`, `other`. `key_protection` ∈ `webcrypto-nonextractable`, `secure-enclave`, `android-keystore`, `tpm`, `os-keychain`, `software`. Self-reported unless `device.attestation` is present (§3a). |
 | `grants` | yes | 1–32 grants; see [evaluation.md](evaluation.md). |
 | `status.status_list` | yes | `{ idx, uri }` — the credential's bit in an IETF OAuth Token Status List. |
 | `ver` | yes | Grant vocabulary version: `1`, or `2` when any grant has `net` (evaluation.md §3.10; a credential with `net` and `ver` 1 is invalid). Issuers use `1` whenever they can, so older verifiers keep accepting those credentials. |
@@ -255,7 +255,9 @@ A verifier MUST:
 Evaluation (6) comes last; the reference library checks revocation (4) together with 1–2,
 before the proof. If the JWKS or status list cannot be fetched, verifiers MUST fail closed (deny).
 
-**Failure codes**, shared by the reference library and its ports: `invalid_format`, `wrong_type`,
+**Failure codes**, shared by the reference library and its ports: `credential_required` (no
+`Authorization: DBA` credential or DBA access token in the request), `access_tokens_not_accepted`
+(a verifier set to refuse them, §6), `invalid_format`, `wrong_type`,
 `unknown_kid`, `invalid_signature`, `wrong_issuer`, `invalid_claims`, `wrong_audience`,
 `not_yet_valid`, `expired` (steps 1–2); `proof_required`, `invalid_proof`, `key_mismatch`,
 `stale_proof`, `use_dpop_nonce`, `replayed_proof` (step 3); `revoked`, `status_unavailable`
@@ -275,7 +277,8 @@ DBA API answers such a credential with 401 `reissue_required`.
 ## 6. Access tokens
 
 `POST /api/v1/token` exchanges a credential + proof for a bearer token with `typ: dba-access+jwt`,
-lifetime ≤ 10 minutes, one audience, the same grants, the same `status`, and no `cnf`. It is
+lifetime ≤ 10 minutes, one audience, a random `jti` (`tok_…`), the same grants (without `require.confirmation`, §9), the same `status`
+and `device`, and no `cnf` or `confirm`. It is
 presented as `Authorization: Bearer <token>` and verified the same way minus step 3. Audiences MAY
 refuse access tokens.
 
@@ -355,7 +358,7 @@ audience's account), which also sees revocations instantly.
 Gated grants (`require.gates`, `require.step_up`, and actions whose audience requires gates) are
 online only too: `/authorize` answers `{ allow: false, code: "gate_pending", gate_request: { id,
 retry_after, deadline } }` (`code: "step_up_required"` for a `step_up` grant) until the gates
-settle, and the caller retries.
+settle, and the caller retries. A refusal by a gate is `gate_denied` (`step_up_denied`).
 
 ## 9. Confirmations
 
