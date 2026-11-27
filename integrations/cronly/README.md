@@ -1,5 +1,9 @@
 # cronly.org integration patches (S5 in cronly)
 
+**Historical delivery artifact.** This series has since been merged and extended in cronly;
+do not apply it again. Current rollout and live acceptance: [sibling integrations](../README.md)
+and [STATUS S1](../../STATUS.md).
+
 A six-commit patch series for [cronly](https://github.com/curtcox/cronly) that makes cronly.org a
 devicebasedauth.org relying party: device-bound API keys and account linking (this repo's master
 plan §9.1, plus the linking half of §9.2), delivered as `git format-patch` output for the cronly

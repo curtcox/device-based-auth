@@ -579,7 +579,7 @@ are registered on the audience, `/.well-known/openid-configuration`). The ID tok
 DBA account (`acct`), the device (`dev`, `device_name`), the login credential (`cid`), and, with
 sign-in gates (§6.4), `amr`, `acr` and `dba_gates`. Two stages:
 
-- **Stage A — fast**: register DBA as a custom OIDC provider in each site's Clerk application.
+- **Stage A — optional**: register DBA as a custom OIDC provider in each site's Clerk application.
   Users get a "devicebasedauth.org" button next to Google/GitHub with almost no site code.
   Limitation: after login the site session is an ordinary Clerk session, so revoking the device
   does not end it (only stops future logins). Needs the sites' Clerk plan to support custom
@@ -592,6 +592,8 @@ sign-in gates (§6.4), `amr`, `acr` and `dba_gates`. Two stages:
 
 devicebasedauth.org dogfoods Stage B: its dashboard runs on a DBA browser credential ("use this
 browser as a device"), after a Clerk sign-in or from sign-up.
+
+D7: direct DBA sign-in alongside Clerk; Stage A optional. [Rollout](../integrations/README.md).
 
 ### 9.3 Billing across sites
 
