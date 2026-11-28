@@ -13,7 +13,7 @@ MCP endpoint: POST https://devicebasedauth.org/mcp (Streamable HTTP; Authorizati
 ## Key facts
 
 - Money is integer micro-dollars (µ$; $1 = 1,000,000 µ$). Every JSON response includes `cost_microdollars`. `GET /api/v1/quote?op=<op>` prices an operation before you do it; `?dry_run=1` on a billable call quotes it (and, with `account:read`, says whether the balance covers it) without doing it. Billable responses carry `balance_microdollars` / `X-DBA-Balance-Microdollars` for callers with `account:read`.
-- Prices (µ$): issue 87, renew 25, online decision 14, metered API read 7, token exchange or client certificate 7, OIDC login 14 (paid by the site), audience registration/change 100, gate request 22 per gate contacted (webhook gate 23, Duo/Okta Verify 30), confirmation 14, security email 200, named address list create/replace 242 per started 1,000 ranges plus 15 per day it extends the list's published life (13 months ahead). Minimum deposit $5. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
+- Prices (µ$): issue 89, renew 25, online decision 15, metered API read 9, token exchange or client certificate 9, OIDC login 15 (paid by the site), audience registration/change 100, gate request 22 per gate contacted (webhook gate 23, Duo/Okta Verify 30), confirmation 14, security email 200, named address list create/replace 242 per started 1,000 ranges plus 15 per day it extends the list's published life (13 months ahead). Minimum deposit $5. Offline verification, JWKS, status lists, revocation, inspection and the web dashboard are free.
 - Errors: `{ "error": "...", "code": "..." }` with HTTP status; 402 = insufficient balance.
 - Private keys never leave the device. The service only ever sees public keys.
 

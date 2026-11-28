@@ -395,7 +395,7 @@ docs/business/pricing.md.
 | Address list create / replace (`address_list`) | per started 1,000 ranges: the request, a debounced publish, the later free delete with its tombstone and purge, list and chunk rows, 2 R2 writes | 242 µ$ (proposed) | Owning account |
 | Address list published life (`address_list_day`) | re-signing every 20 h up to 13 months after the last change; each create or replace pays for the days it adds (a new list ≈ 6,200 µ$). Lists unchanged for 13 months stop being re-signed and expire (deny) | 15 µ$ per day (proposed) | Owning account |
 | Webhook address check (N6) | a signed subrequest + DO cache write | to count | Account that owns the webhook (the issuer) |
-| Relay credential | ordinary issue / renew | 87 / 25 µ$ | Relay's account |
+| Relay credential | ordinary issue / renew | 89 / 25 µ$ | Relay's account |
 | CIDR, DNS, route and latency checks | verifier-side | free to DBA | — |
 | Online decision with `net` | lists read through a per-isolate cache; no extra row writes | 14 µ$ (unchanged) | Audience |
 

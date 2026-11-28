@@ -510,7 +510,7 @@ proposed (D13), address-list prices too (D17). Summary (`PRICES` in `src/utils/p
 
 | Operation | Price | Who pays |
 |-----------|-------|----------|
-| Issue or rotate a credential (includes prepaid revocation, 13 months of record storage and their later deletion) | 87 µ$ | Issuing account |
+| Issue or rotate a credential (includes prepaid revocation, 13 months of record storage and their later deletion) | 89 µ$ | Issuing account |
 | Renew (same key) | 25 µ$ | Issuing account |
 | Online authorization decision | 15 µ$ ($15 per million) | Audience account |
 | OpenID Connect sign-in | 15 µ$ | Audience account |

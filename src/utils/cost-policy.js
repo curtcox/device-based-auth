@@ -48,7 +48,8 @@ export const OPERATIONS = Object.freeze({
   // Recovering by gate is a gate request (charged as one, D13) plus such an issue, at most three an
   // hour per account.
   // Named address lists a grant names (B10 N3) are looked up among the account's rows (reads only).
-  issue: withNonceChallenge({ workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 }),
+  // Include recovery across a month boundary allocating a previously unused status shard.
+  issue: withNonceChallenge({ workerRequests: 3, doRequests: 20, rowWrites: 27, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 }),
   // Credential status (auth, with the rate limit), credential status (renew), funds check, renew; later
   // compaction deletes its ledger, receipt and audit rows; month rollover archives its summary.
   renew: withNonceChallenge({ workerRequests: 1, doRequests: 5, rowWrites: 9, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 }),

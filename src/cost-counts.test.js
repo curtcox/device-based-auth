@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { testEnv, call, newDevice, enroll, meter, ORIGIN, runAlarms } from '../test-utils/env.js';
 import { inspectCredential, createProof, signJws, sha256b64u, b64u } from '../packages/verify/src/index.js';
 import { OPERATIONS } from './utils/cost-policy.js';
@@ -16,7 +16,7 @@ beforeEach(async () => {
   env = await testEnv(); m = meter(env);
   for (const who of ['alice', 'operator']) await call(env, 'POST', '/api/v1/dev/deposit', { auth: who, body: { amount_microdollars: 1_000_000 } });
 });
-afterEach(() => { Date.now = realNow; });
+afterEach(() => { Date.now = realNow; vi.restoreAllMocks(); });
 
 /** Run `op` once to warm up, move to the next day (so the measured run flushes yesterday's aggregate row), measure it. */
 async function measured(op) {
@@ -162,8 +162,12 @@ describe.each([15, 31])('cost policy matches the code (starting January %i)', da
   });
 
   it('recovery onto a new device: an issue, given free and bounded by the codes (B9)', async () => {
+    const shard = vi.spyOn(Math, 'random').mockReturnValue(0);
     const { codes } = (await call(env, 'POST', '/api/v1/settings/recovery-codes', { auth: 'alice' })).body;
     await enroll(env, 'alice', await newDevice()); // the registry seeds itself once per deployment
+    // The measured recovery also initializes a cold shard. Random allocation otherwise makes
+    // this extra row appear only sometimes, hiding the month-boundary worst case.
+    shard.mockReturnValueOnce(0).mockReturnValueOnce(0.5);
     const recover = async code => { const d = await newDevice(); return call(env, 'POST', '/api/v1/recover', { body: { account: 'alice', code, request: await d.enrollRequest({ device: { name: 'p' } }) } }); };
     within('issue', await measured(async () => { const r = await recover(codes.shift()); expect(r.body.status).toBe('recovered'); return r; }), later(11, 16));
   });

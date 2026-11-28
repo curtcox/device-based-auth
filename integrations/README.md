@@ -39,8 +39,10 @@ deployed direct browser sign-in and the page transport, with unit and browser re
 Live enrollment, device-only account access across reloads, revocation refusal, and restored regular
 Clerk/Google sign-in passed. The one-day test credential was revoked; checks spent about 315 µ$
 of prepaid DBA credit, within the approved $0.01 limit.
-SubEtha's existing console session and DBA account association were also verified; that account
-has no handle or balance yet, so device/message acceptance still needs account setup.
+SubEtha's existing console session and DBA account association were also verified. The owner
+chose `curtcox`, now set. Funding was requested, but its minimum $5 checkout returned
+`provider_unavailable: Stripe is not configured`; no charge was made. Production needs its
+Stripe key and webhook before funding and device/message acceptance can proceed.
 
 ## Live acceptance
 
