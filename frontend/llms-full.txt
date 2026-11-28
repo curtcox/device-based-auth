@@ -972,8 +972,8 @@ emails do not include it.
 |-----------|----------|----------------------------|--------:|---------:|-------------:|
 | Issue a credential (enrollment approval or API) | Issuing account | 4 Worker req, 21 DO req, 26 rows, 93 ms CPU, 6 KB × 13 months, 1 R2 write — includes a **prepaid revocation** and its webhook deliveries, an enrollment token's check and use counter, Web Push notices, the **deletion of its records** after 13 months, and the nonce challenge | 53 | 87 | **87** |
 | Rotate a credential to a new key | Issuing account | Same as issue (new status index, old one revoked) | 53 | 87 | **87** |
-| Renew (same key) | Issuing account | 2 Worker req, 6 DO req, 8 rows (incl. later deletion of its ledger, receipt and audit rows), 12 ms, 1 KB × 13 months, incl. the nonce challenge | 13 | 22 | **25** |
-| Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 6 rows (balance, daily aggregate row, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 8 | 14 | **14** |
+| Renew (same key) | Issuing account | 2 Worker req, 6 DO req, 9 rows (incl. month rollover and later deletion of its ledger, receipt and audit rows), 12 ms, 1 KB × 13 months, incl. the nonce challenge | 14 | 23 | **25** |
+| Online authorization decision | Audience owner | 1 Worker req, 4 DO req, 7 rows (balance, daily aggregate row, month summary, decision row and its later deletion, and either a usage counter and its deletion or a step-up request and its deletion), 15 ms (incl. notices of a step-up request), 0.5 KB × 3 months | 9 | 15 | **15** |
 | Gate request, per gate contacted (**proposed, D13**) | Account that owns the gates (the credential's issuer) | 2 Worker req, 4 DO req (the answer: authentication with the rate limit and the account; the alarm that prunes it; the nonce challenge), 9 rows (balance and daily aggregate row; request row; its answer or timeout settlement; an audit row and its deletion after 13 months; the row's deletion when used or pruned; for TOTP and security keys, the gate row's last step or signature counter), 27 ms (Web Push to up to 5 browsers; the notice of an allow by timeout; code and signature checks), 0.5 KB × 13 months | 13 | 22 | **22** |
 | Webhook gate request, per webhook gate contacted (**proposed, D13**) | Account that owns the gates | As a gate request, plus the signed POST to the service (2 ms) and the transaction recording its outcome (1 row) | 14 | 23 | **23** |
 | Duo or Okta Verify gate request, per vendor gate contacted (**proposed, D13**) | Account that owns the gates | As a webhook gate request, plus up to 24 status polls, each an alarm wake-up (24 DO req, ~2 ms each) | 18 | 30 | **30** |
@@ -981,9 +981,9 @@ emails do not include it.
 | Named address list, create or replace, per started 1,000 ranges (**proposed, D17**) | Account that owns the list | 3 Worker req, 8 DO req (the request; a debounced publish from the alarm; the list's later free delete with its tombstone and purge; the nonce challenge), 20 rows (list row, chunk of ranges, charge rows, audit rows, alarm, publish bookkeeping, and their later deletion), 15 ms, 44.5 KB × 13 months, 2 R2 writes (the publish and the delete's tombstone) | 148 | 242 | **242** |
 | Named address list, each day its published life is extended to 13 months after a create or replace (**proposed, D17**) | Account that owns the list | Re-signing every 20 hours (1.2 a day): an alarm wake-up, 2 rows, ~5 ms to sign up to 600 KB, one R2 write | 9 | 15 | **15** |
 | Security email (D9) | Account it is sent to, when it is queued | 3 DO req (up to 3 alarm wake-ups, one per attempt), 15 rows (charge: balance, ledger and receipt rows and their later deletion; queue row and alarm; attempts' rewrites or deletion and next alarms; an audit row and its deletion; the digest's last-sent row), 10 ms (SigV4 signing per attempt), 0.5 KB × 13 months, **1 SES email** (100 µ$; retried only when SES answered that it did not take it, so at most one is billed) | 117 | 191 | **200** |
-| Metered API read (API key or non-dashboard device) | Caller | 2 Worker req, 5 DO req (authentication with the rate limit, charge, up to two for the read, the nonce challenge), 2 rows (balance, daily aggregate row), 5 ms | 4 | 7 | **7** |
-| Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 2 Worker req, 5 DO req, 2 rows (balance, daily aggregate row), 7 ms, incl. the nonce challenge | 4 | 7 | **7** |
-| OpenID Connect sign-in | The site (audience owner) | 3 Worker req, 8 DO req, 5 rows (code put, taken and deleted; balance; daily aggregate row), 12 ms, incl. the nonce challenge | 8 | 14 | **14** |
+| Metered API read (API key or non-dashboard device) | Caller | 2 Worker req, 5 DO req (authentication with the rate limit, charge, up to two for the read, the nonce challenge), 3 rows (balance, daily aggregate row, month summary), 5 ms | 5 | 9 | **9** |
+| Token exchange (≤10-minute bearer token), X.509 client certificate (≤24 h), or an MCP app's token refresh (1-hour access token) | Issuing account | 2 Worker req, 5 DO req, 3 rows (balance, daily aggregate row, month summary), 7 ms, incl. the nonce challenge | 5 | 9 | **9** |
+| OpenID Connect sign-in | The site (audience owner) | 3 Worker req, 8 DO req, 6 rows (code put, taken and deleted; balance; daily aggregate row; month summary), 12 ms, incl. the nonce challenge | 9 | 15 | **15** |
 | Register or change an audience | Audience owner | 2 Worker req, 5 DO req, 8 rows (incl. later deletions), 7 ms, 4 KB × 13 months, incl. the nonce challenge | 20 | 33 | **100** |
 | Revocation, offline verification, JWKS, status lists, inspection, enrollment start/poll, attestation challenges, DPoP nonces, dashboard reads | — | Free: prepaid, static, CDN-cached, or rate-limited and behind the cost brake | — | — | **0** |
 
@@ -991,6 +991,11 @@ Issue, decision, read, token, login, gate, webhook gate, vendor gate, confirmati
 list prices sit exactly at their floors (the thinnest margin the rule allows). Any upward correction
 found when re-counting raises their prices. Online `/authorize` (paid by the site) does not ask for
 DPoP nonces (STATUS L12, docs/security/review-log.md).
+
+Month-rollover accounting (D18, 2026-11-27) adds the previously omitted archive write for
+renewals, decisions, reads, tokens and sign-ins. Renewals still clear the floor at 25 µ$; the
+required floor formula raises decisions/sign-ins to 15 µ$ and reads/tokens to 9 µ$. Counts
+are tested across both day and month boundaries on fixed clocks.
 
 ### Gate requests (proposed, STATUS D13)
 
@@ -1041,7 +1046,7 @@ per operation).
 makes (plus what it prepays for later: pruning and compaction deletes, revocation, webhooks) and
 fails when they exceed `OPERATIONS`. Connected MCP apps record their hourly refresh as
 `refreshed_at` and keep the refresh digest on the balance row, so a refresh writes no row of its
-own; it is charged as a token (7 µ$, about $0.005 a month for an app connected around the clock).
+own; it is charged as a token (9 µ$, about $0.0065 a month for an app connected around the clock).
 
 The first read of a new day writes yesterday's aggregate ledger rows and saves the rolled balance
 row once: one row a day at most, on accounts active the day before, that no operation counts.
@@ -1100,7 +1105,7 @@ The revocation shares one outbox row with its webhook deliveries, so the success
 extra rows, and audiences without a webhook cost one registry lookup.
 
 The webhook test button (`POST /api/v1/audiences/{name}/webhook-test`) is charged as a metered
-read (7 µ$).
+read (9 µ$).
 
 ## What customers would pay
 
@@ -1109,8 +1114,8 @@ read (7 µ$).
 | Developer: 5 devices, 30-day credentials renewed monthly | 5 × 25 µ$ = **$0.000125** |
 | Small team: 200 devices, 7-day credentials | 200 × 4.3 × 25 µ$ ≈ **$0.02** |
 | Agent fleet: 1,000 agents, 1-hour credentials, 24/7 | 1,000 × 720 × 25 µ$ = **$18.00** |
-| Site doing 10 M online decisions | 10 M × 14 µ$ = **$140** |
-| Script polling the API 1 M times | 1 M × 7 µ$ = **$7** |
+| Site doing 10 M online decisions | 10 M × 15 µ$ = **$150** |
+| Script polling the API 1 M times | 1 M × 9 µ$ = **$9** |
 
 A $5 deposit covers about 57,000 issuances, 200,000 renewals, or about 357,000 online decisions.
 

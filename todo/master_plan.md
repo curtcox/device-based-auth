@@ -512,9 +512,9 @@ proposed (D13), address-list prices too (D17). Summary (`PRICES` in `src/utils/p
 |-----------|-------|----------|
 | Issue or rotate a credential (includes prepaid revocation, 13 months of record storage and their later deletion) | 87 µ$ | Issuing account |
 | Renew (same key) | 25 µ$ | Issuing account |
-| Online authorization decision | 14 µ$ ($14 per million) | Audience account |
-| OpenID Connect sign-in | 14 µ$ | Audience account |
-| Metered API reads (API keys, non-dashboard devices), token exchange, X.509 certificate | 7 µ$ | Caller / issuing account |
+| Online authorization decision | 15 µ$ ($15 per million) | Audience account |
+| OpenID Connect sign-in | 15 µ$ | Audience account |
+| Metered API reads (API keys, non-dashboard devices), token exchange, X.509 certificate | 9 µ$ | Caller / issuing account |
 | Register or change an audience | 100 µ$ | Audience account |
 | Gate request, per gate contacted: local kinds / webhook / Duo or Okta Verify (proposed, D13) | 22 / 23 / 30 µ$ | Account that owns the gates |
 | Confirmation issued (proposed, D13) | 14 µ$ | Issuing account |

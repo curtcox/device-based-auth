@@ -124,7 +124,7 @@ detail. Add new findings to the end of "Found and fixed", and keep "Known limits
   that gap with server nonces (D15); `/authorize` does not, because the nonce would have to travel
   back through the site (a `use_dpop_nonce` decision the site relays as a 401 with `DPoP-Nonce`,
   which the browser SDK v1.4.0 already answers) and every denial is billed to the site as a
-  decision, so each challenge would cost it an extra 14 µ$. A site that also checks proofs with its
+  decision, so each challenge would cost it an extra 15 µ$. A site that also checks proofs with its
   own replay cache (`durableReplayCache`, B4) is not exposed. Whether to add the relay and how to
   bill it is the owner's decision.
 - **Some limits are in memory on purpose.** The per-account request rate limit, new gate requests

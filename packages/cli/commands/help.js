@@ -53,7 +53,7 @@ Use the credential:
   dba certificate [--lifetime SECONDS]      Write an X.509 client certificate for this device's key
                                             (client.crt, client.key, ca.crt in the profile
                                             directory) for mTLS: curl --cert … --key …. Valid 1 hour
-                                            by default, at most 24; 7 µ$.
+                                            by default, at most 24; 9 µ$.
   dba renew [--rotate] [--if-due]           Renew the credential (--rotate: move to a new key;
                                             --if-due: only once 2/3 of its lifetime has passed,
                                             for a daily cron job on rarely used devices).
@@ -75,7 +75,7 @@ Gates and confirmation:
                                             device with dba:gates:read).
   dba gates add --kind dba-device --label TEXT --device dev_…
   dba gates add --kind webhook --label TEXT --url https://… --public-jwk JSON
-  dba gates test GATE                       Send a webhook gate a signed test message (7 µ$).
+  dba gates test GATE                       Send a webhook gate a signed test message (9 µ$).
   dba gates remove GATE                     Changing gates needs DBA_API_KEY with gates:write (a device
                                             cannot: that needs a recent sign-in). TOTP, security keys,
                                             Duo and Okta Verify are set up on the dashboard's Gates page.
@@ -84,7 +84,7 @@ The account:
   dba list [--status active|expired|revoked] [--audience SITE] [--device ID] [--all] [--json]
       Every credential on the account, 50 at a time (--all: every page). Uses DBA_API_KEY (an
       API key with credentials:read) when set, else this device's credential, which then needs
-      dba:credentials:read. Each page is a metered read (7 µ$).
+      dba:credentials:read. Each page is a metered read (9 µ$).
 
 Any credential:
   dba inspect CREDENTIAL|- [--json]         Decode it and ask the server about its signature and revocation.

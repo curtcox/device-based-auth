@@ -25,11 +25,22 @@ historical. Do not apply it again or re-merge hashbin's old integration branch.
    registered and returned HTTP 204 on 2026-11-27. This is a signed test event, not proof that a
    real revoked credential has stopped working; complete the acceptance checks below too.
 4. cronly's cost monitor must include its `DbaLinkDO`, `DbaRevocationsDO` and `DbaReplayCacheDO`
-   namespace IDs in `CRONLY_DO_NAMESPACES`, in addition to its original three namespaces.
+   namespace IDs in `CRONLY_DO_NAMESPACES`, in addition to its original three namespaces. All
+   six were configured in the Worker and GitHub production variable on 2026-11-27; public
+   production verification passes. Its signed-in acceptance was explicitly deferred by the owner.
 5. Optional online-only grants (`require.online`, gates, usage limits) need an `authorize` API
    key belonging to the audience owner, stored as `DBA_API_KEY` in each sibling's production
    environment and pushed to its Worker. Basic offline device sign-in does not need that key.
    Never put it in frontend code or copy it into this repo. Without it those grants fail closed.
+
+HashBin OIDC linking to the existing account was verified on 2026-11-27. Its server supported
+device sessions, but its pages still used Clerk; [PR #252](https://github.com/curtcox/hashbin.org/pull/252)
+deployed direct browser sign-in and the page transport, with unit and browser regression coverage.
+Live enrollment, device-only account access across reloads, revocation refusal, and restored regular
+Clerk/Google sign-in passed. The one-day test credential was revoked; checks spent about 315 µ$
+of prepaid DBA credit, within the approved $0.01 limit.
+SubEtha's existing console session and DBA account association were also verified; that account
+has no handle or balance yet, so device/message acceptance still needs account setup.
 
 ## Live acceptance
 

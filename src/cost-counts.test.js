@@ -12,7 +12,7 @@ import { hotp } from './services/totp.js';
 const DAY = 86400000;
 let env; let m; const realNow = Date.now; let t;
 beforeEach(async () => {
-  t = realNow(); Date.now = () => t;
+  t = Date.UTC(2026, 0, 15, 12); Date.now = () => t;
   env = await testEnv(); m = meter(env);
   for (const who of ['alice', 'operator']) await call(env, 'POST', '/api/v1/dev/deposit', { auth: who, body: { amount_microdollars: 1_000_000 } });
 });
@@ -26,7 +26,9 @@ async function measured(op) {
   return { ...m.read(), result };
 }
 
-describe('cost policy matches the code', () => {
+// Exercise both a plain day rollover and archiving a month summary, regardless of today's date.
+describe.each([15, 31])('cost policy matches the code (starting January %i)', day => {
+  beforeEach(() => { t = Date.UTC(2026, 0, day, 12); });
   /**
    * Within the counted worst case: `later` is what the operation prepays but does after this
    * request (pruning and compaction deletes, alarm wake-ups, revocation and its webhooks).
@@ -315,14 +317,16 @@ describe('MCP tool calls as a device', () => {
   });
 });
 
-describe('day rollover', () => {
+describe.each([15, 31])('day rollover (starting January %i)', day => {
+  beforeEach(() => { t = Date.UTC(2026, 0, day, 12); });
   it('writes yesterday\'s aggregate rows once, however often the account is read', async () => {
     const key = (await call(env, 'POST', '/api/v1/keys', { auth: 'alice', body: { name: 'k', scopes: ['credentials:read'] } })).body.secret;
     await call(env, 'GET', '/api/v1/credentials', { auth: `ApiKey ${key}` }); // a metered read: yesterday's aggregate
     t += DAY; m.reset();
     await call(env, 'GET', '/api/v1/account', { auth: 'alice' });
     const first = m.read().rowWrites;
-    expect(first).toBe(2); // the aggregate ledger row and the rolled balance row
+    // The aggregate ledger row, the rolled balance row, and (at a month boundary) the summary.
+    expect(first).toBe(day === 31 ? 3 : 2);
     m.reset();
     for (let i = 0; i < 3; i++) await call(env, 'GET', '/api/v1/account', { auth: 'alice' });
     expect(m.read().rowWrites).toBe(0);

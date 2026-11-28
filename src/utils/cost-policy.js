@@ -50,26 +50,28 @@ export const OPERATIONS = Object.freeze({
   // Named address lists a grant names (B10 N3) are looked up among the account's rows (reads only).
   issue: withNonceChallenge({ workerRequests: 3, doRequests: 20, rowWrites: 26, cpuMs: 91, storageKBMonths: 6 * 13, r2ClassA: 1 }),
   // Credential status (auth, with the rate limit), credential status (renew), funds check, renew; later
-  // compaction deletes its ledger, receipt and audit rows.
-  renew: withNonceChallenge({ workerRequests: 1, doRequests: 5, rowWrites: 8, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 }),
+  // compaction deletes its ledger, receipt and audit rows; month rollover archives its summary.
+  renew: withNonceChallenge({ workerRequests: 1, doRequests: 5, rowWrites: 9, cpuMs: 10, storageKBMonths: 1 * 13, r2ClassA: 0 }),
   // Charges summed into the day's aggregate (decision, read, token, login) each count one more row:
   // the first of a kind on an account each day flushes yesterday's aggregate as a ledger row,
-  // which is kept for good (a few bytes; the monthly summary row is shared by all charges).
+  // which is kept for good. Renew, decision, read, token and login also count a month summary
+  // archive write; the other operations' existing ceilings cover their month-boundary paths.
   // API key check (with the rate limit), registry, charge on the audience's balance row, issuer check
   // with decision row + its pruning delete (decision rows are kept 90 days), plus, worst case,
   // two more rows: a usage counter row and its pruning delete (one decision per usage window),
   // or a new step-up request and its later delete (an approval's use deletes the request it
   // answers). A new step-up request also pushes a notice to up to 5 browsers (10 ms).
-  decision: { workerRequests: 1, doRequests: 4, rowWrites: 6, cpuMs: 15, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
+  decision: { workerRequests: 1, doRequests: 4, rowWrites: 7, cpuMs: 15, storageKBMonths: 0.5 * 3, r2ClassA: 0 },
   // Authentication (which also checks the rate limit), charge (aggregated on the balance row), and
   // the read itself: at most two calls (a credential's decisions; an audience's usage).
-  read: withNonceChallenge({ workerRequests: 1, doRequests: 4, rowWrites: 2, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 }),
+  // These counts include archiving the previous month's summary on a month-boundary charge.
+  read: withNonceChallenge({ workerRequests: 1, doRequests: 4, rowWrites: 3, cpuMs: 3, storageKBMonths: 0, r2ClassA: 0 }),
   // Credential status (auth, with the rate limit), registry, charge. An X.509 certificate (B3) costs the
   // same: no registry read, one DER build and signature well inside the CPU allowance.
-  token: withNonceChallenge({ workerRequests: 1, doRequests: 4, rowWrites: 2, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 }),
+  token: withNonceChallenge({ workerRequests: 1, doRequests: 4, rowWrites: 3, cpuMs: 5, storageKBMonths: 0, r2ClassA: 0 }),
   // Consent (session check with the rate limit, registry, code put, code alarm) + token (take
   // code, registry, charge). Rows: code put, code taken, code deleted, balance, daily aggregate.
-  login: withNonceChallenge({ workerRequests: 2, doRequests: 7, rowWrites: 5, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 }),
+  login: withNonceChallenge({ workerRequests: 2, doRequests: 7, rowWrites: 6, cpuMs: 10, storageKBMonths: 0, r2ClassA: 0 }),
   // One gate contacted by a gate request (STATUS B7, D13), billed to the account whose gates they
   // are. Creating it rides on the decision that asks (no extra request), but adds the charge
   // (balance row and the day's aggregate row) and the request row. Its answer is a request of its
